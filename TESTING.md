@@ -882,7 +882,7 @@ grep COVERAGE_THRESHOLD .github/workflows/test.yml
 
 1. **Check existing tests**: Look at similar tests in the suite for patterns
 2. **BATS documentation**: https://bats-core.readthedocs.io/
-3. **GitHub Issues**: Report test infrastructure issues at https://github.com/frankbria/korero-claude-code/issues
+3. **GitHub Issues**: Report test infrastructure issues at https://github.com/pendemic/korero-claude-code/issues
 
 ---
 

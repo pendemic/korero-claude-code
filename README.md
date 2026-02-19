@@ -1,12 +1,10 @@
 # Korero for Claude Code
 
-[![CI](https://github.com/frankbria/korero-claude-code/actions/workflows/test.yml/badge.svg)](https://github.com/frankbria/korero-claude-code/actions/workflows/test.yml)
+[![CI](https://github.com/pendemic/korero-claude-code/actions/workflows/test.yml/badge.svg)](https://github.com/pendemic/korero-claude-code/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.11.4-blue)
-![Tests](https://img.shields.io/badge/tests-465%20passing-green)
-[![GitHub Issues](https://img.shields.io/github/issues/frankbria/korero-claude-code)](https://github.com/frankbria/korero-claude-code/issues)
-[![Mentioned in Awesome Claude Code](https://awesome.re/mentioned-badge.svg)](https://github.com/hesreallyhim/awesome-claude-code)
-[![Follow on X](https://img.shields.io/twitter/follow/FrankBria18044?style=social)](https://x.com/FrankBria18044)
+![Version](https://img.shields.io/badge/version-0.12.0-blue)
+![Tests](https://img.shields.io/badge/tests-503%20passing-green)
+[![GitHub Issues](https://img.shields.io/github/issues/pendemic/korero-claude-code)](https://github.com/pendemic/korero-claude-code/issues)
 
 > **Multi-agent ideation and development system for Claude Code**
 
@@ -16,9 +14,9 @@ Korero is a multi-agent ideation and development system for Claude Code with two
 
 ## Project Status
 
-**Version**: v0.11.4 - Active Development
+**Version**: v0.12.0 - Active Development
 **Core Features**: Working and tested
-**Test Coverage**: 465 tests, 100% pass rate
+**Test Coverage**: 503 tests, 100% pass rate
 
 ### What's Working Now
 - **Multi-agent ideation system** with domain expert agents and structured debate protocol
@@ -43,7 +41,17 @@ Korero is a multi-agent ideation and development system for Claude Code with two
 
 ### Recent Improvements
 
-**v0.11.4 - Bug Fixes & Compatibility** (latest)
+**v0.12.0 - Fork to Korero + Multi-Agent Ideation** (latest)
+- Forked from Ralph to Korero - renamed entire codebase
+- Multi-agent ideation system with domain expert agents and structured debate protocol
+- Two loop modes: Continuous Coding Loop (ideation + implementation) and Continuous Idea Loop (ideation only)
+- Auto-generate domain agents via Claude Code CLI or enter manually
+- Configurable agent count (1-10) and loop limits (10, 20, 50, continuous)
+- 7-phase interactive wizard in `korero-enable`
+- Idea accumulation in `.korero/ideas/IDEAS.md`
+- 38 new tests for ideation mode
+
+**v0.11.4 - Bug Fixes & Compatibility**
 - Fixed progress detection: Git commits within a loop now count as progress (#141)
 - Fixed checkbox regex: Date entries `[2026-01-29]` no longer counted as checkboxes (#144)
 - Fixed session hijacking: Use `--resume <session_id>` instead of `--continue` (#151)
@@ -169,7 +177,7 @@ INSTALL ONCE              USE MANY TIMES
 Install Korero globally on your system:
 
 ```bash
-git clone https://github.com/frankbria/korero-claude-code.git
+git clone https://github.com/pendemic/korero-claude-code.git
 cd korero-claude-code
 ./install.sh
 ```
@@ -253,7 +261,7 @@ To completely remove Korero from your system:
 ./uninstall.sh
 
 # Or if you deleted the repo, download and run:
-curl -sL https://raw.githubusercontent.com/frankbria/korero-claude-code/main/uninstall.sh | bash
+curl -sL https://raw.githubusercontent.com/pendemic/korero-claude-code/main/uninstall.sh | bash
 ```
 
 ## Understanding Korero Files
@@ -403,6 +411,18 @@ Each Korero project can have a `.korerorc` configuration file:
 PROJECT_NAME="my-project"
 PROJECT_TYPE="typescript"
 
+# Korero mode: idea (ideation only) or coding (ideation + implementation)
+KORERO_MODE="coding"
+
+# Project subject (used for agent generation)
+PROJECT_SUBJECT="web application"
+
+# Number of domain expert agents (not including 3 mandatory evaluation agents)
+DOMAIN_AGENT_COUNT=3
+
+# Maximum loops to run (number or "continuous" for unlimited)
+MAX_LOOPS="continuous"
+
 # Loop settings
 MAX_CALLS_PER_HOUR=100
 CLAUDE_TIMEOUT_MINUTES=15
@@ -505,7 +525,7 @@ Live streaming mode shows Claude Code's output in real-time as it works, providi
 Korero maintains session context across loop iterations for improved coherence:
 
 ```bash
-# Sessions are enabled by default with --continue flag
+# Sessions are enabled by default with --resume flag
 korero --monitor                 # Uses session continuity
 
 # Start fresh without session context
@@ -515,9 +535,11 @@ korero --no-continue             # Isolated iterations
 korero --reset-session           # Clears current session
 
 # Check session status
-cat .korero/.korero_session              # View current session file
-cat .korero/.korero_session_history      # View session transition history
+cat .korero/.claude_session_id          # View current Claude session ID
+cat .korero/.korero_session_history     # View session transition history
 ```
+
+**Note:** Korero uses `--resume <session_id>` (not `--continue`) to avoid session hijacking (Issue #151). The session ID is stored in `.korero/.claude_session_id`.
 
 **Session Auto-Reset Triggers:**
 - Circuit breaker opens (stagnation detected)
@@ -562,15 +584,18 @@ Korero creates a standardized structure for each project with a `.korero/` subfo
 ```
 my-project/
 ├── .korero/                 # Korero configuration and state (hidden folder)
-│   ├── PROMPT.md           # Main development instructions for Korero
+│   ├── PROMPT.md           # Main development instructions (includes debate protocol)
 │   ├── fix_plan.md        # Prioritized task list
-│   ├── AGENT.md           # Build and run instructions
+│   ├── AGENT.md           # Domain agents + evaluation agents (editable)
+│   ├── ideas/              # Ideation mode output
+│   │   ├── IDEAS.md       # Cumulative idea index with timestamps
+│   │   └── loop_N_idea.md # Individual loop ideas
 │   ├── specs/              # Project specifications and requirements
 │   │   └── stdlib/         # Standard library specifications
 │   ├── examples/           # Usage examples and test cases
 │   ├── logs/               # Korero execution logs
 │   └── docs/generated/     # Auto-generated documentation
-├── .korerorc                # Korero configuration file (tool permissions, settings)
+├── .korerorc                # Korero configuration file (mode, agents, loop limits)
 └── src/                    # Source code implementation (at project root)
 ```
 
@@ -621,7 +646,7 @@ If you want to run the test suite:
 # Install BATS testing framework
 npm install -g bats bats-support bats-assert
 
-# Run all tests (465 tests)
+# Run all tests (503 tests)
 npm test
 
 # Run specific test suites
@@ -635,7 +660,9 @@ bats tests/unit/test_enable_core.bats
 bats tests/unit/test_task_sources.bats
 bats tests/unit/test_korero_enable.bats
 bats tests/unit/test_wizard_utils.bats
+bats tests/unit/test_ideation_mode.bats
 bats tests/integration/test_loop_execution.bats
+bats tests/integration/test_edge_cases.bats
 bats tests/integration/test_prd_import.bats
 bats tests/integration/test_project_setup.bats
 bats tests/integration/test_installation.bats
@@ -646,10 +673,10 @@ bats tests/integration/test_installation.bats
 ```
 
 Current test status:
-- **465 tests** across 15 test files
-- **100% pass rate** (452/452 passing)
+- **503 tests** across 16 test files
+- **100% pass rate**
 - Comprehensive unit and integration tests
-- Specialized tests for JSON parsing, CLI flags, circuit breaker, EXIT_SIGNAL behavior, enable wizard, and installation workflows
+- Specialized tests for JSON parsing, CLI flags, circuit breaker, EXIT_SIGNAL behavior, enable wizard, ideation mode, and installation workflows
 
 > **Note on Coverage**: Bash code coverage measurement with kcov has fundamental limitations when tracing subprocess executions. Test pass rate (100%) is the quality gate. See [bats-core#15](https://github.com/bats-core/bats-core/issues/15) for details.
 
@@ -753,7 +780,7 @@ cd korero-claude-code
 
 # Install dependencies and run tests
 npm install
-npm test  # All 465 tests must pass
+npm test  # All 503 tests must pass
 ```
 
 ### Priority Contribution Areas
@@ -771,14 +798,14 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgments
 
-- Inspired by the [Korero technique](https://ghuntley.com/korero/) created by Geoffrey Huntley
+- Inspired by the [Ralph technique](https://ghuntley.com/ralph/) created by Geoffrey Huntley
 - Built for [Claude Code](https://claude.ai/code) by Anthropic
 - Community feedback and contributions
 
 ## Related Projects
 
 - [Claude Code](https://claude.ai/code) - The AI coding assistant that powers Korero
-- [Aider](https://github.com/paul-gauthier/aider) - Original Korero technique implementation
+- [Aider](https://github.com/paul-gauthier/aider) - AI pair programming tool
 
 ---
 
@@ -841,7 +868,7 @@ tmux attach -t <name>     # Reattach to detached session
 
 Korero is under active development with a clear path to v1.0.0. See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the complete roadmap.
 
-### Current Status: v0.11.4
+### Current Status: v0.12.0
 
 **What's Delivered:**
 - **Multi-agent ideation system** with domain experts and structured debate protocol
@@ -861,8 +888,9 @@ Korero is under active development with a clear path to v1.0.0. See [IMPLEMENTAT
 - Session lifecycle management with auto-reset triggers
 
 **Test Coverage Breakdown:**
-- Unit Tests: 367 (CLI parsing, JSON, exit detection, rate limiting, session continuity, enable wizard, ideation mode)
-- Test Files: 11
+- Unit Tests: 367 across 11 files (CLI parsing, JSON, exit detection, rate limiting, session continuity, enable wizard, ideation mode)
+- Integration Tests: 136 across 5 files (loop execution, edge cases, PRD import, project setup, installation)
+- Total: 503 tests across 16 files
 
 ### Path to v1.0.0 (~4 weeks)
 
@@ -897,4 +925,4 @@ Korero is seeking contributors! See [CONTRIBUTING.md](CONTRIBUTING.md) for the c
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=frankbria/korero-claude-code&type=date&legend=top-left)](https://www.star-history.com/#frankbria/korero-claude-code&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=pendemic/korero-claude-code&type=date&legend=top-left)](https://www.star-history.com/#pendemic/korero-claude-code&type=date&legend=top-left)

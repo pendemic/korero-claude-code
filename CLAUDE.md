@@ -481,7 +481,9 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files
+### Test Files (503 tests across 16 files)
+
+**Unit Tests (367 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
@@ -496,6 +498,16 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_korero_enable.bats` | 22 | Korero enable integration tests (wizard, CI version, JSON output) |
 | `test_wizard_utils.bats` | 20 | Wizard utility functions (stdout/stderr separation, prompt functions) |
 | `test_ideation_mode.bats` | 38 | Multi-agent ideation: agent generation, templates, idea storage, integration |
+
+**Integration Tests (136 tests):**
+
+| File | Tests | Description |
+|------|-------|-------------|
+| `test_project_setup.bats` | 44 | Project setup (setup.sh) validation |
+| `test_prd_import.bats` | 33 | PRD import (korero_import.sh) workflows + modern CLI tests |
+| `test_edge_cases.bats` | 25 | Edge case handling |
+| `test_loop_execution.bats` | 20 | Integration tests |
+| `test_installation.bats` | 14 | Global installation/uninstall workflows |
 
 ### Running Tests
 ```bash

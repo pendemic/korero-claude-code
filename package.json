@@ -16,15 +16,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/frankbria/korero-claude-code.git"
+    "url": "git+https://github.com/pendemic/korero-claude-code.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/frankbria/korero-claude-code/issues"
+    "url": "https://github.com/pendemic/korero-claude-code/issues"
   },
-  "homepage": "https://github.com/frankbria/korero-claude-code#readme",
+  "homepage": "https://github.com/pendemic/korero-claude-code#readme",
   "devDependencies": {
     "bats": "^1.12.0",
     "bats-assert": "^2.2.0",

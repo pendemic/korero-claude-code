@@ -624,7 +624,7 @@ Before marking any feature complete:
 - [CLAUDE.md](CLAUDE.md) - Technical specifications
 - [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) - Development roadmap
 - [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) - Progress tracking
-- [GitHub Issues](https://github.com/frankbria/korero-claude-code/issues) - Bug reports and feature requests
+- [GitHub Issues](https://github.com/pendemic/korero-claude-code/issues) - Bug reports and feature requests
 
 ---
 
