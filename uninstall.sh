@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Ralph for Claude Code - Uninstallation Script
+# Korero for Claude Code - Uninstallation Script
 set -e
 
 # Configuration
 INSTALL_DIR="$HOME/.local/bin"
-RALPH_HOME="$HOME/.ralph"
+KORERO_HOME="$HOME/.korero"
 
 # Colors
 RED='\033[0;31m'
@@ -35,38 +35,38 @@ log() {
     echo -e "${color}[$(date '+%H:%M:%S')] [$level] $message${NC}"
 }
 
-# Check if Ralph is installed by verifying commands or home directory exist
-# Uses: INSTALL_DIR, RALPH_HOME environment variables
-# Behavior: Checks for any Ralph command or home directory
+# Check if Korero is installed by verifying commands or home directory exist
+# Uses: INSTALL_DIR, KORERO_HOME environment variables
+# Behavior: Checks for any Korero command or home directory
 # Exit: Exits with status 0 if not installed, displaying checked locations
 check_installation() {
     local installed=false
 
-    # Check for any of the Ralph commands
-    for cmd in ralph ralph-monitor ralph-setup ralph-import; do
+    # Check for any of the Korero commands
+    for cmd in korero korero-monitor korero-setup korero-import; do
         if [ -f "$INSTALL_DIR/$cmd" ]; then
             installed=true
             break
         fi
     done
 
-    # Also check for Ralph home directory
-    if [ "$installed" = false ] && [ -d "$RALPH_HOME" ]; then
+    # Also check for Korero home directory
+    if [ "$installed" = false ] && [ -d "$KORERO_HOME" ]; then
         installed=true
     fi
 
     if [ "$installed" = false ]; then
-        log "WARN" "Ralph does not appear to be installed"
+        log "WARN" "Korero does not appear to be installed"
         echo "Checked locations:"
-        echo "  - $INSTALL_DIR/{ralph,ralph-monitor,ralph-setup,ralph-import}"
-        echo "  - $RALPH_HOME"
+        echo "  - $INSTALL_DIR/{korero,korero-monitor,korero-setup,korero-import}"
+        echo "  - $KORERO_HOME"
         exit 0
     fi
 }
 
 # Display a plan of what will be removed during uninstallation
-# Uses: INSTALL_DIR, RALPH_HOME environment variables
-# Output: Prints list of Ralph commands and home directory to stdout
+# Uses: INSTALL_DIR, KORERO_HOME environment variables
+# Output: Prints list of Korero commands and home directory to stdout
 # Behavior: Shows only items that actually exist on the system
 show_removal_plan() {
     echo ""
@@ -75,17 +75,17 @@ show_removal_plan() {
 
     # Commands
     echo "Commands in $INSTALL_DIR:"
-    for cmd in ralph ralph-monitor ralph-setup ralph-import; do
+    for cmd in korero korero-monitor korero-setup korero-import; do
         if [ -f "$INSTALL_DIR/$cmd" ]; then
             echo "  - $cmd"
         fi
     done
 
-    # Ralph home
-    if [ -d "$RALPH_HOME" ]; then
+    # Korero home
+    if [ -d "$KORERO_HOME" ]; then
         echo ""
-        echo "Ralph home directory:"
-        echo "  - $RALPH_HOME (includes templates, scripts, and libraries)"
+        echo "Korero home directory:"
+        echo "  - $KORERO_HOME (includes templates, scripts, and libraries)"
     fi
 
     echo ""
@@ -101,7 +101,7 @@ confirm_uninstall() {
         return 0
     fi
 
-    read -p "Are you sure you want to uninstall Ralph? [y/N] " -n 1 -r
+    read -p "Are you sure you want to uninstall Korero? [y/N] " -n 1 -r
     echo ""
 
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -110,15 +110,15 @@ confirm_uninstall() {
     fi
 }
 
-# Remove Ralph commands from INSTALL_DIR
-# Removes: ralph, ralph-monitor, ralph-setup, ralph-import
+# Remove Korero commands from INSTALL_DIR
+# Removes: korero, korero-monitor, korero-setup, korero-import
 # Uses: INSTALL_DIR environment variable
 # Output: Logs success with count of removed commands, or info if none found
 remove_commands() {
-    log "INFO" "Removing Ralph commands..."
+    log "INFO" "Removing Korero commands..."
 
     local removed=0
-    for cmd in ralph ralph-monitor ralph-setup ralph-import; do
+    for cmd in korero korero-monitor korero-setup korero-import; do
         if [ -f "$INSTALL_DIR/$cmd" ]; then
             rm -f "$INSTALL_DIR/$cmd"
             removed=$((removed + 1))
@@ -132,28 +132,28 @@ remove_commands() {
     fi
 }
 
-# Remove Ralph home directory containing templates, scripts, and libraries
-# Uses: RALPH_HOME environment variable
+# Remove Korero home directory containing templates, scripts, and libraries
+# Uses: KORERO_HOME environment variable
 # Behavior: Removes directory recursively if it exists
 # Output: Logs success if removed, or info if directory not found
-remove_ralph_home() {
-    log "INFO" "Removing Ralph home directory..."
+remove_korero_home() {
+    log "INFO" "Removing Korero home directory..."
 
-    if [ -d "$RALPH_HOME" ]; then
-        rm -rf "$RALPH_HOME"
-        log "SUCCESS" "Removed $RALPH_HOME"
+    if [ -d "$KORERO_HOME" ]; then
+        rm -rf "$KORERO_HOME"
+        log "SUCCESS" "Removed $KORERO_HOME"
     else
-        log "INFO" "Ralph home directory not found"
+        log "INFO" "Korero home directory not found"
     fi
 }
 
-# Main uninstallation flow for Ralph for Claude Code
+# Main uninstallation flow for Korero for Claude Code
 # Arguments:
 #   $1 - Optional flag passed to confirm_uninstall (-y/--yes)
 # Behavior: Orchestrates full uninstall by calling check, plan, confirm, and remove functions
-# Note: Does not remove project directories created with ralph-setup
+# Note: Does not remove project directories created with korero-setup
 main() {
-    echo "🗑️  Uninstalling Ralph for Claude Code..."
+    echo "🗑️  Uninstalling Korero for Claude Code..."
 
     check_installation
     show_removal_plan
@@ -161,12 +161,12 @@ main() {
 
     echo ""
     remove_commands
-    remove_ralph_home
+    remove_korero_home
 
     echo ""
-    log "SUCCESS" "Ralph for Claude Code has been uninstalled"
+    log "SUCCESS" "Korero for Claude Code has been uninstalled"
     echo ""
-    echo "Note: Project files created with ralph-setup are not removed."
+    echo "Note: Project files created with korero-setup are not removed."
     echo "You can safely delete those project directories manually if needed."
     echo ""
 }
@@ -174,7 +174,7 @@ main() {
 # Handle command line arguments
 case "${1:-}" in
     -h|--help)
-        echo "Ralph for Claude Code - Uninstallation Script"
+        echo "Korero for Claude Code - Uninstallation Script"
         echo ""
         echo "Usage: $0 [OPTIONS]"
         echo ""
@@ -183,10 +183,10 @@ case "${1:-}" in
         echo "  -h, --help   Show this help message"
         echo ""
         echo "This script removes:"
-        echo "  - Ralph commands from $INSTALL_DIR"
-        echo "  - Ralph home directory ($RALPH_HOME)"
+        echo "  - Korero commands from $INSTALL_DIR"
+        echo "  - Korero home directory ($KORERO_HOME)"
         echo ""
-        echo "Project directories created with ralph-setup are NOT removed."
+        echo "Project directories created with korero-setup are NOT removed."
         ;;
     *)
         main "$1"

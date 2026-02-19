@@ -1,15 +1,15 @@
 #!/bin/bash
 
-# Ralph Enable CI - Non-Interactive Version for Automation
-# Adds Ralph configuration with sensible defaults
+# Korero Enable CI - Non-Interactive Version for Automation
+# Adds Korero configuration with sensible defaults
 #
 # Usage:
-#   ralph enable-ci                    # Auto-detect and enable
-#   ralph enable-ci --from beads       # With specific task source
-#   ralph enable-ci --json             # Output JSON result
+#   korero enable-ci                    # Auto-detect and enable
+#   korero enable-ci --from beads       # With specific task source
+#   korero enable-ci --json             # Output JSON result
 #
 # Exit codes:
-#   0 - Success: Ralph enabled
+#   0 - Success: Korero enabled
 #   1 - Error: General error
 #   2 - Already enabled (use --force to override)
 #   3 - Invalid arguments
@@ -24,13 +24,13 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Try to load libraries from global installation first, then local
-RALPH_HOME="${RALPH_HOME:-$HOME/.ralph}"
-if [[ -f "$RALPH_HOME/lib/enable_core.sh" ]]; then
-    LIB_DIR="$RALPH_HOME/lib"
+KORERO_HOME="${KORERO_HOME:-$HOME/.korero}"
+if [[ -f "$KORERO_HOME/lib/enable_core.sh" ]]; then
+    LIB_DIR="$KORERO_HOME/lib"
 elif [[ -f "$SCRIPT_DIR/lib/enable_core.sh" ]]; then
     LIB_DIR="$SCRIPT_DIR/lib"
 else
-    echo '{"error": "Cannot find Ralph libraries", "code": 1}' >&2
+    echo '{"error": "Cannot find Korero libraries", "code": 1}' >&2
     exit 1
 fi
 
@@ -49,12 +49,18 @@ source "$LIB_DIR/task_sources.sh"
 FORCE_OVERWRITE=false
 TASK_SOURCE=""
 PRD_FILE=""
-GITHUB_LABEL="ralph-task"
+GITHUB_LABEL="korero-task"
 PROJECT_NAME=""
 PROJECT_TYPE=""
 OUTPUT_JSON=false
 QUIET=false
 SHOW_HELP=false
+
+# Ideation mode options
+KORERO_MODE="coding"        # Default to coding mode
+PROJECT_SUBJECT=""
+AGENT_COUNT=3
+MAX_LOOPS="continuous"
 
 # Version
 VERSION="0.11.0"
@@ -65,24 +71,28 @@ VERSION="0.11.0"
 
 show_help() {
     cat << EOF
-Ralph Enable CI - Non-Interactive Version for Automation
+Korero Enable CI - Non-Interactive Version for Automation
 
-Usage: ralph enable-ci [OPTIONS]
+Usage: korero-enable-ci [OPTIONS]
 
 Options:
+    --mode <mode>         Loop mode: coding or idea (default: coding)
+    --subject <text>      Project subject for agent generation
+    --agents <N>          Number of domain agents (default: 3, max: 10)
+    --loops <N>           Max loops: number or "continuous" (default: continuous)
     --from <source>       Import tasks from: beads, github, prd, none
     --prd <file>          PRD file to convert (when --from prd)
-    --label <label>       GitHub label filter (default: ralph-task)
+    --label <label>       GitHub label filter (default: korero-task)
     --project-name <name> Override detected project name
     --project-type <type> Override detected type (typescript, python, etc.)
-    --force               Overwrite existing .ralph/ configuration
+    --force               Overwrite existing .korero/ configuration
     --json                Output result as JSON
     --quiet               Suppress non-error output
     -h, --help            Show this help message
     -v, --version         Show version
 
 Exit Codes:
-    0 - Success: Ralph enabled
+    0 - Success: Korero enabled
     1 - Error: General error
     2 - Already enabled: Use --force to override
     3 - Invalid arguments
@@ -90,32 +100,29 @@ Exit Codes:
     5 - Dependency missing (e.g., jq for --json)
 
 Examples:
-    # Auto-detect and enable with defaults
-    ralph enable-ci
+    # Auto-detect and enable with defaults (coding mode)
+    korero-enable-ci
 
-    # Enable with beads tasks
-    ralph enable-ci --from beads
+    # Idea loop for a specific domain
+    korero-enable-ci --mode idea --subject "data analysis tool" --agents 4
 
-    # Enable with GitHub issues
-    ralph enable-ci --from github --label "sprint-1"
-
-    # Enable with PRD conversion
-    ralph enable-ci --from prd --prd docs/requirements.md
+    # Coding loop with limited iterations
+    korero-enable-ci --mode coding --subject "web app" --loops 20
 
     # Force overwrite and output JSON
-    ralph enable-ci --force --json
-
-    # Override project detection
-    ralph enable-ci --project-name my-app --project-type typescript
+    korero-enable-ci --force --json
 
 JSON Output Format:
     {
         "success": true,
         "project_name": "my-project",
         "project_type": "typescript",
-        "files_created": [".ralph/PROMPT.md", ...],
+        "mode": "coding",
+        "agent_count": 3,
+        "max_loops": "continuous",
+        "files_created": [".korero/PROMPT.md", ...],
         "tasks_imported": 15,
-        "message": "Ralph enabled successfully"
+        "message": "Korero enabled successfully"
     }
 
 EOF
@@ -128,6 +135,54 @@ EOF
 parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --mode)
+                if [[ -n "$2" && ! "$2" =~ ^-- ]]; then
+                    KORERO_MODE="$2"
+                    if [[ "$KORERO_MODE" != "coding" && "$KORERO_MODE" != "idea" ]]; then
+                        output_error "--mode must be 'coding' or 'idea'"
+                        exit $ENABLE_INVALID_ARGS
+                    fi
+                    shift 2
+                else
+                    output_error "--mode requires a value (coding or idea)"
+                    exit $ENABLE_INVALID_ARGS
+                fi
+                ;;
+            --subject)
+                if [[ -n "$2" && ! "$2" =~ ^-- ]]; then
+                    PROJECT_SUBJECT="$2"
+                    shift 2
+                else
+                    output_error "--subject requires a description"
+                    exit $ENABLE_INVALID_ARGS
+                fi
+                ;;
+            --agents)
+                if [[ -n "$2" && ! "$2" =~ ^-- ]]; then
+                    AGENT_COUNT="$2"
+                    if ! [[ "$AGENT_COUNT" =~ ^[0-9]+$ ]] || [[ "$AGENT_COUNT" -lt 1 ]] || [[ "$AGENT_COUNT" -gt 10 ]]; then
+                        output_error "--agents must be a number between 1 and 10"
+                        exit $ENABLE_INVALID_ARGS
+                    fi
+                    shift 2
+                else
+                    output_error "--agents requires a number (1-10)"
+                    exit $ENABLE_INVALID_ARGS
+                fi
+                ;;
+            --loops)
+                if [[ -n "$2" && ! "$2" =~ ^-- ]]; then
+                    MAX_LOOPS="$2"
+                    if [[ "$MAX_LOOPS" != "continuous" ]] && ! [[ "$MAX_LOOPS" =~ ^[0-9]+$ ]]; then
+                        output_error "--loops must be a number or 'continuous'"
+                        exit $ENABLE_INVALID_ARGS
+                    fi
+                    shift 2
+                else
+                    output_error "--loops requires a value (number or 'continuous')"
+                    exit $ENABLE_INVALID_ARGS
+                fi
+                ;;
             --from)
                 if [[ -n "$2" && ! "$2" =~ ^-- ]]; then
                     TASK_SOURCE="$2"
@@ -197,7 +252,7 @@ parse_arguments() {
                 if [[ "$OUTPUT_JSON" == "true" ]]; then
                     echo "{\"version\": \"$VERSION\"}"
                 else
-                    echo "ralph enable-ci version $VERSION"
+                    echo "korero enable-ci version $VERSION"
                 fi
                 exit 0
                 ;;
@@ -244,13 +299,19 @@ output_success() {
     "success": true,
     "project_name": "$project_name",
     "project_type": "$project_type",
+    "mode": "$KORERO_MODE",
+    "agent_count": $AGENT_COUNT,
+    "max_loops": "$MAX_LOOPS",
     "files_created": $files_json,
     "tasks_imported": $TASKS_IMPORTED,
-    "message": "Ralph enabled successfully"
+    "message": "Korero enabled successfully"
 }
 EOF
     else
-        echo "Ralph enabled successfully for: $project_name ($project_type)"
+        echo "Korero enabled successfully for: $project_name ($project_type)"
+        echo "Mode: $KORERO_MODE"
+        echo "Domain agents: $AGENT_COUNT"
+        echo "Max loops: $MAX_LOOPS"
         echo "Files created: ${#CREATED_FILES[@]}"
         echo "Tasks imported: $TASKS_IMPORTED"
     fi
@@ -258,9 +319,9 @@ EOF
 
 output_already_enabled() {
     if [[ "$OUTPUT_JSON" == "true" ]]; then
-        echo '{"success": false, "code": 2, "message": "Ralph already enabled. Use --force to override."}'
+        echo '{"success": false, "code": 2, "message": "Korero already enabled. Use --force to override."}'
     else
-        echo "Ralph is already enabled in this project. Use --force to override."
+        echo "Korero is already enabled in this project. Use --force to override."
     fi
 }
 
@@ -278,12 +339,12 @@ main() {
         exit 0
     fi
 
-    output_message "Ralph Enable CI - Non-Interactive Mode"
+    output_message "Korero Enable CI - Non-Interactive Mode"
     output_message ""
 
     # Check existing state (use || true to prevent set -e from exiting)
-    check_existing_ralph || true
-    if [[ "$RALPH_STATE" == "complete" && "$FORCE_OVERWRITE" != "true" ]]; then
+    check_existing_korero || true
+    if [[ "$KORERO_STATE" == "complete" && "$FORCE_OVERWRITE" != "true" ]]; then
         output_already_enabled
         exit $ENABLE_ALREADY_ENABLED
     fi
@@ -358,38 +419,52 @@ main() {
             ;;
     esac
 
+    # Generate domain agents for ideation modes
+    local generated_agents=""
+    if [[ -n "$PROJECT_SUBJECT" ]]; then
+        output_message "Generating domain agents..."
+        generated_agents=$(generate_domain_agents "$PROJECT_SUBJECT" "$DETECTED_PROJECT_TYPE" "$AGENT_COUNT" 2>/dev/null)
+    else
+        generated_agents=$(_generate_generic_agents "$AGENT_COUNT")
+    fi
+
     # Set up enable environment
     export ENABLE_FORCE="$FORCE_OVERWRITE"
     export ENABLE_SKIP_TASKS="false"
     export ENABLE_PROJECT_NAME="$DETECTED_PROJECT_NAME"
     export ENABLE_PROJECT_TYPE="$DETECTED_PROJECT_TYPE"
     export ENABLE_TASK_CONTENT="$imported_tasks"
+    export ENABLE_KORERO_MODE="$KORERO_MODE"
+    export ENABLE_PROJECT_SUBJECT="$PROJECT_SUBJECT"
+    export ENABLE_GENERATED_AGENTS="$generated_agents"
+    export ENABLE_AGENT_COUNT="$AGENT_COUNT"
+    export ENABLE_MAX_LOOPS="$MAX_LOOPS"
 
     # Run core enable logic
     output_message ""
-    output_message "Creating Ralph configuration..."
+    output_message "Creating Korero configuration..."
 
-    # Suppress enable_ralph_in_directory output when in JSON mode
+    # Suppress enable_korero_in_directory output when in JSON mode
     if [[ "$OUTPUT_JSON" == "true" ]]; then
-        if ! enable_ralph_in_directory >/dev/null 2>&1; then
-            output_error "Failed to enable Ralph"
+        if ! enable_korero_in_directory >/dev/null 2>&1; then
+            output_error "Failed to enable Korero"
             exit $ENABLE_ERROR
         fi
     else
-        if ! enable_ralph_in_directory; then
-            output_error "Failed to enable Ralph"
+        if ! enable_korero_in_directory; then
+            output_error "Failed to enable Korero"
             exit $ENABLE_ERROR
         fi
     fi
 
     # Track created files
-    [[ -f ".ralph/PROMPT.md" ]] && CREATED_FILES+=(".ralph/PROMPT.md")
-    [[ -f ".ralph/fix_plan.md" ]] && CREATED_FILES+=(".ralph/fix_plan.md")
-    [[ -f ".ralph/AGENT.md" ]] && CREATED_FILES+=(".ralph/AGENT.md")
-    [[ -f ".ralphrc" ]] && CREATED_FILES+=(".ralphrc")
+    [[ -f ".korero/PROMPT.md" ]] && CREATED_FILES+=(".korero/PROMPT.md")
+    [[ -f ".korero/fix_plan.md" ]] && CREATED_FILES+=(".korero/fix_plan.md")
+    [[ -f ".korero/AGENT.md" ]] && CREATED_FILES+=(".korero/AGENT.md")
+    [[ -f ".korerorc" ]] && CREATED_FILES+=(".korerorc")
 
     # Verify required files exist
-    if [[ ! -f ".ralph/PROMPT.md" ]] || [[ ! -f ".ralph/fix_plan.md" ]]; then
+    if [[ ! -f ".korero/PROMPT.md" ]] || [[ ! -f ".korero/fix_plan.md" ]]; then
         output_error "Required files were not created"
         exit $ENABLE_ERROR
     fi

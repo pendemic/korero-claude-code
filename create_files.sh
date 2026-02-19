@@ -1,38 +1,38 @@
 #!/bin/bash
 
-# Quick script to create all Ralph files in your GitHub repo
+# Quick script to create all Korero files in your GitHub repo
 set -e
 
-echo "🚀 Creating Ralph for Claude Code repository structure..."
+echo "🚀 Creating Korero for Claude Code repository structure..."
 
 # Create directories
-# Note: Project structure uses .ralph/ subfolder for Ralph-specific files
+# Note: Project structure uses .korero/ subfolder for Korero-specific files
 # src/ stays at root for compatibility with existing tooling
 mkdir -p {src,templates/specs}
 
 # Create main scripts
-cat > ralph_loop.sh << 'EOF'
+cat > korero_loop.sh << 'EOF'
 #!/bin/bash
 
-# Claude Code Ralph Loop with Rate Limiting and Documentation
-# Adaptation of the Ralph technique for Claude Code with usage management
+# Claude Code Korero Loop with Rate Limiting and Documentation
+# Adaptation of the Korero technique for Claude Code with usage management
 
 set -e  # Exit on any error
 
-# Configuration - Ralph files live in .ralph/ subfolder
-RALPH_DIR="${RALPH_DIR:-.ralph}"
-PROMPT_FILE="$RALPH_DIR/PROMPT.md"
-LOG_DIR="$RALPH_DIR/logs"
-DOCS_DIR="$RALPH_DIR/docs/generated"
-STATUS_FILE="$RALPH_DIR/status.json"
+# Configuration - Korero files live in .korero/ subfolder
+KORERO_DIR="${KORERO_DIR:-.korero}"
+PROMPT_FILE="$KORERO_DIR/PROMPT.md"
+LOG_DIR="$KORERO_DIR/logs"
+DOCS_DIR="$KORERO_DIR/docs/generated"
+STATUS_FILE="$KORERO_DIR/status.json"
 CLAUDE_CODE_CMD="npx @anthropic/claude-code"
 MAX_CALLS_PER_HOUR=100  # Adjust based on your plan
 SLEEP_DURATION=3600     # 1 hour in seconds
-CALL_COUNT_FILE="$RALPH_DIR/.call_count"
-TIMESTAMP_FILE="$RALPH_DIR/.last_reset"
+CALL_COUNT_FILE="$KORERO_DIR/.call_count"
+TIMESTAMP_FILE="$KORERO_DIR/.last_reset"
 
 # Exit detection configuration
-EXIT_SIGNALS_FILE="$RALPH_DIR/.exit_signals"
+EXIT_SIGNALS_FILE="$KORERO_DIR/.exit_signals"
 MAX_CONSECUTIVE_TEST_LOOPS=3
 MAX_CONSECUTIVE_DONE_SIGNALS=2
 TEST_PERCENTAGE_THRESHOLD=30  # If more than 30% of recent loops are test-only, flag it
@@ -86,7 +86,7 @@ log_status() {
     esac
     
     echo -e "${color}[$timestamp] [$level] $message${NC}"
-    echo "[$timestamp] [$level] $message" >> "$LOG_DIR/ralph.log"
+    echo "[$timestamp] [$level] $message" >> "$LOG_DIR/korero.log"
 }
 
 # Update status JSON for external monitoring
@@ -206,9 +206,9 @@ should_exit_gracefully() {
     # 4. Check fix_plan.md for completion
     # Fix #144: Only match valid markdown checkboxes, not date entries like [2026-01-29]
     # Valid patterns: "- [ ]" (uncompleted) and "- [x]" or "- [X]" (completed)
-    if [[ -f "$RALPH_DIR/fix_plan.md" ]]; then
-        local uncompleted_items=$(grep -cE "^[[:space:]]*- \[ \]" "$RALPH_DIR/fix_plan.md" 2>/dev/null || echo "0")
-        local completed_items=$(grep -cE "^[[:space:]]*- \[[xX]\]" "$RALPH_DIR/fix_plan.md" 2>/dev/null || echo "0")
+    if [[ -f "$KORERO_DIR/fix_plan.md" ]]; then
+        local uncompleted_items=$(grep -cE "^[[:space:]]*- \[ \]" "$KORERO_DIR/fix_plan.md" 2>/dev/null || echo "0")
+        local completed_items=$(grep -cE "^[[:space:]]*- \[[xX]\]" "$KORERO_DIR/fix_plan.md" 2>/dev/null || echo "0")
         local total_items=$((uncompleted_items + completed_items))
 
         if [[ $total_items -gt 0 ]] && [[ $completed_items -eq $total_items ]]; then
@@ -248,7 +248,7 @@ execute_claude_code() {
 
 # Cleanup function
 cleanup() {
-    log_status "INFO" "Ralph loop interrupted. Cleaning up..."
+    log_status "INFO" "Korero loop interrupted. Cleaning up..."
     update_status "$loop_count" "$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")" "interrupted" "stopped"
     exit 0
 }
@@ -260,7 +260,7 @@ trap cleanup SIGINT SIGTERM
 main() {
     local loop_count=0
     
-    log_status "SUCCESS" "🚀 Ralph loop starting with Claude Code"
+    log_status "SUCCESS" "🚀 Korero loop starting with Claude Code"
     log_status "INFO" "Max calls per hour: $MAX_CALLS_PER_HOUR"
     log_status "INFO" "Logs: $LOG_DIR/ | Docs: $DOCS_DIR/ | Status: $STATUS_FILE"
     
@@ -288,7 +288,7 @@ main() {
             log_status "SUCCESS" "🏁 Graceful exit triggered: $exit_reason"
             update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "graceful_exit" "completed" "$exit_reason"
             
-            log_status "SUCCESS" "🎉 Ralph has completed the project! Final stats:"
+            log_status "SUCCESS" "🎉 Korero has completed the project! Final stats:"
             log_status "INFO" "  - Total loops: $loop_count"
             log_status "INFO" "  - API calls used: $(cat "$CALL_COUNT_FILE")"
             log_status "INFO" "  - Exit reason: $exit_reason"
@@ -319,7 +319,7 @@ main() {
 # Help function
 show_help() {
     cat << HELPEOF
-Ralph Loop for Claude Code
+Korero Loop for Claude Code
 
 Usage: $0 [OPTIONS]
 
@@ -360,7 +360,7 @@ while [[ $# -gt 0 ]]; do
                 echo "Current Status:"
                 cat "$STATUS_FILE" | jq . 2>/dev/null || cat "$STATUS_FILE"
             else
-                echo "No status file found. Ralph may not be running."
+                echo "No status file found. Korero may not be running."
             fi
             exit 0
             ;;
@@ -377,15 +377,15 @@ main
 EOF
 
 # Create monitor script (simplified for brevity)
-cat > ralph_monitor.sh << 'EOF'
+cat > korero_monitor.sh << 'EOF'
 #!/bin/bash
 
-# Ralph Status Monitor - Live terminal dashboard for the Ralph loop
+# Korero Status Monitor - Live terminal dashboard for the Korero loop
 set -e
 
-RALPH_DIR="${RALPH_DIR:-.ralph}"
-STATUS_FILE="$RALPH_DIR/status.json"
-LOG_FILE="$RALPH_DIR/logs/ralph.log"
+KORERO_DIR="${KORERO_DIR:-.korero}"
+STATUS_FILE="$KORERO_DIR/status.json"
+LOG_FILE="$KORERO_DIR/logs/korero.log"
 REFRESH_INTERVAL=2
 
 # Colors
@@ -426,7 +426,7 @@ display_status() {
     
     # Header
     echo -e "${WHITE}╔════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${WHITE}║                           🤖 RALPH MONITOR                              ║${NC}"
+    echo -e "${WHITE}║                           🤖 KORERO MONITOR                              ║${NC}"
     echo -e "${WHITE}║                        Live Status Dashboard                           ║${NC}"
     echo -e "${WHITE}╚════════════════════════════════════════════════════════════════════════╝${NC}"
     echo
@@ -449,7 +449,7 @@ display_status() {
         
     else
         echo -e "${RED}┌─ Status ────────────────────────────────────────────────────────────────┐${NC}"
-        echo -e "${RED}│${NC} Status file not found. Ralph may not be running."
+        echo -e "${RED}│${NC} Status file not found. Korero may not be running."
         echo -e "${RED}└─────────────────────────────────────────────────────────────────────────┘${NC}"
         echo
     fi
@@ -472,7 +472,7 @@ display_status() {
 
 # Main monitor loop
 main() {
-    echo "Starting Ralph Monitor..."
+    echo "Starting Korero Monitor..."
     sleep 2
     
     while true; do
@@ -488,13 +488,13 @@ EOF
 cat > setup.sh << 'EOF'
 #!/bin/bash
 
-# Ralph Project Setup Script
-# Creates project structure with Ralph-specific files in .ralph/ subfolder
+# Korero Project Setup Script
+# Creates project structure with Korero-specific files in .korero/ subfolder
 set -e
 
 PROJECT_NAME=${1:-"my-project"}
 
-echo "🚀 Setting up Ralph project: $PROJECT_NAME"
+echo "🚀 Setting up Korero project: $PROJECT_NAME"
 
 # Create project directory
 mkdir -p "$PROJECT_NAME"
@@ -502,53 +502,53 @@ cd "$PROJECT_NAME"
 
 # Create structure:
 # - src/ stays at root for compatibility with existing tooling
-# - All Ralph-specific files go in .ralph/ subfolder
+# - All Korero-specific files go in .korero/ subfolder
 mkdir -p src
-mkdir -p .ralph/{specs/stdlib,examples,logs,docs/generated}
+mkdir -p .korero/{specs/stdlib,examples,logs,docs/generated}
 
-# Copy templates to .ralph/
-cp ../templates/PROMPT.md .ralph/
-cp ../templates/fix_plan.md .ralph/fix_plan.md
-cp ../templates/AGENT.md .ralph/AGENT.md
-cp -r ../templates/specs/* .ralph/specs/ 2>/dev/null || true
+# Copy templates to .korero/
+cp ../templates/PROMPT.md .korero/
+cp ../templates/fix_plan.md .korero/fix_plan.md
+cp ../templates/AGENT.md .korero/AGENT.md
+cp -r ../templates/specs/* .korero/specs/ 2>/dev/null || true
 
 # Initialize git
 git init
 echo "# $PROJECT_NAME" > README.md
 git add .
-git commit -m "Initial Ralph project setup"
+git commit -m "Initial Korero project setup"
 
 echo "✅ Project $PROJECT_NAME created!"
 echo "Next steps:"
-echo "  1. Edit .ralph/PROMPT.md with your project requirements"
-echo "  2. Update .ralph/specs/ with your project specifications"
-echo "  3. Run: ../ralph_loop.sh"
-echo "  4. Monitor: ../ralph_monitor.sh"
+echo "  1. Edit .korero/PROMPT.md with your project requirements"
+echo "  2. Update .korero/specs/ with your project specifications"
+echo "  3. Run: ../korero_loop.sh"
+echo "  4. Monitor: ../korero_monitor.sh"
 EOF
 
 # Create template files
 mkdir -p templates/specs
 
 cat > templates/PROMPT.md << 'EOF'
-# Ralph Development Instructions
+# Korero Development Instructions
 
 ## Context
-You are Ralph, an autonomous AI development agent working on a [YOUR PROJECT NAME] project.
+You are Korero, an autonomous AI development agent working on a [YOUR PROJECT NAME] project.
 
 ## Current Objectives
-1. Study .ralph/specs/* to learn about the project specifications
-2. Review .ralph/fix_plan.md for current priorities
+1. Study .korero/specs/* to learn about the project specifications
+2. Review .korero/fix_plan.md for current priorities
 3. Implement the highest priority item using best practices
 4. Use parallel subagents for complex tasks (max 100 concurrent)
 5. Run tests after each implementation
-6. Update documentation and .ralph/fix_plan.md
+6. Update documentation and .korero/fix_plan.md
 
 ## Key Principles
 - ONE task per loop - focus on the most important thing
 - Search the codebase before assuming something isn't implemented
 - Use subagents for expensive operations (file searching, analysis)
 - Write comprehensive tests with clear documentation
-- Update .ralph/fix_plan.md with your learnings
+- Update .korero/fix_plan.md with your learnings
 - Commit working changes with descriptive messages
 
 ## 🧪 Testing Guidelines (CRITICAL)
@@ -569,28 +569,28 @@ You are Ralph, an autonomous AI development agent working on a [YOUR PROJECT NAM
 
 ## Completion Awareness
 If you believe the project is complete or nearly complete:
-- Update .ralph/fix_plan.md to reflect completion status
+- Update .korero/fix_plan.md to reflect completion status
 - Summarize what has been accomplished
 - Note any remaining minor tasks
 - Do NOT continue with busy work like extensive testing
 - Do NOT implement features not in the specifications
 
 ## File Structure
-- .ralph/specs/: Project specifications and requirements
+- .korero/specs/: Project specifications and requirements
 - src/: Source code implementation
-- .ralph/examples/: Example usage and test cases
-- .ralph/fix_plan.md: Prioritized TODO list
-- .ralph/AGENT.md: Project build and run instructions
+- .korero/examples/: Example usage and test cases
+- .korero/fix_plan.md: Prioritized TODO list
+- .korero/AGENT.md: Project build and run instructions
 
 ## Current Task
-Follow .ralph/fix_plan.md and choose the most important item to implement next.
+Follow .korero/fix_plan.md and choose the most important item to implement next.
 Use your judgment to prioritize what will have the biggest impact on project progress.
 
 Remember: Quality over speed. Build it right the first time. Know when you're done.
 EOF
 
 cat > templates/fix_plan.md << 'EOF'
-# Ralph Fix Plan
+# Korero Fix Plan
 
 ## High Priority
 - [ ] Set up basic project structure and build system
@@ -670,23 +670,23 @@ EOF
 
 # Create gitignore
 cat > .gitignore << 'EOF'
-# Ralph generated files (inside .ralph/ subfolder)
-.ralph/.call_count
-.ralph/.last_reset
-.ralph/.exit_signals
-.ralph/status.json
-.ralph/.ralph_session
-.ralph/.ralph_session_history
-.ralph/.claude_session_id
-.ralph/.response_analysis
-.ralph/.circuit_breaker_state
-.ralph/.circuit_breaker_history
+# Korero generated files (inside .korero/ subfolder)
+.korero/.call_count
+.korero/.last_reset
+.korero/.exit_signals
+.korero/status.json
+.korero/.korero_session
+.korero/.korero_session_history
+.korero/.claude_session_id
+.korero/.response_analysis
+.korero/.circuit_breaker_state
+.korero/.circuit_breaker_history
 
-# Ralph logs and generated docs
-.ralph/logs/*
-!.ralph/logs/.gitkeep
-.ralph/docs/generated/*
-!.ralph/docs/generated/.gitkeep
+# Korero logs and generated docs
+.korero/logs/*
+!.korero/logs/.gitkeep
+.korero/docs/generated/*
+!.korero/docs/generated/.gitkeep
 
 # General logs
 *.log
@@ -715,8 +715,8 @@ target/
 *.swp
 *.swo
 
-# Ralph backup directories (created by migration)
-.ralph_backup_*
+# Korero backup directories (created by migration)
+.korero_backup_*
 EOF
 
 # Make scripts executable
@@ -725,14 +725,14 @@ chmod +x *.sh
 echo "✅ All files created successfully!"
 echo ""
 echo "📁 Repository structure:"
-echo "├── ralph_loop.sh          # Main Ralph loop"
-echo "├── ralph_monitor.sh       # Live monitoring"
+echo "├── korero_loop.sh          # Main Korero loop"
+echo "├── korero_monitor.sh       # Live monitoring"
 echo "├── setup.sh              # Project setup"
 echo "├── templates/            # Template files"
 echo "└── .gitignore           # Git ignore rules"
 echo ""
 echo "🚀 Next steps:"
 echo "1. git add ."
-echo "2. git commit -m 'Add Ralph for Claude Code implementation'"
+echo "2. git commit -m 'Add Korero for Claude Code implementation'"
 echo "3. git push origin main"
 echo "4. ./setup.sh my-first-project"

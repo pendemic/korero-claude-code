@@ -1,6 +1,6 @@
 # Example: REST API with Specifications
 
-This example shows a medium-complexity Ralph configuration for a bookstore REST API. It demonstrates when and how to use the specs/ directory.
+This example shows a medium-complexity Korero configuration for a bookstore REST API. It demonstrates when and how to use the specs/ directory.
 
 ## What This Example Demonstrates
 
@@ -12,12 +12,12 @@ This example shows a medium-complexity Ralph configuration for a bookstore REST 
 
 ```
 rest-api/
-├── .ralph/
+├── .korero/
 │   ├── PROMPT.md         # Project vision and principles
 │   ├── fix_plan.md       # Implementation tasks
 │   └── specs/
 │       └── api.md        # Detailed API specifications
-├── .ralphrc              # Configuration (auto-generated)
+├── .korerorc              # Configuration (auto-generated)
 └── README.md             # This file
 ```
 
@@ -52,9 +52,9 @@ That's what `specs/api.md` is for.
    pip install fastapi uvicorn sqlalchemy pytest
    ```
 
-3. Run Ralph:
+3. Run Korero:
    ```bash
-   ralph --monitor
+   korero --monitor
    ```
 
 ## Key Points
@@ -71,7 +71,7 @@ When you need to specify:
 - Business rules and constraints
 - Error handling behavior
 
-These details help Ralph implement correctly on the first try.
+These details help Korero implement correctly on the first try.
 
 ### fix_plan.md References specs/
 
@@ -80,7 +80,7 @@ Notice how tasks reference the specification:
 - [ ] Implement book endpoints per specs/api.md
 ```
 
-This tells Ralph where to find the detailed requirements.
+This tells Korero where to find the detailed requirements.
 
 ## When to Add More Specs
 

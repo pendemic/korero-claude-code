@@ -30,4 +30,4 @@
 - [ ] Performance optimization (eager loading for relationships)
 
 ## Discovered
-<!-- Ralph will add discovered tasks here -->
+<!-- Korero will add discovered tasks here -->

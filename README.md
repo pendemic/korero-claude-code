@@ -1,18 +1,18 @@
-# Ralph for Claude Code
+# Korero for Claude Code
 
-[![CI](https://github.com/frankbria/ralph-claude-code/actions/workflows/test.yml/badge.svg)](https://github.com/frankbria/ralph-claude-code/actions/workflows/test.yml)
+[![CI](https://github.com/frankbria/korero-claude-code/actions/workflows/test.yml/badge.svg)](https://github.com/frankbria/korero-claude-code/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Version](https://img.shields.io/badge/version-0.11.4-blue)
 ![Tests](https://img.shields.io/badge/tests-465%20passing-green)
-[![GitHub Issues](https://img.shields.io/github/issues/frankbria/ralph-claude-code)](https://github.com/frankbria/ralph-claude-code/issues)
+[![GitHub Issues](https://img.shields.io/github/issues/frankbria/korero-claude-code)](https://github.com/frankbria/korero-claude-code/issues)
 [![Mentioned in Awesome Claude Code](https://awesome.re/mentioned-badge.svg)](https://github.com/hesreallyhim/awesome-claude-code)
 [![Follow on X](https://img.shields.io/twitter/follow/FrankBria18044?style=social)](https://x.com/FrankBria18044)
 
-> **Autonomous AI development loop with intelligent exit detection and rate limiting**
+> **Multi-agent ideation and development system for Claude Code**
 
-Ralph is an implementation of the Geoffrey Huntley's technique for Claude Code that enables continuous autonomous development cycles he named after [Ralph Wiggum](https://ghuntley.com/ralph/). It enables continuous autonomous development cycles where Claude Code iteratively improves your project until completion, with built-in safeguards to prevent infinite loops and API overuse.
+Korero is a multi-agent ideation and development system for Claude Code with two modes: a **Continuous Coding Loop** (domain experts propose ideas, mandatory agents debate them, winning idea gets implemented and committed) and a **Continuous Idea Loop** (same debate process, but only the best idea is saved to disk). Built-in safeguards prevent infinite loops and API overuse.
 
-**Install once, use everywhere** - Ralph becomes a global command available in any directory.
+**Install once, use everywhere** - Korero becomes a global command available in any directory.
 
 ## Project Status
 
@@ -21,24 +21,25 @@ Ralph is an implementation of the Geoffrey Huntley's technique for Claude Code t
 **Test Coverage**: 465 tests, 100% pass rate
 
 ### What's Working Now
+- **Multi-agent ideation system** with domain expert agents and structured debate protocol
+- **Two loop modes**: Continuous Coding Loop (ideation + implementation) and Continuous Idea Loop (ideation only)
+- **Auto-generated domain agents** via Claude Code CLI based on project subject
+- **3 mandatory evaluation agents**: Devil's Advocate, Technical Feasibility Analyst, Idea Orchestrator
+- **Configurable agent count** (1-10 domain agents) and loop limits
+- **Idea accumulation** in `.korero/ideas/IDEAS.md`
 - Autonomous development loops with intelligent exit detection
 - **Dual-condition exit gate**: Requires BOTH completion indicators AND explicit EXIT_SIGNAL
 - Rate limiting with hourly reset (100 calls/hour, configurable)
 - Circuit breaker with advanced error detection (prevents runaway loops)
 - Response analyzer with semantic understanding and two-stage error filtering
 - **JSON output format support with automatic fallback to text parsing**
-- **Session continuity with `--resume` flag for context preservation (no session hijacking)**
-- **Session expiration with configurable timeout (default: 24 hours)**
-- **Modern CLI flags: `--output-format`, `--allowed-tools`, `--no-continue`**
-- **Interactive project enablement with `ralph-enable` wizard**
-- **`.ralphrc` configuration file for project settings**
+- **Session continuity with `--resume` flag for context preservation**
+- **Interactive project enablement with `korero-enable` 7-phase wizard**
+- **`.korerorc` configuration file for project settings**
 - **Live streaming output with `--live` flag for real-time Claude Code visibility**
-- Multi-line error matching for accurate stuck loop detection
-- 5-hour API limit handling with user prompts
 - tmux integration for live monitoring
 - PRD import functionality
 - **CI/CD pipeline with GitHub Actions**
-- **Dedicated uninstall script for clean removal**
 
 ### Recent Improvements
 
@@ -47,8 +48,8 @@ Ralph is an implementation of the Geoffrey Huntley's technique for Claude Code t
 - Fixed checkbox regex: Date entries `[2026-01-29]` no longer counted as checkboxes (#144)
 - Fixed session hijacking: Use `--resume <session_id>` instead of `--continue` (#151)
 - Fixed EXIT_SIGNAL override: `STATUS: COMPLETE` with `EXIT_SIGNAL: false` now continues working (#146)
-- Fixed ralph-import hanging indefinitely (added `--print` flag for non-interactive mode)
-- Fixed ralph-import absolute path handling
+- Fixed korero-import hanging indefinitely (added `--print` flag for non-interactive mode)
+- Fixed korero-import absolute path handling
 - Fixed cross-platform date commands for macOS with Homebrew coreutils
 - Added configurable circuit breaker thresholds via environment variables (#99)
 - Added tmux support for non-zero `base-index` configurations
@@ -61,10 +62,10 @@ Ralph is an implementation of the Geoffrey Huntley's technique for Claude Code t
 - Added 12 new tests for live streaming and beads import improvements
 
 **v0.11.2 - Setup Permissions Fix**
-- Fixed issue #136: `ralph-setup` now creates `.ralphrc` with consistent tool permissions
+- Fixed issue #136: `korero-setup` now creates `.korerorc` with consistent tool permissions
 - Updated default `ALLOWED_TOOLS` to include `Edit`, `Bash(npm *)`, and `Bash(pytest)`
-- Both `ralph-setup` and `ralph-enable` now create identical `.ralphrc` configurations
-- Monitor now forwards all CLI parameters to inner ralph loop (#126)
+- Both `korero-setup` and `korero-enable` now create identical `.korerorc` configurations
+- Monitor now forwards all CLI parameters to inner korero loop (#126)
 - Added 16 new tests for permissions and parameter forwarding
 
 **v0.11.1 - Completion Indicators Fix**
@@ -72,34 +73,38 @@ Ralph is an implementation of the Geoffrey Huntley's technique for Claude Code t
 - `completion_indicators` now only accumulates when `EXIT_SIGNAL: true`
 - Aligns with documented dual-condition exit gate behavior
 
-**v0.11.0 - Ralph Enable Wizard**
-- Added `ralph-enable` interactive wizard for enabling Ralph in existing projects
-- 5-phase wizard: Environment Detection → Task Source Selection → Configuration → File Generation → Verification
-- Auto-detects project type (TypeScript, Python, Rust, Go) and framework (Next.js, FastAPI, Django)
+**v0.11.0 - Korero Enable Wizard + Multi-Agent Ideation**
+- Added `korero-enable` interactive wizard (7-phase) with mode selection, agent generation, and loop limits
+- **Multi-agent ideation system**: Domain experts propose ideas, 3 mandatory agents debate them
+- **Two modes**: Continuous Coding Loop (implement + commit) and Continuous Idea Loop (save ideas only)
+- Auto-generate domain agents via Claude Code CLI or enter manually
+- Configurable agent count (1-10) and loop limits (10, 20, 50, continuous)
+- Idea accumulation in `.korero/ideas/IDEAS.md`
+- Auto-detects project type (TypeScript, Python, Rust, Go) and framework
 - Imports tasks from beads, GitHub Issues, or PRD documents
-- Added `ralph-enable-ci` non-interactive version for CI/automation
+- Added `korero-enable-ci` with `--mode`, `--subject`, `--agents`, `--loops` flags
 - New library components: `enable_core.sh`, `wizard_utils.sh`, `task_sources.sh`
 
 **v0.10.1 - Bug Fixes & Monitor Path Corrections**
-- Fixed `ralph_monitor.sh` hardcoded paths for v0.10.0 compatibility
+- Fixed `korero_monitor.sh` hardcoded paths for v0.10.0 compatibility
 - Fixed EXIT_SIGNAL parsing in JSON format
 - Added safety circuit breaker (force exit after 5 consecutive completion indicators)
 - Fixed checkbox parsing for indented markdown
 
-**v0.10.0 - .ralph/ Subfolder Structure (BREAKING CHANGE)**
-- **Breaking**: Moved all Ralph-specific files to `.ralph/` subfolder
+**v0.10.0 - .korero/ Subfolder Structure (BREAKING CHANGE)**
+- **Breaking**: Moved all Korero-specific files to `.korero/` subfolder
 - Project root stays clean: only `src/`, `README.md`, and user files remain
-- Added `ralph-migrate` command for upgrading existing projects
+- Added `korero-migrate` command for upgrading existing projects
 
 <details>
 <summary>Earlier versions (v0.9.x)</summary>
 
 **v0.9.9 - EXIT_SIGNAL Gate & Uninstall Script**
 - Fixed premature exit bug: completion indicators now require Claude's explicit `EXIT_SIGNAL: true`
-- Added dedicated `uninstall.sh` script for clean Ralph removal
+- Added dedicated `uninstall.sh` script for clean Korero removal
 
 **v0.9.8 - Modern CLI for PRD Import**
-- Modernized `ralph_import.sh` to use Claude Code CLI JSON output format
+- Modernized `korero_import.sh` to use Claude Code CLI JSON output format
 - Enhanced error handling with structured JSON error messages
 
 **v0.9.7 - Session Lifecycle Management**
@@ -127,150 +132,153 @@ Ralph is an implementation of the Geoffrey Huntley's technique for Claude Code t
 
 ## Features
 
+- **Multi-Agent Ideation** - Domain expert agents propose improvements, mandatory agents debate them in structured rounds
+- **Two Loop Modes** - Continuous Coding Loop (ideation + implementation) or Continuous Idea Loop (ideation only)
+- **Auto-Generated Agents** - Domain experts generated via Claude Code CLI based on project subject
+- **Structured Debate Protocol** - 3-round evaluation: Evaluation → Rebuttal → Final Selection
+- **Idea Accumulation** - Winning ideas saved per-loop and indexed in `.korero/ideas/IDEAS.md`
 - **Autonomous Development Loop** - Continuously executes Claude Code with your project requirements
 - **Intelligent Exit Detection** - Dual-condition check requiring BOTH completion indicators AND explicit EXIT_SIGNAL
 - **Session Continuity** - Preserves context across loop iterations with automatic session management
-- **Session Expiration** - Configurable timeout (default: 24 hours) with automatic session reset
 - **Rate Limiting** - Built-in API call management with hourly limits and countdown timers
-- **5-Hour API Limit Handling** - Detects Claude's 5-hour usage limit and offers wait/exit options
 - **Live Monitoring** - Real-time dashboard showing loop status, progress, and logs
 - **Task Management** - Structured approach with prioritized task lists and progress tracking
-- **Project Templates** - Quick setup for new projects with best-practice structure
-- **Interactive Project Setup** - `ralph-enable` wizard for existing projects with task import
-- **Configuration Files** - `.ralphrc` for project-specific settings and tool permissions
-- **Comprehensive Logging** - Detailed execution logs with timestamps and status tracking
-- **Configurable Timeouts** - Set execution timeout for Claude Code operations (1-120 minutes)
-- **Verbose Progress Mode** - Optional detailed progress updates during execution
+- **Interactive Project Setup** - `korero-enable` 7-phase wizard with mode selection and agent generation
+- **Configuration Files** - `.korerorc` for project-specific settings, mode, agents, and loop limits
 - **Response Analyzer** - AI-powered analysis of Claude Code responses with semantic understanding
-- **Circuit Breaker** - Advanced error detection with two-stage filtering, multi-line error matching, and automatic recovery
+- **Circuit Breaker** - Advanced error detection with two-stage filtering and automatic recovery
 - **CI/CD Integration** - GitHub Actions workflow with automated testing
-- **Clean Uninstall** - Dedicated uninstall script for complete removal
 - **Live Streaming Output** - Real-time visibility into Claude Code execution with `--live` flag
 
 ## Quick Start
 
-Ralph has two phases: **one-time installation** and **per-project setup**.
+Korero has two phases: **one-time installation** and **per-project setup**.
 
 ```
 INSTALL ONCE              USE MANY TIMES
 +-----------------+          +----------------------+
-| ./install.sh    |    ->    | ralph-setup project1 |
-|                 |          | ralph-enable         |
-| Adds global     |          | ralph-import prd.md  |
+| ./install.sh    |    ->    | korero-setup project1 |
+|                 |          | korero-enable         |
+| Adds global     |          | korero-import prd.md  |
 | commands        |          | ...                  |
 +-----------------+          +----------------------+
 ```
 
-### Phase 1: Install Ralph (One Time Only)
+### Phase 1: Install Korero (One Time Only)
 
-Install Ralph globally on your system:
+Install Korero globally on your system:
 
 ```bash
-git clone https://github.com/frankbria/ralph-claude-code.git
-cd ralph-claude-code
+git clone https://github.com/frankbria/korero-claude-code.git
+cd korero-claude-code
 ./install.sh
 ```
 
-This adds `ralph`, `ralph-monitor`, `ralph-setup`, `ralph-import`, `ralph-migrate`, `ralph-enable`, and `ralph-enable-ci` commands to your PATH.
+This adds `korero`, `korero-monitor`, `korero-setup`, `korero-import`, `korero-migrate`, `korero-enable`, and `korero-enable-ci` commands to your PATH.
 
 > **Note**: You only need to do this once per system. After installation, you can delete the cloned repository if desired.
 
 ### Phase 2: Initialize Projects (Per Project)
 
-#### Option A: Enable Ralph in Existing Project (Recommended)
+#### Option A: Enable Korero in Existing Project (Recommended)
 ```bash
 cd my-existing-project
 
-# Interactive wizard - auto-detects project type and imports tasks
-ralph-enable
+# Interactive wizard - selects mode, generates agents, imports tasks
+korero-enable
 
-# Or with specific task source
-ralph-enable --from beads
-ralph-enable --from github --label "sprint-1"
-ralph-enable --from prd ./docs/requirements.md
+# Idea loop for brainstorming domain improvements
+korero-enable --mode idea --subject "data analysis tool" --agents 4
+
+# Coding loop with auto-generated agents and limited iterations
+korero-enable --mode coding --subject "web app" --loops 20
+
+# Or with specific task source (coding mode)
+korero-enable --from beads
+korero-enable --from github --label "sprint-1"
 
 # Start autonomous development
-ralph --monitor
+korero --monitor
 ```
 
 #### Option B: Import Existing PRD/Specifications
 ```bash
-# Convert existing PRD/specs to Ralph format
-ralph-import my-requirements.md my-project
+# Convert existing PRD/specs to Korero format
+korero-import my-requirements.md my-project
 cd my-project
 
 # Review and adjust the generated files:
-# - .ralph/PROMPT.md (Ralph instructions)
-# - .ralph/fix_plan.md (task priorities)
-# - .ralph/specs/requirements.md (technical specs)
+# - .korero/PROMPT.md (Korero instructions)
+# - .korero/fix_plan.md (task priorities)
+# - .korero/specs/requirements.md (technical specs)
 
 # Start autonomous development
-ralph --monitor
+korero --monitor
 ```
 
 #### Option C: Create New Project from Scratch
 ```bash
-# Create blank Ralph project
-ralph-setup my-awesome-project
+# Create blank Korero project
+korero-setup my-awesome-project
 cd my-awesome-project
 
 # Configure your project requirements manually
-# Edit .ralph/PROMPT.md with your project goals
-# Edit .ralph/specs/ with detailed specifications
-# Edit .ralph/fix_plan.md with initial priorities
+# Edit .korero/PROMPT.md with your project goals
+# Edit .korero/specs/ with detailed specifications
+# Edit .korero/fix_plan.md with initial priorities
 
 # Start autonomous development
-ralph --monitor
+korero --monitor
 ```
 
 ### Ongoing Usage (After Setup)
 
-Once Ralph is installed and your project is initialized:
+Once Korero is installed and your project is initialized:
 
 ```bash
-# Navigate to any Ralph project and run:
-ralph --monitor              # Integrated tmux monitoring (recommended)
+# Navigate to any Korero project and run:
+korero --monitor              # Integrated tmux monitoring (recommended)
 
 # Or use separate terminals:
-ralph                        # Terminal 1: Ralph loop
-ralph-monitor               # Terminal 2: Live monitor dashboard
+korero                        # Terminal 1: Korero loop
+korero-monitor               # Terminal 2: Live monitor dashboard
 ```
 
-### Uninstalling Ralph
+### Uninstalling Korero
 
-To completely remove Ralph from your system:
+To completely remove Korero from your system:
 
 ```bash
 # Run the uninstall script
 ./uninstall.sh
 
 # Or if you deleted the repo, download and run:
-curl -sL https://raw.githubusercontent.com/frankbria/ralph-claude-code/main/uninstall.sh | bash
+curl -sL https://raw.githubusercontent.com/frankbria/korero-claude-code/main/uninstall.sh | bash
 ```
 
-## Understanding Ralph Files
+## Understanding Korero Files
 
-After running `ralph-enable` or `ralph-import`, you'll have a `.ralph/` directory with several files. Here's what each file does and whether you need to edit it:
+After running `korero-enable` or `korero-import`, you'll have a `.korero/` directory with several files. Here's what each file does and whether you need to edit it:
 
 | File | Auto-Generated? | You Should... |
 |------|-----------------|---------------|
-| `.ralph/PROMPT.md` | Yes (smart defaults) | **Review & customize** project goals and principles |
-| `.ralph/fix_plan.md` | Yes (can import tasks) | **Add/modify** specific implementation tasks |
-| `.ralph/AGENT.md` | Yes (detects build commands) | Rarely edit (auto-maintained by Ralph) |
-| `.ralph/specs/` | Empty directory | Add files when PROMPT.md isn't detailed enough |
-| `.ralph/specs/stdlib/` | Empty directory | Add reusable patterns and conventions |
-| `.ralphrc` | Yes (project-aware) | Rarely edit (sensible defaults) |
+| `.korero/PROMPT.md` | Yes (includes debate protocol) | **Review & customize** project goals and principles |
+| `.korero/fix_plan.md` | Yes (can import tasks) | **Add/modify** specific implementation tasks |
+| `.korero/AGENT.md` | Yes (domain + evaluation agents) | **Edit to customize** agent personas and expertise |
+| `.korero/ideas/` | Created in idea/coding modes | Read accumulated ideas from each loop iteration |
+| `.korero/specs/` | Empty directory | Add files when PROMPT.md isn't detailed enough |
+| `.korerorc` | Yes (project-aware) | Edit to change mode, agent count, or loop limits |
 
 ### Key File Relationships
 
 ```
-PROMPT.md (high-level goals)
+PROMPT.md (debate protocol + project goals)
     ↓
-specs/ (detailed requirements when needed)
+AGENT.md (domain experts + evaluation agents)
     ↓
-fix_plan.md (specific tasks Ralph executes)
+fix_plan.md (specific tasks Korero executes)
     ↓
-AGENT.md (build/test commands - auto-maintained)
+ideas/ (accumulated winning ideas from each loop)
 ```
 
 ### When to Use specs/
@@ -283,21 +291,21 @@ See the [User Guide](docs/user-guide/) for detailed explanations and the [exampl
 
 ## How It Works
 
-Ralph operates on a simple but powerful cycle:
+Korero operates on a multi-agent ideation cycle:
 
-1. **Read Instructions** - Loads `PROMPT.md` with your project requirements
-2. **Execute Claude Code** - Runs Claude Code with current context and priorities
-3. **Track Progress** - Updates task lists and logs execution results
-4. **Evaluate Completion** - Checks for exit conditions and project completion signals
-5. **Repeat** - Continues until project is complete or limits are reached
+1. **Read Instructions** - Loads `PROMPT.md` (debate protocol) and `AGENT.md` (agent personas)
+2. **Phase 1: Idea Generation** - Each domain agent proposes ONE improvement
+3. **Phase 2: Structured Debate** - Devil's Advocate, Technical Feasibility Analyst, and Idea Orchestrator evaluate proposals in 3 rounds (Evaluation → Rebuttal → Final Selection)
+4. **Phase 3: Implementation** (coding mode only) - Winning idea gets implemented and committed
+5. **Save & Repeat** - Winning idea saved to `.korero/ideas/`, loop continues until complete or limit reached
 
 ### Intelligent Exit Detection
 
-Ralph uses a **dual-condition check** to prevent premature exits during productive iterations:
+Korero uses a **dual-condition check** to prevent premature exits during productive iterations:
 
 **Exit requires BOTH conditions:**
 1. `completion_indicators >= 2` (heuristic detection from natural language patterns)
-2. Claude's explicit `EXIT_SIGNAL: true` in the RALPH_STATUS block
+2. Claude's explicit `EXIT_SIGNAL: true` in the KORERO_STATUS block
 
 **Example behavior:**
 ```
@@ -313,38 +321,40 @@ Loop 8: Claude outputs "All tasks complete, project ready"
 ```
 
 **Other exit conditions:**
-- All tasks in `.ralph/fix_plan.md` marked complete
+- All tasks in `.korero/fix_plan.md` marked complete
 - Multiple consecutive "done" signals from Claude Code
 - Too many test-focused loops (indicating feature completeness)
 - Claude API 5-hour usage limit reached (with user prompt to wait or exit)
 
-## Enabling Ralph in Existing Projects
+## Enabling Korero in Existing Projects
 
-The `ralph-enable` command provides an interactive wizard for adding Ralph to existing projects:
+The `korero-enable` command provides an interactive 7-phase wizard for adding Korero to existing projects:
 
 ```bash
 cd my-existing-project
-ralph-enable
+korero-enable
 ```
 
 **The wizard:**
 1. **Detects Environment** - Identifies project type (TypeScript, Python, etc.) and framework
-2. **Selects Task Sources** - Choose from beads, GitHub Issues, or PRD documents
-3. **Configures Settings** - Set tool permissions and loop parameters
-4. **Generates Files** - Creates `.ralph/` directory and `.ralphrc` configuration
-5. **Verifies Setup** - Confirms all files are created correctly
+2. **Selects Mode** - Continuous Coding Loop (ideation + implementation) or Continuous Idea Loop (ideation only)
+3. **Configures Subject & Agents** - Enter project subject, choose agent count (1-10), select auto-generate or manual entry
+4. **Selects Task Sources** - Choose from beads, GitHub Issues, or PRD documents (coding mode only)
+5. **Configures Settings** - Set tool permissions, loop limits (10, 20, 50, or continuous)
+6. **Generates Files** - Creates `.korero/` directory, AGENT.md with domain + evaluation agents, `.korerorc`
+7. **Verifies Setup** - Confirms all files are created correctly
 
 **Non-interactive mode for CI/automation:**
 ```bash
-ralph-enable-ci                              # Sensible defaults
-ralph-enable-ci --from github               # Import from GitHub Issues
-ralph-enable-ci --project-type typescript   # Override detection
-ralph-enable-ci --json                      # Machine-readable output
+korero-enable-ci                                                    # Sensible defaults
+korero-enable-ci --mode idea --subject "ML pipeline" --agents 5     # Idea loop
+korero-enable-ci --mode coding --subject "web app" --loops 20       # Coding loop
+korero-enable-ci --from github --json                               # Import + JSON output
 ```
 
 ## Importing Existing Requirements
 
-Ralph can convert existing PRDs, specifications, or requirement documents into the proper Ralph format using Claude Code.
+Korero can convert existing PRDs, specifications, or requirement documents into the proper Korero format using Claude Code.
 
 ### Supported Formats
 - **Markdown** (.md) - Product requirements, technical specs
@@ -352,44 +362,44 @@ Ralph can convert existing PRDs, specifications, or requirement documents into t
 - **JSON** (.json) - Structured requirement data
 - **Word documents** (.docx) - Business requirements
 - **PDFs** (.pdf) - Design documents, specifications
-- **Any text-based format** - Ralph will intelligently parse the content
+- **Any text-based format** - Korero will intelligently parse the content
 
 ### Usage Examples
 
 ```bash
 # Convert a markdown PRD
-ralph-import product-requirements.md my-app
+korero-import product-requirements.md my-app
 
 # Convert a text specification
-ralph-import requirements.txt webapp
+korero-import requirements.txt webapp
 
 # Convert a JSON API spec
-ralph-import api-spec.json backend-service
+korero-import api-spec.json backend-service
 
-# Let Ralph auto-name the project from filename
-ralph-import design-doc.pdf
+# Let Korero auto-name the project from filename
+korero-import design-doc.pdf
 ```
 
 ### What Gets Generated
 
-Ralph-import creates a complete project with:
+Korero-import creates a complete project with:
 
-- **.ralph/PROMPT.md** - Converted into Ralph development instructions
-- **.ralph/fix_plan.md** - Requirements broken down into prioritized tasks
-- **.ralph/specs/requirements.md** - Technical specifications extracted from your document
-- **.ralphrc** - Project configuration file with tool permissions
-- **Standard Ralph structure** - All necessary directories and template files in `.ralph/`
+- **.korero/PROMPT.md** - Converted into Korero development instructions
+- **.korero/fix_plan.md** - Requirements broken down into prioritized tasks
+- **.korero/specs/requirements.md** - Technical specifications extracted from your document
+- **.korerorc** - Project configuration file with tool permissions
+- **Standard Korero structure** - All necessary directories and template files in `.korero/`
 
 The conversion is intelligent and preserves your original requirements while making them actionable for autonomous development.
 
 ## Configuration
 
-### Project Configuration (.ralphrc)
+### Project Configuration (.korerorc)
 
-Each Ralph project can have a `.ralphrc` configuration file:
+Each Korero project can have a `.korerorc` configuration file:
 
 ```bash
-# .ralphrc - Ralph project configuration
+# .korerorc - Korero project configuration
 PROJECT_NAME="my-project"
 PROJECT_TYPE="typescript"
 
@@ -412,17 +422,17 @@ CB_SAME_ERROR_THRESHOLD=5
 
 ### Rate Limiting & Circuit Breaker
 
-Ralph includes intelligent rate limiting and circuit breaker functionality:
+Korero includes intelligent rate limiting and circuit breaker functionality:
 
 ```bash
 # Default: 100 calls per hour
-ralph --calls 50
+korero --calls 50
 
 # With integrated monitoring
-ralph --monitor --calls 50
+korero --monitor --calls 50
 
 # Check current usage
-ralph --status
+korero --status
 ```
 
 The circuit breaker automatically:
@@ -435,7 +445,7 @@ The circuit breaker automatically:
 
 ### Claude API 5-Hour Limit
 
-When Claude's 5-hour usage limit is reached, Ralph:
+When Claude's 5-hour usage limit is reached, Korero:
 1. Detects the limit error automatically
 2. Prompts you to choose:
    - **Option 1**: Wait 60 minutes for the limit to reset (with countdown timer)
@@ -446,67 +456,67 @@ When Claude's 5-hour usage limit is reached, Ralph:
 
 ```bash
 # Use custom prompt file
-ralph --prompt my_custom_instructions.md
+korero --prompt my_custom_instructions.md
 
 # With integrated monitoring
-ralph --monitor --prompt my_custom_instructions.md
+korero --monitor --prompt my_custom_instructions.md
 ```
 
 ### Execution Timeouts
 
 ```bash
 # Set Claude Code execution timeout (default: 15 minutes)
-ralph --timeout 30  # 30-minute timeout for complex tasks
+korero --timeout 30  # 30-minute timeout for complex tasks
 
 # With monitoring and custom timeout
-ralph --monitor --timeout 60  # 60-minute timeout
+korero --monitor --timeout 60  # 60-minute timeout
 
 # Short timeout for quick iterations
-ralph --verbose --timeout 5  # 5-minute timeout with progress
+korero --verbose --timeout 5  # 5-minute timeout with progress
 ```
 
 ### Verbose Mode
 
 ```bash
 # Enable detailed progress updates during execution
-ralph --verbose
+korero --verbose
 
 # Combine with other options
-ralph --monitor --verbose --timeout 30
+korero --monitor --verbose --timeout 30
 ```
 
 ### Live Streaming Output
 
 ```bash
 # Enable real-time visibility into Claude Code execution
-ralph --live
+korero --live
 
 # Combine with monitoring for best experience
-ralph --monitor --live
+korero --monitor --live
 
-# Live output is written to .ralph/live.log
-tail -f .ralph/live.log  # Watch in another terminal
+# Live output is written to .korero/live.log
+tail -f .korero/live.log  # Watch in another terminal
 ```
 
 Live streaming mode shows Claude Code's output in real-time as it works, providing visibility into what's happening during each loop iteration.
 
 ### Session Continuity
 
-Ralph maintains session context across loop iterations for improved coherence:
+Korero maintains session context across loop iterations for improved coherence:
 
 ```bash
 # Sessions are enabled by default with --continue flag
-ralph --monitor                 # Uses session continuity
+korero --monitor                 # Uses session continuity
 
 # Start fresh without session context
-ralph --no-continue             # Isolated iterations
+korero --no-continue             # Isolated iterations
 
 # Reset session manually (clears context)
-ralph --reset-session           # Clears current session
+korero --reset-session           # Clears current session
 
 # Check session status
-cat .ralph/.ralph_session              # View current session file
-cat .ralph/.ralph_session_history      # View session transition history
+cat .korero/.korero_session              # View current session file
+cat .korero/.korero_session_history      # View session transition history
 ```
 
 **Session Auto-Reset Triggers:**
@@ -516,11 +526,11 @@ cat .ralph/.ralph_session_history      # View session transition history
 - Manual circuit breaker reset (`--reset-circuit`)
 - Session expiration (default: 24 hours)
 
-Sessions are persisted to `.ralph/.ralph_session` with a configurable expiration (default: 24 hours). The last 50 session transitions are logged to `.ralph/.ralph_session_history` for debugging.
+Sessions are persisted to `.korero/.korero_session` with a configurable expiration (default: 24 hours). The last 50 session transitions are logged to `.korero/.korero_session_history` for debugging.
 
 ### Exit Thresholds
 
-Modify these variables in `~/.ralph/ralph_loop.sh`:
+Modify these variables in `~/.korero/korero_loop.sh`:
 
 **Exit Detection Thresholds:**
 ```bash
@@ -547,46 +557,46 @@ CB_OUTPUT_DECLINE_THRESHOLD=70   # Open circuit if output declines by >70%
 
 ## Project Structure
 
-Ralph creates a standardized structure for each project with a `.ralph/` subfolder for configuration:
+Korero creates a standardized structure for each project with a `.korero/` subfolder for configuration:
 
 ```
 my-project/
-├── .ralph/                 # Ralph configuration and state (hidden folder)
-│   ├── PROMPT.md           # Main development instructions for Ralph
+├── .korero/                 # Korero configuration and state (hidden folder)
+│   ├── PROMPT.md           # Main development instructions for Korero
 │   ├── fix_plan.md        # Prioritized task list
 │   ├── AGENT.md           # Build and run instructions
 │   ├── specs/              # Project specifications and requirements
 │   │   └── stdlib/         # Standard library specifications
 │   ├── examples/           # Usage examples and test cases
-│   ├── logs/               # Ralph execution logs
+│   ├── logs/               # Korero execution logs
 │   └── docs/generated/     # Auto-generated documentation
-├── .ralphrc                # Ralph configuration file (tool permissions, settings)
+├── .korerorc                # Korero configuration file (tool permissions, settings)
 └── src/                    # Source code implementation (at project root)
 ```
 
-> **Migration**: If you have existing Ralph projects using the old flat structure, run `ralph-migrate` to automatically move files to the `.ralph/` subfolder.
+> **Migration**: If you have existing Korero projects using the old flat structure, run `korero-migrate` to automatically move files to the `.korero/` subfolder.
 
 ## Best Practices
 
 ### Writing Effective Prompts
 
 1. **Be Specific** - Clear requirements lead to better results
-2. **Prioritize** - Use `.ralph/fix_plan.md` to guide Ralph's focus
+2. **Prioritize** - Use `.korero/fix_plan.md` to guide Korero's focus
 3. **Set Boundaries** - Define what's in/out of scope
 4. **Include Examples** - Show expected inputs/outputs
 
 ### Project Specifications
 
-- Place detailed requirements in `.ralph/specs/`
-- Use `.ralph/fix_plan.md` for prioritized task tracking
-- Keep `.ralph/AGENT.md` updated with build instructions
+- Place detailed requirements in `.korero/specs/`
+- Use `.korero/fix_plan.md` for prioritized task tracking
+- Keep `.korero/AGENT.md` updated with build instructions
 - Document key decisions and architecture
 
 ### Monitoring Progress
 
-- Use `ralph-monitor` for live status updates
-- Check logs in `.ralph/logs/` for detailed execution history
-- Monitor `.ralph/status.json` for programmatic access
+- Use `korero-monitor` for live status updates
+- Check logs in `.korero/logs/` for detailed execution history
+- Monitor `.korero/status.json` for programmatic access
 - Watch for exit condition signals
 
 ## System Requirements
@@ -623,7 +633,7 @@ bats tests/unit/test_cli_parsing.bats
 bats tests/unit/test_session_continuity.bats
 bats tests/unit/test_enable_core.bats
 bats tests/unit/test_task_sources.bats
-bats tests/unit/test_ralph_enable.bats
+bats tests/unit/test_korero_enable.bats
 bats tests/unit/test_wizard_utils.bats
 bats tests/integration/test_loop_execution.bats
 bats tests/integration/test_prd_import.bats
@@ -658,7 +668,7 @@ sudo yum install tmux
 
 ### Installing GNU coreutils (macOS)
 
-Ralph uses the `timeout` command for execution timeouts. On macOS, you need to install GNU coreutils:
+Korero uses the `timeout` command for execution timeouts. On macOS, you need to install GNU coreutils:
 
 ```bash
 # Install coreutils (provides gtimeout)
@@ -668,7 +678,7 @@ brew install coreutils
 gtimeout --version
 ```
 
-Ralph automatically detects and uses `gtimeout` on macOS. No additional configuration is required after installation.
+Korero automatically detects and uses `gtimeout` on macOS. No additional configuration is required after installation.
 
 ## Monitoring and Debugging
 
@@ -676,10 +686,10 @@ Ralph automatically detects and uses `gtimeout` on macOS. No additional configur
 
 ```bash
 # Integrated tmux monitoring (recommended)
-ralph --monitor
+korero --monitor
 
 # Manual monitoring in separate terminal
-ralph-monitor
+korero-monitor
 ```
 
 Shows real-time:
@@ -689,7 +699,7 @@ Shows real-time:
 - Rate limit countdown
 
 **tmux Controls:**
-- `Ctrl+B` then `D` - Detach from session (keeps Ralph running)
+- `Ctrl+B` then `D` - Detach from session (keeps Korero running)
 - `Ctrl+B` then `←/→` - Switch between panes
 - `tmux list-sessions` - View active sessions
 - `tmux attach -t <session-name>` - Reattach to session
@@ -698,33 +708,33 @@ Shows real-time:
 
 ```bash
 # JSON status output
-ralph --status
+korero --status
 
 # Manual log inspection
-tail -f .ralph/logs/ralph.log
+tail -f .korero/logs/korero.log
 ```
 
 ### Common Issues
 
-- **Rate Limits** - Ralph automatically waits and displays countdown
-- **5-Hour API Limit** - Ralph detects and prompts for user action (wait or exit)
+- **Rate Limits** - Korero automatically waits and displays countdown
+- **5-Hour API Limit** - Korero detects and prompts for user action (wait or exit)
 - **Stuck Loops** - Check `fix_plan.md` for unclear or conflicting tasks
-- **Early Exit** - Review exit thresholds if Ralph stops too soon
-- **Premature Exit** - Check if Claude is setting `EXIT_SIGNAL: false` (Ralph now respects this)
+- **Early Exit** - Review exit thresholds if Korero stops too soon
+- **Premature Exit** - Check if Claude is setting `EXIT_SIGNAL: false` (Korero now respects this)
 - **Execution Timeouts** - Increase `--timeout` value for complex operations
 - **Missing Dependencies** - Ensure Claude Code CLI and tmux are installed
 - **tmux Session Lost** - Use `tmux list-sessions` and `tmux attach` to reconnect
 - **Session Expired** - Sessions expire after 24 hours by default; use `--reset-session` to start fresh
 - **timeout: command not found (macOS)** - Install GNU coreutils: `brew install coreutils`
-- **Permission Denied** - Ralph halts when Claude Code is denied permission for commands:
-  1. Edit `.ralphrc` and update `ALLOWED_TOOLS` to include required tools
+- **Permission Denied** - Korero halts when Claude Code is denied permission for commands:
+  1. Edit `.korerorc` and update `ALLOWED_TOOLS` to include required tools
   2. Common patterns: `Bash(npm *)`, `Bash(git *)`, `Bash(pytest)`
-  3. Run `ralph --reset-session` after updating `.ralphrc`
-  4. Restart with `ralph --monitor`
+  3. Run `korero --reset-session` after updating `.korerorc`
+  4. Restart with `korero --monitor`
 
 ## Contributing
 
-Ralph is actively seeking contributors! We're working toward v1.0.0 with clear priorities and a detailed roadmap.
+Korero is actively seeking contributors! We're working toward v1.0.0 with clear priorities and a detailed roadmap.
 
 **See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete contributor guide** including:
 - Getting started and setup instructions
@@ -738,8 +748,8 @@ Ralph is actively seeking contributors! We're working toward v1.0.0 with clear p
 
 ```bash
 # Fork and clone
-git clone https://github.com/YOUR_USERNAME/ralph-claude-code.git
-cd ralph-claude-code
+git clone https://github.com/YOUR_USERNAME/korero-claude-code.git
+cd korero-claude-code
 
 # Install dependencies and run tests
 npm install
@@ -751,7 +761,7 @@ npm test  # All 465 tests must pass
 1. **Test Implementation** - Help expand test coverage
 2. **Feature Development** - Log rotation, dry-run mode, metrics
 3. **Documentation** - Tutorials, troubleshooting guides, examples
-4. **Real-World Testing** - Use Ralph, report bugs, share feedback
+4. **Real-World Testing** - Use Korero, report bugs, share feedback
 
 **Every contribution matters** - from fixing typos to implementing major features!
 
@@ -761,14 +771,14 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgments
 
-- Inspired by the [Ralph technique](https://ghuntley.com/ralph/) created by Geoffrey Huntley
+- Inspired by the [Korero technique](https://ghuntley.com/korero/) created by Geoffrey Huntley
 - Built for [Claude Code](https://claude.ai/code) by Anthropic
 - Community feedback and contributions
 
 ## Related Projects
 
-- [Claude Code](https://claude.ai/code) - The AI coding assistant that powers Ralph
-- [Aider](https://github.com/paul-gauthier/aider) - Original Ralph technique implementation
+- [Claude Code](https://claude.ai/code) - The AI coding assistant that powers Korero
+- [Aider](https://github.com/paul-gauthier/aider) - Original Korero technique implementation
 
 ---
 
@@ -776,16 +786,16 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ### Installation Commands (Run Once)
 ```bash
-./install.sh              # Install Ralph globally
-./uninstall.sh            # Remove Ralph from system (dedicated script)
-./install.sh uninstall    # Alternative: Remove Ralph from system
+./install.sh              # Install Korero globally
+./uninstall.sh            # Remove Korero from system (dedicated script)
+./install.sh uninstall    # Alternative: Remove Korero from system
 ./install.sh --help       # Show installation help
-ralph-migrate             # Migrate existing project to .ralph/ structure
+korero-migrate             # Migrate existing project to .korero/ structure
 ```
 
-### Ralph Loop Options
+### Korero Loop Options
 ```bash
-ralph [OPTIONS]
+korero [OPTIONS]
   -h, --help              Show help message
   -c, --calls NUM         Set max calls per hour (default: 100)
   -p, --prompt FILE       Set prompt file (default: PROMPT.md)
@@ -804,23 +814,23 @@ ralph [OPTIONS]
 
 ### Project Commands (Per Project)
 ```bash
-ralph-setup project-name     # Create new Ralph project
-ralph-enable                 # Enable Ralph in existing project (interactive)
-ralph-enable-ci              # Enable Ralph in existing project (non-interactive)
-ralph-import prd.md project  # Convert PRD/specs to Ralph project
-ralph --monitor              # Start with integrated monitoring
-ralph --status               # Check current loop status
-ralph --verbose              # Enable detailed progress updates
-ralph --timeout 30           # Set 30-minute execution timeout
-ralph --calls 50             # Limit to 50 API calls per hour
-ralph --reset-session        # Reset session state manually
-ralph --live                 # Enable live streaming output
-ralph-monitor                # Manual monitoring dashboard
+korero-setup project-name     # Create new Korero project
+korero-enable                 # Enable Korero in existing project (interactive)
+korero-enable-ci              # Enable Korero in existing project (non-interactive)
+korero-import prd.md project  # Convert PRD/specs to Korero project
+korero --monitor              # Start with integrated monitoring
+korero --status               # Check current loop status
+korero --verbose              # Enable detailed progress updates
+korero --timeout 30           # Set 30-minute execution timeout
+korero --calls 50             # Limit to 50 API calls per hour
+korero --reset-session        # Reset session state manually
+korero --live                 # Enable live streaming output
+korero-monitor                # Manual monitoring dashboard
 ```
 
 ### tmux Session Management
 ```bash
-tmux list-sessions        # View active Ralph sessions
+tmux list-sessions        # View active Korero sessions
 tmux attach -t <name>     # Reattach to detached session
 # Ctrl+B then D           # Detach from session (keeps running)
 ```
@@ -829,32 +839,30 @@ tmux attach -t <name>     # Reattach to detached session
 
 ## Development Roadmap
 
-Ralph is under active development with a clear path to v1.0.0. See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the complete roadmap.
+Korero is under active development with a clear path to v1.0.0. See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the complete roadmap.
 
 ### Current Status: v0.11.4
 
 **What's Delivered:**
+- **Multi-agent ideation system** with domain experts and structured debate protocol
+- **Two loop modes**: Continuous Coding Loop and Continuous Idea Loop
+- **Auto-generated domain agents** via Claude Code CLI
 - Core loop functionality with intelligent exit detection
 - **Dual-condition exit gate** (completion indicators + EXIT_SIGNAL)
 - Rate limiting (100 calls/hour) and circuit breaker pattern
 - Response analyzer with semantic understanding
-- **452 comprehensive tests** (100% pass rate)
 - **Live streaming output mode** for real-time Claude Code visibility
 - tmux integration and live monitoring
 - PRD import functionality with modern CLI JSON parsing
 - Installation system and project templates
-- Modern CLI commands with JSON output support
 - CI/CD pipeline with GitHub Actions
-- **Interactive `ralph-enable` wizard for existing projects**
-- **`.ralphrc` configuration file support**
+- **Interactive `korero-enable` 7-phase wizard** with mode selection and agent generation
+- **`.korerorc` configuration file** with mode, agents, and loop limit settings
 - Session lifecycle management with auto-reset triggers
-- Session expiration with configurable timeout
-- Dedicated uninstall script
 
 **Test Coverage Breakdown:**
-- Unit Tests: 308 (CLI parsing, JSON, exit detection, rate limiting, session continuity, enable wizard, live streaming)
-- Integration Tests: 144 (loop execution, edge cases, installation, project setup, PRD import)
-- Test Files: 15
+- Unit Tests: 367 (CLI parsing, JSON, exit detection, rate limiting, session continuity, enable wizard, ideation mode)
+- Test Files: 11
 
 ### Path to v1.0.0 (~4 weeks)
 
@@ -877,7 +885,7 @@ Ralph is under active development with a clear path to v1.0.0. See [IMPLEMENTATI
 See [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for detailed progress tracking.
 
 ### How to Contribute
-Ralph is seeking contributors! See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete guide. Priority areas:
+Korero is seeking contributors! See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete guide. Priority areas:
 1. **Test Implementation** - Help expand test coverage ([see plan](IMPLEMENTATION_PLAN.md))
 2. **Feature Development** - Log rotation, dry-run mode, metrics
 3. **Documentation** - Usage examples, tutorials, troubleshooting guides
@@ -885,8 +893,8 @@ Ralph is seeking contributors! See [CONTRIBUTING.md](CONTRIBUTING.md) for the co
 
 ---
 
-**Ready to let AI build your project?** Start with `./install.sh` and let Ralph take it from there!
+**Ready to let AI build your project?** Start with `./install.sh` and let Korero take it from there!
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=frankbria/ralph-claude-code&type=date&legend=top-left)](https://www.star-history.com/#frankbria/ralph-claude-code&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=frankbria/korero-claude-code&type=date&legend=top-left)](https://www.star-history.com/#frankbria/korero-claude-code&type=date&legend=top-left)

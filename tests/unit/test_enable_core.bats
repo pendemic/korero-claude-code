@@ -30,47 +30,47 @@ teardown() {
 # IDEMPOTENCY CHECKS (5 tests)
 # =============================================================================
 
-@test "check_existing_ralph returns 'none' when no .ralph directory exists" {
-    check_existing_ralph || true
+@test "check_existing_korero returns 'none' when no .korero directory exists" {
+    check_existing_korero || true
 
-    assert_equal "$RALPH_STATE" "none"
+    assert_equal "$KORERO_STATE" "none"
 }
 
-@test "check_existing_ralph returns 'complete' when all required files exist" {
-    mkdir -p .ralph
-    echo "# PROMPT" > .ralph/PROMPT.md
-    echo "# Fix Plan" > .ralph/fix_plan.md
-    echo "# Agent" > .ralph/AGENT.md
+@test "check_existing_korero returns 'complete' when all required files exist" {
+    mkdir -p .korero
+    echo "# PROMPT" > .korero/PROMPT.md
+    echo "# Fix Plan" > .korero/fix_plan.md
+    echo "# Agent" > .korero/AGENT.md
 
-    check_existing_ralph || true
+    check_existing_korero || true
 
-    assert_equal "$RALPH_STATE" "complete"
+    assert_equal "$KORERO_STATE" "complete"
 }
 
-@test "check_existing_ralph returns 'partial' when some files are missing" {
-    mkdir -p .ralph
-    echo "# PROMPT" > .ralph/PROMPT.md
+@test "check_existing_korero returns 'partial' when some files are missing" {
+    mkdir -p .korero
+    echo "# PROMPT" > .korero/PROMPT.md
     # Missing fix_plan.md and AGENT.md
 
-    check_existing_ralph || true
+    check_existing_korero || true
 
-    assert_equal "$RALPH_STATE" "partial"
-    [[ " ${RALPH_MISSING_FILES[*]} " =~ ".ralph/fix_plan.md" ]]
-    [[ " ${RALPH_MISSING_FILES[*]} " =~ ".ralph/AGENT.md" ]]
+    assert_equal "$KORERO_STATE" "partial"
+    [[ " ${KORERO_MISSING_FILES[*]} " =~ ".korero/fix_plan.md" ]]
+    [[ " ${KORERO_MISSING_FILES[*]} " =~ ".korero/AGENT.md" ]]
 }
 
-@test "is_ralph_enabled returns 0 when fully enabled" {
-    mkdir -p .ralph
-    echo "# PROMPT" > .ralph/PROMPT.md
-    echo "# Fix Plan" > .ralph/fix_plan.md
-    echo "# Agent" > .ralph/AGENT.md
+@test "is_korero_enabled returns 0 when fully enabled" {
+    mkdir -p .korero
+    echo "# PROMPT" > .korero/PROMPT.md
+    echo "# Fix Plan" > .korero/fix_plan.md
+    echo "# Agent" > .korero/AGENT.md
 
-    run is_ralph_enabled
+    run is_korero_enabled
     assert_success
 }
 
-@test "is_ralph_enabled returns 1 when not enabled" {
-    run is_ralph_enabled
+@test "is_korero_enabled returns 1 when not enabled" {
+    run is_korero_enabled
     assert_failure
 }
 
@@ -124,25 +124,25 @@ teardown() {
 # DIRECTORY STRUCTURE (2 tests)
 # =============================================================================
 
-@test "create_ralph_structure creates all required directories" {
-    run create_ralph_structure
+@test "create_korero_structure creates all required directories" {
+    run create_korero_structure
 
     assert_success
-    [[ -d ".ralph" ]]
-    [[ -d ".ralph/specs" ]]
-    [[ -d ".ralph/examples" ]]
-    [[ -d ".ralph/logs" ]]
-    [[ -d ".ralph/docs/generated" ]]
+    [[ -d ".korero" ]]
+    [[ -d ".korero/specs" ]]
+    [[ -d ".korero/examples" ]]
+    [[ -d ".korero/logs" ]]
+    [[ -d ".korero/docs/generated" ]]
 }
 
-@test "create_ralph_structure is idempotent" {
-    create_ralph_structure
-    echo "test" > .ralph/specs/test.txt
+@test "create_korero_structure is idempotent" {
+    create_korero_structure
+    echo "test" > .korero/specs/test.txt
 
-    run create_ralph_structure
+    run create_korero_structure
 
     assert_success
-    [[ -f ".ralph/specs/test.txt" ]]
+    [[ -f ".korero/specs/test.txt" ]]
 }
 
 # =============================================================================
@@ -293,8 +293,8 @@ EOF
     [[ "$output" =~ "npm test" ]]
 }
 
-@test "generate_ralphrc includes project configuration" {
-    output=$(generate_ralphrc "my-project" "typescript" "local,beads")
+@test "generate_korerorc includes project configuration" {
+    output=$(generate_korerorc "my-project" "typescript" "local,beads")
 
     [[ "$output" =~ "PROJECT_NAME=\"my-project\"" ]]
     [[ "$output" =~ "PROJECT_TYPE=\"typescript\"" ]]
@@ -305,49 +305,49 @@ EOF
 # FULL ENABLE FLOW (3 tests)
 # =============================================================================
 
-@test "enable_ralph_in_directory creates all required files" {
+@test "enable_korero_in_directory creates all required files" {
     export ENABLE_FORCE="false"
     export ENABLE_SKIP_TASKS="true"
     export ENABLE_PROJECT_NAME="test-project"
 
-    run enable_ralph_in_directory
+    run enable_korero_in_directory
 
     assert_success
-    [[ -f ".ralph/PROMPT.md" ]]
-    [[ -f ".ralph/fix_plan.md" ]]
-    [[ -f ".ralph/AGENT.md" ]]
-    [[ -f ".ralphrc" ]]
+    [[ -f ".korero/PROMPT.md" ]]
+    [[ -f ".korero/fix_plan.md" ]]
+    [[ -f ".korero/AGENT.md" ]]
+    [[ -f ".korerorc" ]]
 }
 
-@test "enable_ralph_in_directory returns ALREADY_ENABLED when complete and no force" {
-    mkdir -p .ralph
-    echo "# PROMPT" > .ralph/PROMPT.md
-    echo "# Fix Plan" > .ralph/fix_plan.md
-    echo "# Agent" > .ralph/AGENT.md
+@test "enable_korero_in_directory returns ALREADY_ENABLED when complete and no force" {
+    mkdir -p .korero
+    echo "# PROMPT" > .korero/PROMPT.md
+    echo "# Fix Plan" > .korero/fix_plan.md
+    echo "# Agent" > .korero/AGENT.md
 
     export ENABLE_FORCE="false"
 
-    run enable_ralph_in_directory
+    run enable_korero_in_directory
 
     assert_equal "$status" "$ENABLE_ALREADY_ENABLED"
 }
 
-@test "enable_ralph_in_directory overwrites with force flag" {
-    mkdir -p .ralph
-    echo "old content" > .ralph/PROMPT.md
-    echo "old fix plan" > .ralph/fix_plan.md
-    echo "old agent" > .ralph/AGENT.md
+@test "enable_korero_in_directory overwrites with force flag" {
+    mkdir -p .korero
+    echo "old content" > .korero/PROMPT.md
+    echo "old fix plan" > .korero/fix_plan.md
+    echo "old agent" > .korero/AGENT.md
 
     export ENABLE_FORCE="true"
     export ENABLE_PROJECT_NAME="new-project"
 
-    run enable_ralph_in_directory
+    run enable_korero_in_directory
 
     assert_success
 
     # Verify files were actually overwritten, not just skipped
     local prompt_content
-    prompt_content=$(cat .ralph/PROMPT.md)
+    prompt_content=$(cat .korero/PROMPT.md)
 
     # Should contain new project name, not "old content"
     [[ "$prompt_content" != "old content" ]]

@@ -19,4 +19,4 @@
 - [ ] Add a `todo clear` command to remove all completed tasks
 
 ## Discovered
-<!-- Ralph will add discovered tasks here -->
+<!-- Korero will add discovered tasks here -->

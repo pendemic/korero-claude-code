@@ -186,7 +186,7 @@ setup() {
 }
 
 # =============================================================================
-# INTEGRATION: RALPHRC GENERATION (2 tests)
+# INTEGRATION: KORERORC GENERATION (2 tests)
 # =============================================================================
 
 @test "prompt_text output is safe for shell variable assignment" {

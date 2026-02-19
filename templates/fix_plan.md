@@ -1,4 +1,4 @@
-# Ralph Fix Plan
+# Korero Fix Plan
 
 ## High Priority
 - [ ] Set up basic project structure and build system

@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Claude Code Ralph Loop with Rate Limiting and Documentation
-# Adaptation of the Ralph technique for Claude Code with usage management
+# Claude Code Korero Loop with Rate Limiting and Documentation
+# Adaptation of the Korero technique for Claude Code with usage management
 
 set -e  # Exit on any error
 
@@ -18,23 +18,23 @@ source "$SCRIPT_DIR/lib/response_analyzer.sh"
 source "$SCRIPT_DIR/lib/circuit_breaker.sh"
 
 # Configuration
-# Ralph-specific files live in .ralph/ subfolder
-RALPH_DIR=".ralph"
-PROMPT_FILE="$RALPH_DIR/PROMPT.md"
-LOG_DIR="$RALPH_DIR/logs"
-DOCS_DIR="$RALPH_DIR/docs/generated"
-STATUS_FILE="$RALPH_DIR/status.json"
-PROGRESS_FILE="$RALPH_DIR/progress.json"
+# Korero-specific files live in .korero/ subfolder
+KORERO_DIR=".korero"
+PROMPT_FILE="$KORERO_DIR/PROMPT.md"
+LOG_DIR="$KORERO_DIR/logs"
+DOCS_DIR="$KORERO_DIR/docs/generated"
+STATUS_FILE="$KORERO_DIR/status.json"
+PROGRESS_FILE="$KORERO_DIR/progress.json"
 CLAUDE_CODE_CMD="claude"
 SLEEP_DURATION=3600     # 1 hour in seconds
 LIVE_OUTPUT=false       # Show Claude Code output in real-time (streaming)
-LIVE_LOG_FILE="$RALPH_DIR/live.log"  # Fixed file for live output monitoring
-CALL_COUNT_FILE="$RALPH_DIR/.call_count"
-TIMESTAMP_FILE="$RALPH_DIR/.last_reset"
+LIVE_LOG_FILE="$KORERO_DIR/live.log"  # Fixed file for live output monitoring
+CALL_COUNT_FILE="$KORERO_DIR/.call_count"
+TIMESTAMP_FILE="$KORERO_DIR/.last_reset"
 USE_TMUX=false
 
 # Save environment variable state BEFORE setting defaults
-# These are used by load_ralphrc() to determine which values came from environment
+# These are used by load_korerorc() to determine which values came from environment
 _env_MAX_CALLS_PER_HOUR="${MAX_CALLS_PER_HOUR:-}"
 _env_CLAUDE_TIMEOUT_MINUTES="${CLAUDE_TIMEOUT_MINUTES:-}"
 _env_CLAUDE_OUTPUT_FORMAT="${CLAUDE_OUTPUT_FORMAT:-}"
@@ -52,13 +52,13 @@ CLAUDE_TIMEOUT_MINUTES="${CLAUDE_TIMEOUT_MINUTES:-15}"
 CLAUDE_OUTPUT_FORMAT="${CLAUDE_OUTPUT_FORMAT:-json}"
 CLAUDE_ALLOWED_TOOLS="${CLAUDE_ALLOWED_TOOLS:-Write,Read,Edit,Bash(git *),Bash(npm *),Bash(pytest)}"
 CLAUDE_USE_CONTINUE="${CLAUDE_USE_CONTINUE:-true}"
-CLAUDE_SESSION_FILE="$RALPH_DIR/.claude_session_id" # Session ID persistence file
+CLAUDE_SESSION_FILE="$KORERO_DIR/.claude_session_id" # Session ID persistence file
 CLAUDE_MIN_VERSION="2.0.76"              # Minimum required Claude CLI version
 
 # Session management configuration (Phase 1.2)
 # Note: SESSION_EXPIRATION_SECONDS is defined in lib/response_analyzer.sh (86400 = 24 hours)
-RALPH_SESSION_FILE="$RALPH_DIR/.ralph_session"              # Ralph-specific session tracking (lifecycle)
-RALPH_SESSION_HISTORY_FILE="$RALPH_DIR/.ralph_session_history"  # Session transition history
+KORERO_SESSION_FILE="$KORERO_DIR/.korero_session"              # Korero-specific session tracking (lifecycle)
+KORERO_SESSION_HISTORY_FILE="$KORERO_DIR/.korero_session_history"  # Session transition history
 # Session expiration: 24 hours default balances project continuity with fresh context
 # Too short = frequent context loss; Too long = stale context causes unpredictable behavior
 CLAUDE_SESSION_EXPIRY_HOURS=${CLAUDE_SESSION_EXPIRY_HOURS:-24}
@@ -86,20 +86,20 @@ VALID_TOOL_PATTERNS=(
 )
 
 # Exit detection configuration
-EXIT_SIGNALS_FILE="$RALPH_DIR/.exit_signals"
-RESPONSE_ANALYSIS_FILE="$RALPH_DIR/.response_analysis"
+EXIT_SIGNALS_FILE="$KORERO_DIR/.exit_signals"
+RESPONSE_ANALYSIS_FILE="$KORERO_DIR/.response_analysis"
 MAX_CONSECUTIVE_TEST_LOOPS=3
 MAX_CONSECUTIVE_DONE_SIGNALS=2
 TEST_PERCENTAGE_THRESHOLD=30  # If more than 30% of recent loops are test-only, flag it
 
-# .ralphrc configuration file
-RALPHRC_FILE=".ralphrc"
-RALPHRC_LOADED=false
+# .korerorc configuration file
+KORERORC_FILE=".korerorc"
+KORERORC_LOADED=false
 
-# load_ralphrc - Load project-specific configuration from .ralphrc
+# load_korerorc - Load project-specific configuration from .korerorc
 #
-# This function sources .ralphrc if it exists, applying project-specific
-# settings. Environment variables take precedence over .ralphrc values.
+# This function sources .korerorc if it exists, applying project-specific
+# settings. Environment variables take precedence over .korerorc values.
 #
 # Configuration values that can be overridden:
 #   - MAX_CALLS_PER_HOUR
@@ -111,18 +111,18 @@ RALPHRC_LOADED=false
 #   - CB_NO_PROGRESS_THRESHOLD
 #   - CB_SAME_ERROR_THRESHOLD
 #   - CB_OUTPUT_DECLINE_THRESHOLD
-#   - RALPH_VERBOSE
+#   - KORERO_VERBOSE
 #
-load_ralphrc() {
-    if [[ ! -f "$RALPHRC_FILE" ]]; then
+load_korerorc() {
+    if [[ ! -f "$KORERORC_FILE" ]]; then
         return 0
     fi
 
-    # Source .ralphrc (this may override default values)
+    # Source .korerorc (this may override default values)
     # shellcheck source=/dev/null
-    source "$RALPHRC_FILE"
+    source "$KORERORC_FILE"
 
-    # Map .ralphrc variable names to internal names
+    # Map .korerorc variable names to internal names
     if [[ -n "${ALLOWED_TOOLS:-}" ]]; then
         CLAUDE_ALLOWED_TOOLS="$ALLOWED_TOOLS"
     fi
@@ -132,8 +132,8 @@ load_ralphrc() {
     if [[ -n "${SESSION_EXPIRY_HOURS:-}" ]]; then
         CLAUDE_SESSION_EXPIRY_HOURS="$SESSION_EXPIRY_HOURS"
     fi
-    if [[ -n "${RALPH_VERBOSE:-}" ]]; then
-        VERBOSE_PROGRESS="$RALPH_VERBOSE"
+    if [[ -n "${KORERO_VERBOSE:-}" ]]; then
+        VERBOSE_PROGRESS="$KORERO_VERBOSE"
     fi
 
     # Restore ONLY values that were explicitly set via environment variables
@@ -147,7 +147,7 @@ load_ralphrc() {
     [[ -n "$_env_CLAUDE_SESSION_EXPIRY_HOURS" ]] && CLAUDE_SESSION_EXPIRY_HOURS="$_env_CLAUDE_SESSION_EXPIRY_HOURS"
     [[ -n "$_env_VERBOSE_PROGRESS" ]] && VERBOSE_PROGRESS="$_env_VERBOSE_PROGRESS"
 
-    RALPHRC_LOADED=true
+    KORERORC_LOADED=true
     return 0
 }
 
@@ -185,8 +185,8 @@ get_tmux_base_index() {
 
 # Setup tmux session with monitor
 setup_tmux_session() {
-    local session_name="ralph-$(date +%s)"
-    local ralph_home="${RALPH_HOME:-$HOME/.ralph}"
+    local session_name="korero-$(date +%s)"
+    local korero_home="${KORERO_HOME:-$HOME/.korero}"
     local project_dir="$(pwd)"
 
     # Get the tmux base-index to handle custom configurations (e.g., base-index 1)
@@ -196,9 +196,9 @@ setup_tmux_session() {
     log_status "INFO" "Setting up tmux session: $session_name"
 
     # Initialize live.log file
-    echo "=== Ralph Live Output - Waiting for first loop... ===" > "$LIVE_LOG_FILE"
+    echo "=== Korero Live Output - Waiting for first loop... ===" > "$LIVE_LOG_FILE"
 
-    # Create new tmux session detached (left pane - Ralph loop)
+    # Create new tmux session detached (left pane - Korero loop)
     tmux new-session -d -s "$session_name" -c "$project_dir"
 
     # Split window vertically (right side)
@@ -210,73 +210,73 @@ setup_tmux_session() {
     # Right-top pane (pane 1): Live Claude Code output
     tmux send-keys -t "$session_name:${base_win}.1" "tail -f '$project_dir/$LIVE_LOG_FILE'" Enter
 
-    # Right-bottom pane (pane 2): Ralph status monitor
-    if command -v ralph-monitor &> /dev/null; then
-        tmux send-keys -t "$session_name:${base_win}.2" "ralph-monitor" Enter
+    # Right-bottom pane (pane 2): Korero status monitor
+    if command -v korero-monitor &> /dev/null; then
+        tmux send-keys -t "$session_name:${base_win}.2" "korero-monitor" Enter
     else
-        tmux send-keys -t "$session_name:${base_win}.2" "'$ralph_home/ralph_monitor.sh'" Enter
+        tmux send-keys -t "$session_name:${base_win}.2" "'$korero_home/korero_monitor.sh'" Enter
     fi
 
-    # Start ralph loop in the left pane (exclude tmux flag to avoid recursion)
+    # Start korero loop in the left pane (exclude tmux flag to avoid recursion)
     # Forward all CLI parameters that were set by the user
-    local ralph_cmd
-    if command -v ralph &> /dev/null; then
-        ralph_cmd="ralph"
+    local korero_cmd
+    if command -v korero &> /dev/null; then
+        korero_cmd="korero"
     else
-        ralph_cmd="'$ralph_home/ralph_loop.sh'"
+        korero_cmd="'$korero_home/korero_loop.sh'"
     fi
 
     # Always use --live mode in tmux for real-time streaming
-    ralph_cmd="$ralph_cmd --live"
+    korero_cmd="$korero_cmd --live"
 
     # Forward --calls if non-default
     if [[ "$MAX_CALLS_PER_HOUR" != "100" ]]; then
-        ralph_cmd="$ralph_cmd --calls $MAX_CALLS_PER_HOUR"
+        korero_cmd="$korero_cmd --calls $MAX_CALLS_PER_HOUR"
     fi
     # Forward --prompt if non-default
-    if [[ "$PROMPT_FILE" != "$RALPH_DIR/PROMPT.md" ]]; then
-        ralph_cmd="$ralph_cmd --prompt '$PROMPT_FILE'"
+    if [[ "$PROMPT_FILE" != "$KORERO_DIR/PROMPT.md" ]]; then
+        korero_cmd="$korero_cmd --prompt '$PROMPT_FILE'"
     fi
     # Forward --output-format if non-default (default is json)
     if [[ "$CLAUDE_OUTPUT_FORMAT" != "json" ]]; then
-        ralph_cmd="$ralph_cmd --output-format $CLAUDE_OUTPUT_FORMAT"
+        korero_cmd="$korero_cmd --output-format $CLAUDE_OUTPUT_FORMAT"
     fi
     # Forward --verbose if enabled
     if [[ "$VERBOSE_PROGRESS" == "true" ]]; then
-        ralph_cmd="$ralph_cmd --verbose"
+        korero_cmd="$korero_cmd --verbose"
     fi
     # Forward --timeout if non-default (default is 15)
     if [[ "$CLAUDE_TIMEOUT_MINUTES" != "15" ]]; then
-        ralph_cmd="$ralph_cmd --timeout $CLAUDE_TIMEOUT_MINUTES"
+        korero_cmd="$korero_cmd --timeout $CLAUDE_TIMEOUT_MINUTES"
     fi
     # Forward --allowed-tools if non-default
     if [[ "$CLAUDE_ALLOWED_TOOLS" != "Write,Read,Edit,Bash(git *),Bash(npm *),Bash(pytest)" ]]; then
-        ralph_cmd="$ralph_cmd --allowed-tools '$CLAUDE_ALLOWED_TOOLS'"
+        korero_cmd="$korero_cmd --allowed-tools '$CLAUDE_ALLOWED_TOOLS'"
     fi
     # Forward --no-continue if session continuity disabled
     if [[ "$CLAUDE_USE_CONTINUE" == "false" ]]; then
-        ralph_cmd="$ralph_cmd --no-continue"
+        korero_cmd="$korero_cmd --no-continue"
     fi
     # Forward --session-expiry if non-default (default is 24)
     if [[ "$CLAUDE_SESSION_EXPIRY_HOURS" != "24" ]]; then
-        ralph_cmd="$ralph_cmd --session-expiry $CLAUDE_SESSION_EXPIRY_HOURS"
+        korero_cmd="$korero_cmd --session-expiry $CLAUDE_SESSION_EXPIRY_HOURS"
     fi
 
-    tmux send-keys -t "$session_name:${base_win}.0" "$ralph_cmd" Enter
+    tmux send-keys -t "$session_name:${base_win}.0" "$korero_cmd" Enter
 
-    # Focus on left pane (main ralph loop)
+    # Focus on left pane (main korero loop)
     tmux select-pane -t "$session_name:${base_win}.0"
 
     # Set pane titles (requires tmux 2.6+)
-    tmux select-pane -t "$session_name:${base_win}.0" -T "Ralph Loop"
+    tmux select-pane -t "$session_name:${base_win}.0" -T "Korero Loop"
     tmux select-pane -t "$session_name:${base_win}.1" -T "Claude Output"
     tmux select-pane -t "$session_name:${base_win}.2" -T "Status"
 
     # Set window title
-    tmux rename-window -t "$session_name:${base_win}" "Ralph: Loop | Output | Status"
+    tmux rename-window -t "$session_name:${base_win}" "Korero: Loop | Output | Status"
 
     log_status "SUCCESS" "Tmux session created with 3 panes:"
-    log_status "INFO" "  Left:         Ralph loop"
+    log_status "INFO" "  Left:         Korero loop"
     log_status "INFO" "  Right-top:    Claude Code live output"
     log_status "INFO" "  Right-bottom: Status monitor"
     log_status "INFO" ""
@@ -333,7 +333,7 @@ log_status() {
     
     # Write to stderr so log messages don't interfere with function return values
     echo -e "${color}[$timestamp] [$level] $message${NC}" >&2
-    echo "[$timestamp] [$level] $message" >> "$LOG_DIR/ralph.log"
+    echo "[$timestamp] [$level] $message" >> "$LOG_DIR/korero.log"
 }
 
 # Update status JSON for external monitoring
@@ -414,6 +414,64 @@ wait_for_reset() {
     log_status "SUCCESS" "Rate limit reset! Ready for new calls."
 }
 
+# =============================================================================
+# IDEA EXTRACTION (Ideation Mode)
+# =============================================================================
+
+# store_loop_idea - Extract and save the winning idea from a loop iteration
+#
+# Parameters:
+#   $1 (output_file) - Path to Claude's output file
+#   $2 (loop_number) - Current loop iteration number
+#
+# Extracts the KORERO_IDEA block and saves it to .korero/ideas/
+#
+store_loop_idea() {
+    local output_file="$1"
+    local loop_number="$2"
+    local ideas_dir="$KORERO_DIR/ideas"
+
+    mkdir -p "$ideas_dir"
+
+    if [[ ! -f "$output_file" ]]; then
+        return 0
+    fi
+
+    # Get the content (handle JSON output format)
+    local content=""
+    if command -v jq &>/dev/null; then
+        content=$(jq -r '.result // .' "$output_file" 2>/dev/null)
+        if [[ -z "$content" || "$content" == "null" ]]; then
+            content=$(cat "$output_file")
+        fi
+    else
+        content=$(cat "$output_file")
+    fi
+
+    # Extract the KORERO_IDEA block
+    local idea_block=""
+    idea_block=$(echo "$content" | sed -n '/---KORERO_IDEA---/,/---END_KORERO_IDEA---/p')
+
+    if [[ -n "$idea_block" ]]; then
+        # Save individual loop idea
+        echo "$idea_block" > "$ideas_dir/loop_${loop_number}_idea.md"
+
+        # Append to cumulative IDEAS.md
+        {
+            echo ""
+            echo "## Loop $loop_number - $(date '+%Y-%m-%d %H:%M:%S')"
+            echo ""
+            echo "$idea_block"
+            echo ""
+            echo "---"
+        } >> "$ideas_dir/IDEAS.md"
+
+        log_status "SUCCESS" "Saved winning idea from loop #$loop_number to .korero/ideas/"
+    else
+        log_status "WARN" "No KORERO_IDEA block found in loop #$loop_number output"
+    fi
+}
+
 # Check if we should gracefully exit
 should_exit_gracefully() {
     
@@ -437,14 +495,14 @@ should_exit_gracefully() {
 
     # 0. Permission denials (highest priority - Issue #101)
     # When Claude Code is denied permission to run commands, halt immediately
-    # to allow user to update .ralphrc ALLOWED_TOOLS configuration
+    # to allow user to update .korerorc ALLOWED_TOOLS configuration
     if [[ -f "$RESPONSE_ANALYSIS_FILE" ]]; then
         local has_permission_denials=$(jq -r '.analysis.has_permission_denials // false' "$RESPONSE_ANALYSIS_FILE" 2>/dev/null || echo "false")
         if [[ "$has_permission_denials" == "true" ]]; then
             local denied_count=$(jq -r '.analysis.permission_denial_count // 0' "$RESPONSE_ANALYSIS_FILE" 2>/dev/null || echo "0")
             local denied_cmds=$(jq -r '.analysis.denied_commands | join(", ")' "$RESPONSE_ANALYSIS_FILE" 2>/dev/null || echo "unknown")
             log_status "WARN" "🚫 Permission denied for $denied_count command(s): $denied_cmds"
-            log_status "WARN" "Update ALLOWED_TOOLS in .ralphrc to include the required tools"
+            log_status "WARN" "Update ALLOWED_TOOLS in .korerorc to include the required tools"
             echo "permission_denied"
             return 0
         fi
@@ -478,7 +536,7 @@ should_exit_gracefully() {
 
     # 4. Strong completion indicators (only if Claude's EXIT_SIGNAL is true)
     # This prevents premature exits when heuristics detect completion patterns
-    # but Claude explicitly indicates work is still in progress via RALPH_STATUS block.
+    # but Claude explicitly indicates work is still in progress via KORERO_STATUS block.
     # The exit_signal in .response_analysis represents Claude's explicit intent.
     local claude_exit_signal="false"
     if [[ -f "$RESPONSE_ANALYSIS_FILE" ]]; then
@@ -494,9 +552,9 @@ should_exit_gracefully() {
     # 5. Check fix_plan.md for completion
     # Fix #144: Only match valid markdown checkboxes, not date entries like [2026-01-29]
     # Valid patterns: "- [ ]" (uncompleted) and "- [x]" or "- [X]" (completed)
-    if [[ -f "$RALPH_DIR/fix_plan.md" ]]; then
-        local uncompleted_items=$(grep -cE "^[[:space:]]*- \[ \]" "$RALPH_DIR/fix_plan.md" 2>/dev/null || echo "0")
-        local completed_items=$(grep -cE "^[[:space:]]*- \[[xX]\]" "$RALPH_DIR/fix_plan.md" 2>/dev/null || echo "0")
+    if [[ -f "$KORERO_DIR/fix_plan.md" ]]; then
+        local uncompleted_items=$(grep -cE "^[[:space:]]*- \[ \]" "$KORERO_DIR/fix_plan.md" 2>/dev/null || echo "0")
+        local completed_items=$(grep -cE "^[[:space:]]*- \[[xX]\]" "$KORERO_DIR/fix_plan.md" 2>/dev/null || echo "0")
         local total_items=$((uncompleted_items + completed_items))
 
         if [[ $total_items -gt 0 ]] && [[ $completed_items -eq $total_items ]]; then
@@ -601,14 +659,14 @@ build_loop_context() {
 
     # Extract incomplete tasks from fix_plan.md
     # Bug #3 Fix: Support indented markdown checkboxes with [[:space:]]* pattern
-    if [[ -f "$RALPH_DIR/fix_plan.md" ]]; then
-        local incomplete_tasks=$(grep -cE "^[[:space:]]*- \[ \]" "$RALPH_DIR/fix_plan.md" 2>/dev/null || echo "0")
+    if [[ -f "$KORERO_DIR/fix_plan.md" ]]; then
+        local incomplete_tasks=$(grep -cE "^[[:space:]]*- \[ \]" "$KORERO_DIR/fix_plan.md" 2>/dev/null || echo "0")
         context+="Remaining tasks: ${incomplete_tasks}. "
     fi
 
     # Add circuit breaker state
-    if [[ -f "$RALPH_DIR/.circuit_breaker_state" ]]; then
-        local cb_state=$(jq -r '.state // "UNKNOWN"' "$RALPH_DIR/.circuit_breaker_state" 2>/dev/null)
+    if [[ -f "$KORERO_DIR/.circuit_breaker_state" ]]; then
+        local cb_state=$(jq -r '.state // "UNKNOWN"' "$KORERO_DIR/.circuit_breaker_state" 2>/dev/null)
         if [[ "$cb_state" != "CLOSED" && "$cb_state" != "null" && -n "$cb_state" ]]; then
             context+="Circuit breaker: ${cb_state}. "
         fi
@@ -739,17 +797,17 @@ save_claude_session() {
 # SESSION LIFECYCLE MANAGEMENT FUNCTIONS (Phase 1.2)
 # =============================================================================
 
-# Get current session ID from Ralph session file
+# Get current session ID from Korero session file
 # Returns: session ID string or empty if not found
 get_session_id() {
-    if [[ ! -f "$RALPH_SESSION_FILE" ]]; then
+    if [[ ! -f "$KORERO_SESSION_FILE" ]]; then
         echo ""
         return 0
     fi
 
     # Extract session_id from JSON file (SC2155: separate declare from assign)
     local session_id
-    session_id=$(jq -r '.session_id // ""' "$RALPH_SESSION_FILE" 2>/dev/null)
+    session_id=$(jq -r '.session_id // ""' "$KORERO_SESSION_FILE" 2>/dev/null)
     local jq_status=$?
 
     # Handle jq failure or null/empty results
@@ -782,7 +840,7 @@ reset_session() {
             last_used: $last_used,
             reset_at: $reset_at,
             reset_reason: $reset_reason
-        }' > "$RALPH_SESSION_FILE"
+        }' > "$KORERO_SESSION_FILE"
 
     # Also clear the Claude session file for consistency
     rm -f "$CLAUDE_SESSION_FILE" 2>/dev/null
@@ -833,8 +891,8 @@ log_session_transition() {
 
     # Read history file defensively - fallback to empty array on any failure
     local history
-    if [[ -f "$RALPH_SESSION_HISTORY_FILE" ]]; then
-        history=$(cat "$RALPH_SESSION_HISTORY_FILE" 2>/dev/null)
+    if [[ -f "$KORERO_SESSION_HISTORY_FILE" ]]; then
+        history=$(cat "$KORERO_SESSION_HISTORY_FILE" 2>/dev/null)
         # Validate JSON, fallback to empty array if corrupted
         if ! echo "$history" | jq empty 2>/dev/null; then
             history='[]'
@@ -850,10 +908,10 @@ log_session_transition() {
 
     # Only write if jq succeeded
     if [[ $jq_status -eq 0 && -n "$updated_history" ]]; then
-        echo "$updated_history" > "$RALPH_SESSION_HISTORY_FILE"
+        echo "$updated_history" > "$KORERO_SESSION_HISTORY_FILE"
     else
         # Fallback: start fresh with just this transition
-        echo "[$transition]" > "$RALPH_SESSION_HISTORY_FILE"
+        echo "[$transition]" > "$KORERO_SESSION_HISTORY_FILE"
     fi
 }
 
@@ -863,7 +921,7 @@ generate_session_id() {
     ts=$(date +%s)
     local rand
     rand=$RANDOM
-    echo "ralph-${ts}-${rand}"
+    echo "korero-${ts}-${rand}"
 }
 
 # Initialize session tracking (called at loop start)
@@ -872,7 +930,7 @@ init_session_tracking() {
     ts=$(get_iso_timestamp)
 
     # Create session file if it doesn't exist
-    if [[ ! -f "$RALPH_SESSION_FILE" ]]; then
+    if [[ ! -f "$KORERO_SESSION_FILE" ]]; then
         local new_session_id
         new_session_id=$(generate_session_id)
 
@@ -888,14 +946,14 @@ init_session_tracking() {
                 last_used: $last_used,
                 reset_at: $reset_at,
                 reset_reason: $reset_reason
-            }' > "$RALPH_SESSION_FILE"
+            }' > "$KORERO_SESSION_FILE"
 
         log_status "INFO" "Initialized session tracking (session: $new_session_id)"
         return 0
     fi
 
     # Validate existing session file
-    if ! jq empty "$RALPH_SESSION_FILE" 2>/dev/null; then
+    if ! jq empty "$KORERO_SESSION_FILE" 2>/dev/null; then
         log_status "WARN" "Corrupted session file detected, recreating..."
         local new_session_id
         new_session_id=$(generate_session_id)
@@ -912,13 +970,13 @@ init_session_tracking() {
                 last_used: $last_used,
                 reset_at: $reset_at,
                 reset_reason: $reset_reason
-            }' > "$RALPH_SESSION_FILE"
+            }' > "$KORERO_SESSION_FILE"
     fi
 }
 
 # Update last_used timestamp in session file (called on each loop iteration)
 update_session_last_used() {
-    if [[ ! -f "$RALPH_SESSION_FILE" ]]; then
+    if [[ ! -f "$KORERO_SESSION_FILE" ]]; then
         return 0
     fi
 
@@ -927,11 +985,11 @@ update_session_last_used() {
 
     # Update last_used in existing session file
     local updated
-    updated=$(jq --arg last_used "$ts" '.last_used = $last_used' "$RALPH_SESSION_FILE" 2>/dev/null)
+    updated=$(jq --arg last_used "$ts" '.last_used = $last_used' "$KORERO_SESSION_FILE" 2>/dev/null)
     local jq_status=$?
 
     if [[ $jq_status -eq 0 && -n "$updated" ]]; then
-        echo "$updated" > "$RALPH_SESSION_FILE"
+        echo "$updated" > "$KORERO_SESSION_FILE"
     fi
 }
 
@@ -948,7 +1006,7 @@ build_claude_command() {
 
     # Reset global array
     # Note: We do NOT use --dangerously-skip-permissions here. Tool permissions
-    # are controlled via --allowedTools from CLAUDE_ALLOWED_TOOLS in .ralphrc.
+    # are controlled via --allowedTools from CLAUDE_ALLOWED_TOOLS in .korerorc.
     # This preserves the permission denial circuit breaker (Issue #101).
     CLAUDE_CMD_ARGS=("$CLAUDE_CODE_CMD")
 
@@ -982,7 +1040,7 @@ build_claude_command() {
     # IMPORTANT: Use --resume with explicit session ID instead of --continue
     # --continue resumes the "most recent session in current directory" which
     # can hijack active Claude Code sessions. --resume with a specific session ID
-    # ensures we only resume Ralph's own sessions. (Issue #151)
+    # ensures we only resume Korero's own sessions. (Issue #151)
     if [[ "$CLAUDE_USE_CONTINUE" == "true" && -n "$session_id" ]]; then
         CLAUDE_CMD_ARGS+=("--resume" "$session_id")
     fi
@@ -1016,7 +1074,7 @@ execute_claude_code() {
     if command -v git &>/dev/null && git rev-parse --git-dir &>/dev/null 2>&1; then
         loop_start_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
     fi
-    echo "$loop_start_sha" > "$RALPH_DIR/.loop_start_sha"
+    echo "$loop_start_sha" > "$KORERO_DIR/.loop_start_sha"
 
     log_status "LOOP" "Executing Claude Code (Call $calls_made/$MAX_CALLS_PER_HOUR)"
     local timeout_seconds=$((CLAUDE_TIMEOUT_MINUTES * 60))
@@ -1280,6 +1338,12 @@ EOF
         # Update exit signals based on analysis
         update_exit_signals
 
+        # Extract and save idea (ideation modes only)
+        local korero_mode="${KORERO_MODE:-}"
+        if [[ "$korero_mode" == "idea" || "$korero_mode" == "coding" ]]; then
+            store_loop_idea "$output_file" "$loop_count"
+        fi
+
         # Log analysis summary
         log_analysis_summary
 
@@ -1289,8 +1353,8 @@ EOF
         local loop_start_sha=""
         local current_sha=""
 
-        if [[ -f "$RALPH_DIR/.loop_start_sha" ]]; then
-            loop_start_sha=$(cat "$RALPH_DIR/.loop_start_sha" 2>/dev/null || echo "")
+        if [[ -f "$KORERO_DIR/.loop_start_sha" ]]; then
+            loop_start_sha=$(cat "$KORERO_DIR/.loop_start_sha" 2>/dev/null || echo "")
         fi
 
         if command -v git &>/dev/null && git rev-parse --git-dir &>/dev/null 2>&1; then
@@ -1370,7 +1434,7 @@ EOF
 
 # Cleanup function
 cleanup() {
-    log_status "INFO" "Ralph loop interrupted. Cleaning up..."
+    log_status "INFO" "Korero loop interrupted. Cleaning up..."
     reset_session "manual_interrupt"
     update_status "$loop_count" "$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")" "interrupted" "stopped"
     exit 0
@@ -1384,53 +1448,53 @@ loop_count=0
 
 # Main loop
 main() {
-    # Load project-specific configuration from .ralphrc
-    if load_ralphrc; then
-        if [[ "$RALPHRC_LOADED" == "true" ]]; then
-            log_status "INFO" "Loaded configuration from .ralphrc"
+    # Load project-specific configuration from .korerorc
+    if load_korerorc; then
+        if [[ "$KORERORC_LOADED" == "true" ]]; then
+            log_status "INFO" "Loaded configuration from .korerorc"
         fi
     fi
 
-    log_status "SUCCESS" "🚀 Ralph loop starting with Claude Code"
+    log_status "SUCCESS" "🚀 Korero loop starting with Claude Code"
     log_status "INFO" "Max calls per hour: $MAX_CALLS_PER_HOUR"
     log_status "INFO" "Logs: $LOG_DIR/ | Docs: $DOCS_DIR/ | Status: $STATUS_FILE"
 
     # Check if project uses old flat structure and needs migration
-    if [[ -f "PROMPT.md" ]] && [[ ! -d ".ralph" ]]; then
+    if [[ -f "PROMPT.md" ]] && [[ ! -d ".korero" ]]; then
         log_status "ERROR" "This project uses the old flat structure."
         echo ""
-        echo "Ralph v0.10.0+ uses a .ralph/ subfolder to keep your project root clean."
+        echo "Korero v0.10.0+ uses a .korero/ subfolder to keep your project root clean."
         echo ""
         echo "To upgrade your project, run:"
-        echo "  ralph-migrate"
+        echo "  korero-migrate"
         echo ""
-        echo "This will move Ralph-specific files to .ralph/ while preserving src/ at root."
+        echo "This will move Korero-specific files to .korero/ while preserving src/ at root."
         echo "A backup will be created before migration."
         exit 1
     fi
 
-    # Check if this is a Ralph project directory
+    # Check if this is a Korero project directory
     if [[ ! -f "$PROMPT_FILE" ]]; then
         log_status "ERROR" "Prompt file '$PROMPT_FILE' not found!"
         echo ""
         
-        # Check if this looks like a partial Ralph project
-        if [[ -f "$RALPH_DIR/fix_plan.md" ]] || [[ -d "$RALPH_DIR/specs" ]] || [[ -f "$RALPH_DIR/AGENT.md" ]]; then
-            echo "This appears to be a Ralph project but is missing .ralph/PROMPT.md."
+        # Check if this looks like a partial Korero project
+        if [[ -f "$KORERO_DIR/fix_plan.md" ]] || [[ -d "$KORERO_DIR/specs" ]] || [[ -f "$KORERO_DIR/AGENT.md" ]]; then
+            echo "This appears to be a Korero project but is missing .korero/PROMPT.md."
             echo "You may need to create or restore the PROMPT.md file."
         else
-            echo "This directory is not a Ralph project."
+            echo "This directory is not a Korero project."
         fi
 
         echo ""
         echo "To fix this:"
-        echo "  1. Enable Ralph in existing project: ralph-enable"
-        echo "  2. Create a new project: ralph-setup my-project"
-        echo "  3. Import existing requirements: ralph-import requirements.md"
-        echo "  4. Navigate to an existing Ralph project directory"
-        echo "  5. Or create .ralph/PROMPT.md manually in this directory"
+        echo "  1. Enable Korero in existing project: korero-enable"
+        echo "  2. Create a new project: korero-setup my-project"
+        echo "  3. Import existing requirements: korero-import requirements.md"
+        echo "  4. Navigate to an existing Korero project directory"
+        echo "  5. Or create .korero/PROMPT.md manually in this directory"
         echo ""
-        echo "Ralph projects should contain: .ralph/PROMPT.md, .ralph/fix_plan.md, .ralph/specs/, src/, etc."
+        echo "Korero projects should contain: .korero/PROMPT.md, .korero/fix_plan.md, .korero/specs/, src/, etc."
         exit 1
     fi
 
@@ -1442,14 +1506,24 @@ main() {
     while true; do
         loop_count=$((loop_count + 1))
 
+        # Check loop limit (from .korerorc MAX_LOOPS setting)
+        local max_loops="${MAX_LOOPS:-continuous}"
+        if [[ "$max_loops" != "continuous" && "$max_loops" =~ ^[0-9]+$ ]]; then
+            if [[ $loop_count -gt $max_loops ]]; then
+                log_status "INFO" "Reached configured loop limit ($max_loops loops)"
+                update_status "$loop_count" "$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo 0)" "loop_limit_reached" "completed" "loop_limit"
+                break
+            fi
+        fi
+
         # Update session last_used timestamp
         update_session_last_used
 
         log_status "INFO" "Loop #$loop_count - calling init_call_tracking..."
         init_call_tracking
-        
+
         log_status "LOOP" "=== Starting Loop #$loop_count ==="
-        
+
         # Check circuit breaker before attempting execution
         if should_halt_execution; then
             reset_session "circuit_breaker_open"
@@ -1482,21 +1556,21 @@ main() {
                 echo -e "${YELLOW}Claude Code was denied permission to execute commands.${NC}"
                 echo ""
                 echo -e "${YELLOW}To fix this:${NC}"
-                echo "  1. Edit .ralphrc and update ALLOWED_TOOLS to include the required tools"
+                echo "  1. Edit .korerorc and update ALLOWED_TOOLS to include the required tools"
                 echo "  2. Common patterns:"
                 echo "     - Bash(npm *)     - All npm commands"
                 echo "     - Bash(npm install) - Only npm install"
                 echo "     - Bash(pnpm *)    - All pnpm commands"
                 echo "     - Bash(yarn *)    - All yarn commands"
                 echo ""
-                echo -e "${YELLOW}After updating .ralphrc:${NC}"
-                echo "  ralph --reset-session  # Clear stale session state"
-                echo "  ralph --monitor        # Restart the loop"
+                echo -e "${YELLOW}After updating .korerorc:${NC}"
+                echo "  korero --reset-session  # Clear stale session state"
+                echo "  korero --monitor        # Restart the loop"
                 echo ""
 
-                # Show current ALLOWED_TOOLS if .ralphrc exists
-                if [[ -f ".ralphrc" ]]; then
-                    local current_tools=$(grep "^ALLOWED_TOOLS=" ".ralphrc" 2>/dev/null | cut -d= -f2- | tr -d '"')
+                # Show current ALLOWED_TOOLS if .korerorc exists
+                if [[ -f ".korerorc" ]]; then
+                    local current_tools=$(grep "^ALLOWED_TOOLS=" ".korerorc" 2>/dev/null | cut -d= -f2- | tr -d '"')
                     if [[ -n "$current_tools" ]]; then
                         echo -e "${BLUE}Current ALLOWED_TOOLS:${NC} $current_tools"
                         echo ""
@@ -1510,7 +1584,7 @@ main() {
             reset_session "project_complete"
             update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "graceful_exit" "completed" "$exit_reason"
 
-            log_status "SUCCESS" "🎉 Ralph has completed the project! Final stats:"
+            log_status "SUCCESS" "🎉 Korero has completed the project! Final stats:"
             log_status "INFO" "  - Total loops: $loop_count"
             log_status "INFO" "  - API calls used: $(cat "$CALL_COUNT_FILE")"
             log_status "INFO" "  - Exit reason: $exit_reason"
@@ -1536,7 +1610,7 @@ main() {
             reset_session "circuit_breaker_trip"
             update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "circuit_breaker_open" "halted" "stagnation_detected"
             log_status "ERROR" "🛑 Circuit breaker has opened - halting loop"
-            log_status "INFO" "Run 'ralph --reset-circuit' to reset the circuit breaker after addressing issues"
+            log_status "INFO" "Run 'korero --reset-circuit' to reset the circuit breaker after addressing issues"
             break
         elif [ $exec_result -eq 2 ]; then
             # API 5-hour limit reached - handle specially
@@ -1588,12 +1662,12 @@ main() {
 # Help function
 show_help() {
     cat << HELPEOF
-Ralph Loop for Claude Code
+Korero Loop for Claude Code
 
 Usage: $0 [OPTIONS]
 
-IMPORTANT: This command must be run from a Ralph project directory.
-           Use 'ralph-setup project-name' to create a new project first.
+IMPORTANT: This command must be run from a Korero project directory.
+           Use 'korero-setup project-name' to create a new project first.
 
 Options:
     -h, --help              Show this help message
@@ -1618,15 +1692,15 @@ Files created:
     - $LOG_DIR/: All execution logs
     - $DOCS_DIR/: Generated documentation
     - $STATUS_FILE: Current status (JSON)
-    - .ralph/.ralph_session: Session lifecycle tracking
-    - .ralph/.ralph_session_history: Session transition history (last 50)
-    - .ralph/.call_count: API call counter for rate limiting
-    - .ralph/.last_reset: Timestamp of last rate limit reset
+    - .korero/.korero_session: Session lifecycle tracking
+    - .korero/.korero_session_history: Session transition history (last 50)
+    - .korero/.call_count: API call counter for rate limiting
+    - .korero/.last_reset: Timestamp of last rate limit reset
 
 Example workflow:
-    ralph-setup my-project     # Create project
+    korero-setup my-project     # Create project
     cd my-project             # Enter project directory
-    $0 --monitor             # Start Ralph with monitoring
+    $0 --monitor             # Start Korero with monitoring
 
 Examples:
     $0 --calls 50 --prompt my_prompt.md
@@ -1662,7 +1736,7 @@ while [[ $# -gt 0 ]]; do
                 echo "Current Status:"
                 cat "$STATUS_FILE" | jq . 2>/dev/null || cat "$STATUS_FILE"
             else
-                echo "No status file found. Ralph may not be running."
+                echo "No status file found. Korero may not be running."
             fi
             exit 0
             ;;

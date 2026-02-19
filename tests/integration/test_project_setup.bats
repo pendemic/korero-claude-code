@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Integration tests for Ralph project setup (setup.sh)
+# Integration tests for Korero project setup (setup.sh)
 # Tests directory creation, template copying, git initialization, and README creation
 
 load '../helpers/test_helper'
@@ -27,10 +27,10 @@ setup() {
 
     # Create mock template files with minimal but valid content
     cat > templates/PROMPT.md << 'EOF'
-# Ralph Development Instructions
+# Korero Development Instructions
 
 ## Context
-You are Ralph, an autonomous AI development agent.
+You are Korero, an autonomous AI development agent.
 
 ## Current Objectives
 1. Follow fix_plan.md for current priorities
@@ -39,7 +39,7 @@ You are Ralph, an autonomous AI development agent.
 EOF
 
     cat > templates/fix_plan.md << 'EOF'
-# Ralph Fix Plan
+# Korero Fix Plan
 
 ## High Priority
 - [ ] Initial setup task
@@ -106,95 +106,95 @@ teardown() {
 }
 
 # =============================================================================
-# Test: Subdirectory Structure (.ralph/ subfolder)
+# Test: Subdirectory Structure (.korero/ subfolder)
 # =============================================================================
 
-@test "setup.sh creates .ralph subdirectory for Ralph-specific files" {
+@test "setup.sh creates .korero subdirectory for Korero-specific files" {
     run bash "$SETUP_SCRIPT" test-project
 
     assert_success
-    assert_dir_exists "test-project/.ralph"
+    assert_dir_exists "test-project/.korero"
 }
 
-@test "setup.sh creates all required subdirectories in .ralph/" {
+@test "setup.sh creates all required subdirectories in .korero/" {
     run bash "$SETUP_SCRIPT" test-project
 
     assert_success
-    # Ralph-specific directories go inside .ralph/
-    assert_dir_exists "test-project/.ralph/specs"
-    assert_dir_exists "test-project/.ralph/specs/stdlib"
-    assert_dir_exists "test-project/.ralph/examples"
-    assert_dir_exists "test-project/.ralph/logs"
-    assert_dir_exists "test-project/.ralph/docs"
-    assert_dir_exists "test-project/.ralph/docs/generated"
+    # Korero-specific directories go inside .korero/
+    assert_dir_exists "test-project/.korero/specs"
+    assert_dir_exists "test-project/.korero/specs/stdlib"
+    assert_dir_exists "test-project/.korero/examples"
+    assert_dir_exists "test-project/.korero/logs"
+    assert_dir_exists "test-project/.korero/docs"
+    assert_dir_exists "test-project/.korero/docs/generated"
     # src/ stays at root per maintainer decision
     assert_dir_exists "test-project/src"
 }
 
-@test "setup.sh keeps src directory at project root (not in .ralph/)" {
+@test "setup.sh keeps src directory at project root (not in .korero/)" {
     run bash "$SETUP_SCRIPT" test-project
 
     assert_success
-    # src should be at root, NOT inside .ralph
+    # src should be at root, NOT inside .korero
     assert_dir_exists "test-project/src"
-    [[ ! -d "test-project/.ralph/src" ]]
+    [[ ! -d "test-project/.korero/src" ]]
 }
 
-@test "setup.sh creates nested docs/generated directory in .ralph/" {
+@test "setup.sh creates nested docs/generated directory in .korero/" {
     run bash "$SETUP_SCRIPT" test-project
 
     assert_success
-    # Verify the nested structure exists inside .ralph
-    [[ -d "test-project/.ralph/docs/generated" ]]
+    # Verify the nested structure exists inside .korero
+    [[ -d "test-project/.korero/docs/generated" ]]
 }
 
-@test "setup.sh creates nested specs/stdlib directory in .ralph/" {
+@test "setup.sh creates nested specs/stdlib directory in .korero/" {
     run bash "$SETUP_SCRIPT" test-project
 
     assert_success
-    [[ -d "test-project/.ralph/specs/stdlib" ]]
+    [[ -d "test-project/.korero/specs/stdlib" ]]
 }
 
 # =============================================================================
-# Test: Template Copying (to .ralph/ subfolder)
+# Test: Template Copying (to .korero/ subfolder)
 # =============================================================================
 
-@test "setup.sh copies PROMPT.md template to .ralph/" {
+@test "setup.sh copies PROMPT.md template to .korero/" {
     run bash "$SETUP_SCRIPT" test-project
 
     assert_success
-    assert_file_exists "test-project/.ralph/PROMPT.md"
+    assert_file_exists "test-project/.korero/PROMPT.md"
 
     # Verify content matches source
-    diff templates/PROMPT.md test-project/.ralph/PROMPT.md
+    diff templates/PROMPT.md test-project/.korero/PROMPT.md
 }
 
-@test "setup.sh copies fix_plan.md to .ralph/" {
+@test "setup.sh copies fix_plan.md to .korero/" {
     run bash "$SETUP_SCRIPT" test-project
 
     assert_success
-    assert_file_exists "test-project/.ralph/fix_plan.md"
+    assert_file_exists "test-project/.korero/fix_plan.md"
 
     # Verify content matches source
-    diff templates/fix_plan.md "test-project/.ralph/fix_plan.md"
+    diff templates/fix_plan.md "test-project/.korero/fix_plan.md"
 }
 
-@test "setup.sh copies AGENT.md to .ralph/" {
+@test "setup.sh copies AGENT.md to .korero/" {
     run bash "$SETUP_SCRIPT" test-project
 
     assert_success
-    assert_file_exists "test-project/.ralph/AGENT.md"
+    assert_file_exists "test-project/.korero/AGENT.md"
 
     # Verify content matches source
-    diff templates/AGENT.md "test-project/.ralph/AGENT.md"
+    diff templates/AGENT.md "test-project/.korero/AGENT.md"
 }
 
-@test "setup.sh copies specs templates to .ralph/specs/" {
+@test "setup.sh copies specs templates to .korero/specs/" {
     run bash "$SETUP_SCRIPT" test-project
 
     assert_success
-    # Verify spec file was copied to .ralph/specs/
-    assert_file_exists "test-project/.ralph/specs/sample_spec.md"
+    # Verify spec file was copied to .korero/specs/
+    assert_file_exists "test-project/.korero/specs/sample_spec.md"
 }
 
 @test "setup.sh handles empty specs directory gracefully" {
@@ -205,7 +205,7 @@ teardown() {
 
     # Should not fail (|| true in script handles this)
     assert_success
-    assert_dir_exists "test-project/.ralph/specs"
+    assert_dir_exists "test-project/.korero/specs"
 }
 
 @test "setup.sh handles missing specs directory gracefully" {
@@ -216,7 +216,7 @@ teardown() {
 
     # Should not fail due to || true in script
     assert_success
-    assert_dir_exists "test-project/.ralph/specs"
+    assert_dir_exists "test-project/.korero/specs"
 }
 
 # =============================================================================
@@ -260,7 +260,7 @@ teardown() {
     assert_success
     # Remove trailing whitespace for comparison
     local commit_msg=$(echo "$output" | tr -d '\n')
-    assert_equal "$commit_msg" "Initial Ralph project setup"
+    assert_equal "$commit_msg" "Initial Korero project setup"
 }
 
 @test "setup.sh commits all files in initial commit" {
@@ -316,24 +316,24 @@ teardown() {
     grep -q "# custom-project-name" custom-project-name/README.md
 }
 
-@test "setup.sh custom project has all subdirectories in .ralph/" {
+@test "setup.sh custom project has all subdirectories in .korero/" {
     bash "$SETUP_SCRIPT" my-custom-app
 
-    # Ralph-specific dirs in .ralph/
-    assert_dir_exists "my-custom-app/.ralph/specs/stdlib"
-    assert_dir_exists "my-custom-app/.ralph/examples"
-    assert_dir_exists "my-custom-app/.ralph/logs"
-    assert_dir_exists "my-custom-app/.ralph/docs/generated"
+    # Korero-specific dirs in .korero/
+    assert_dir_exists "my-custom-app/.korero/specs/stdlib"
+    assert_dir_exists "my-custom-app/.korero/examples"
+    assert_dir_exists "my-custom-app/.korero/logs"
+    assert_dir_exists "my-custom-app/.korero/docs/generated"
     # src stays at root
     assert_dir_exists "my-custom-app/src"
 }
 
-@test "setup.sh custom project has all template files in .ralph/" {
+@test "setup.sh custom project has all template files in .korero/" {
     bash "$SETUP_SCRIPT" my-custom-app
 
-    assert_file_exists "my-custom-app/.ralph/PROMPT.md"
-    assert_file_exists "my-custom-app/.ralph/fix_plan.md"
-    assert_file_exists "my-custom-app/.ralph/AGENT.md"
+    assert_file_exists "my-custom-app/.korero/PROMPT.md"
+    assert_file_exists "my-custom-app/.korero/fix_plan.md"
+    assert_file_exists "my-custom-app/.korero/AGENT.md"
 }
 
 # =============================================================================
@@ -354,24 +354,24 @@ teardown() {
     grep -q "# my-project" my-project/README.md
 }
 
-@test "setup.sh default project has all required structure in .ralph/" {
+@test "setup.sh default project has all required structure in .korero/" {
     bash "$SETUP_SCRIPT"
 
-    # Verify .ralph directory exists
-    assert_dir_exists "my-project/.ralph"
+    # Verify .korero directory exists
+    assert_dir_exists "my-project/.korero"
 
-    # Verify all directories in .ralph/
-    assert_dir_exists "my-project/.ralph/specs/stdlib"
-    assert_dir_exists "my-project/.ralph/examples"
-    assert_dir_exists "my-project/.ralph/logs"
-    assert_dir_exists "my-project/.ralph/docs/generated"
+    # Verify all directories in .korero/
+    assert_dir_exists "my-project/.korero/specs/stdlib"
+    assert_dir_exists "my-project/.korero/examples"
+    assert_dir_exists "my-project/.korero/logs"
+    assert_dir_exists "my-project/.korero/docs/generated"
     # src stays at root
     assert_dir_exists "my-project/src"
 
-    # Verify all files in .ralph/
-    assert_file_exists "my-project/.ralph/PROMPT.md"
-    assert_file_exists "my-project/.ralph/fix_plan.md"
-    assert_file_exists "my-project/.ralph/AGENT.md"
+    # Verify all files in .korero/
+    assert_file_exists "my-project/.korero/PROMPT.md"
+    assert_file_exists "my-project/.korero/fix_plan.md"
+    assert_file_exists "my-project/.korero/AGENT.md"
     # README stays at root
     assert_file_exists "my-project/README.md"
 }
@@ -420,7 +420,7 @@ teardown() {
     run bash "$SETUP_SCRIPT" test-project
 
     assert_success
-    [[ "$output" == *"Setting up Ralph project: test-project"* ]]
+    [[ "$output" == *"Setting up Korero project: test-project"* ]]
 }
 
 @test "setup.sh outputs completion message" {
@@ -430,12 +430,12 @@ teardown() {
     [[ "$output" == *"Project test-project created"* ]]
 }
 
-@test "setup.sh outputs next steps guidance with .ralph paths" {
+@test "setup.sh outputs next steps guidance with .korero paths" {
     run bash "$SETUP_SCRIPT" test-project
 
     assert_success
     [[ "$output" == *"Next steps:"* ]]
-    [[ "$output" == *".ralph/PROMPT.md"* ]]
+    [[ "$output" == *".korero/PROMPT.md"* ]]
 }
 
 # =============================================================================
@@ -491,55 +491,55 @@ teardown() {
 }
 
 # =============================================================================
-# Test: .ralphrc Generation (Issue #136)
+# Test: .korerorc Generation (Issue #136)
 # =============================================================================
 
-@test "setup.sh creates .ralphrc file" {
+@test "setup.sh creates .korerorc file" {
     run bash "$SETUP_SCRIPT" test-project
 
     assert_success
-    assert_file_exists "test-project/.ralphrc"
+    assert_file_exists "test-project/.korerorc"
 }
 
-@test "setup.sh .ralphrc contains ALLOWED_TOOLS with Edit" {
+@test "setup.sh .korerorc contains ALLOWED_TOOLS with Edit" {
     bash "$SETUP_SCRIPT" test-project
 
-    # .ralphrc should include Edit tool
-    grep -q "Edit" test-project/.ralphrc
+    # .korerorc should include Edit tool
+    grep -q "Edit" test-project/.korerorc
 }
 
-@test "setup.sh .ralphrc contains ALLOWED_TOOLS with test execution capabilities" {
+@test "setup.sh .korerorc contains ALLOWED_TOOLS with test execution capabilities" {
     bash "$SETUP_SCRIPT" test-project
 
-    # .ralphrc should include Bash(npm *) or Bash(pytest) for test execution
-    grep -qE 'Bash\(npm \*\)|Bash\(pytest\)' test-project/.ralphrc
+    # .korerorc should include Bash(npm *) or Bash(pytest) for test execution
+    grep -qE 'Bash\(npm \*\)|Bash\(pytest\)' test-project/.korerorc
 }
 
-@test "setup.sh .ralphrc ALLOWED_TOOLS matches ralph-enable defaults" {
+@test "setup.sh .korerorc ALLOWED_TOOLS matches korero-enable defaults" {
     bash "$SETUP_SCRIPT" test-project
 
-    # The expected ALLOWED_TOOLS value that ralph-enable uses
+    # The expected ALLOWED_TOOLS value that korero-enable uses
     local expected_tools='ALLOWED_TOOLS="Write,Read,Edit,Bash(git *),Bash(npm *),Bash(pytest)"'
 
-    # Check that .ralphrc contains the expected ALLOWED_TOOLS line
+    # Check that .korerorc contains the expected ALLOWED_TOOLS line
     # Use grep -F for literal string matching (avoids regex interpretation of *)
-    grep -qF "$expected_tools" test-project/.ralphrc
+    grep -qF "$expected_tools" test-project/.korerorc
 }
 
-@test "setup.sh .ralphrc is committed in initial git commit" {
+@test "setup.sh .korerorc is committed in initial git commit" {
     bash "$SETUP_SCRIPT" test-project
 
     cd test-project
-    # Verify .ralphrc is tracked by git (not in untracked files)
-    run command git ls-files .ralphrc
+    # Verify .korerorc is tracked by git (not in untracked files)
+    run command git ls-files .korerorc
 
     assert_success
-    assert_equal "$output" ".ralphrc"
+    assert_equal "$output" ".korerorc"
 }
 
-@test "setup.sh .ralphrc contains project name" {
+@test "setup.sh .korerorc contains project name" {
     bash "$SETUP_SCRIPT" my-custom-project
 
-    # .ralphrc should reference the project name
-    grep -q "my-custom-project" my-custom-project/.ralphrc
+    # .korerorc should reference the project name
+    grep -q "my-custom-project" my-custom-project/.korerorc
 }
