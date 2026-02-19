@@ -7,6 +7,8 @@
 [![GitHub Issues](https://img.shields.io/github/issues/pendemic/korero-claude-code)](https://github.com/pendemic/korero-claude-code/issues)
 
 > **Multi-agent ideation and development system for Claude Code**
+>
+> *Forked from [frankbria/ralph-claude-code](https://github.com/frankbria/ralph-claude-code)*
 
 Korero is a multi-agent ideation and development system for Claude Code with two modes: a **Continuous Coding Loop** (domain experts propose ideas, mandatory agents debate them, winning idea gets implemented and committed) and a **Continuous Idea Loop** (same debate process, but only the best idea is saved to disk). Built-in safeguards prevent infinite loops and API overuse.
 
