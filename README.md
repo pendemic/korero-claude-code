@@ -3,7 +3,7 @@
 [![CI](https://github.com/pendemic/korero-claude-code/actions/workflows/test.yml/badge.svg)](https://github.com/pendemic/korero-claude-code/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Version](https://img.shields.io/badge/version-0.12.0-blue)
-![Tests](https://img.shields.io/badge/tests-503%20passing-green)
+![Tests](https://img.shields.io/badge/tests-531%20passing-green)
 [![GitHub Issues](https://img.shields.io/github/issues/pendemic/korero-claude-code)](https://github.com/pendemic/korero-claude-code/issues)
 
 > **Multi-agent ideation and development system for Claude Code**
@@ -18,7 +18,7 @@ Korero is a multi-agent ideation and development system for Claude Code with two
 
 **Version**: v0.12.0 - Active Development
 **Core Features**: Working and tested
-**Test Coverage**: 503 tests, 100% pass rate
+**Test Coverage**: 531 tests, 100% pass rate
 
 ### What's Working Now
 - **Multi-agent ideation system** with domain expert agents and structured debate protocol
@@ -648,7 +648,7 @@ If you want to run the test suite:
 # Install BATS testing framework
 npm install -g bats bats-support bats-assert
 
-# Run all tests (503 tests)
+# Run all tests (531 tests)
 npm test
 
 # Run specific test suites
@@ -675,7 +675,7 @@ bats tests/integration/test_installation.bats
 ```
 
 Current test status:
-- **503 tests** across 16 test files
+- **531 tests** across 16 test files
 - **100% pass rate**
 - Comprehensive unit and integration tests
 - Specialized tests for JSON parsing, CLI flags, circuit breaker, EXIT_SIGNAL behavior, enable wizard, ideation mode, and installation workflows
@@ -782,7 +782,7 @@ cd korero-claude-code
 
 # Install dependencies and run tests
 npm install
-npm test  # All 503 tests must pass
+npm test  # All 531 tests must pass
 ```
 
 ### Priority Contribution Areas
@@ -892,7 +892,7 @@ Korero is under active development with a clear path to v1.0.0. See [IMPLEMENTAT
 **Test Coverage Breakdown:**
 - Unit Tests: 367 across 11 files (CLI parsing, JSON, exit detection, rate limiting, session continuity, enable wizard, ideation mode)
 - Integration Tests: 136 across 5 files (loop execution, edge cases, PRD import, project setup, installation)
-- Total: 503 tests across 16 files
+- Total: 531 tests across 16 files
 
 ### Path to v1.0.0 (~4 weeks)
 

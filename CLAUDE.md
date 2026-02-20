@@ -77,13 +77,17 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - Safe file operations: `safe_create_file()`, `safe_create_dir()`
    - Project detection: `detect_project_context()`, `detect_git_info()`, `detect_task_sources()`
    - Standard template generation: `generate_prompt_md()`, `generate_agent_md()`, `generate_fix_plan_md()`, `generate_korerorc()`
-   - **Ideation template generation**:
+   - **Context-aware project analysis**:
+     - `gather_project_context()` - Collects directory tree, README, package manifest, source file inventory
+     - `generate_context_aware_config()` - Sends project context to Claude CLI, returns structured config (agents, categories, scoring, key files, project summary, focus constraint, notes)
+   - **Ideation template generation** (MMMlight quality — uses CONFIG_* globals from context-aware config):
      - `generate_domain_agents()` - Auto-generates domain expert agents via Claude Code CLI
      - `_generate_generic_agents()` - Returns generic agents from predefined pool
      - `_generate_agents_from_roles()` - Creates agents from comma-separated role names
-     - `generate_ideation_prompt_md()` - Multi-agent debate protocol with 3 phases
-     - `generate_ideation_agent_md()` - Domain agents + 3 mandatory evaluation agents
-     - `generate_ideation_fix_plan_md()` - Mode-specific fix plans
+     - `generate_ideation_prompt_md()` - Full 4-phase workflow with scoring criteria, categories, anti-repetition rules, key files reference, winning idea output format with ═══ separators
+     - `generate_ideation_agent_md()` - Agent table, debate rules, scoring criteria, output location instructions
+     - `generate_ideation_fix_plan_md()` - Pre-built tracker tables, category coverage, type balance, per-loop checklists with checkpoints
+     - `generate_ideation_ideas_md()` - Project-specific IDEAS.md header
 
 6. **lib/wizard_utils.sh** - Interactive prompt utilities for enable wizard
    - User prompts: `confirm()`, `prompt_text()`, `prompt_number()`
@@ -481,9 +485,9 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (503 tests across 16 files)
+### Test Files (531 tests across 16 files)
 
-**Unit Tests (367 tests):**
+**Unit Tests (395 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
@@ -497,7 +501,7 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_task_sources.bats` | 23 | Task sources (beads, GitHub, PRD extraction, normalization) |
 | `test_korero_enable.bats` | 22 | Korero enable integration tests (wizard, CI version, JSON output) |
 | `test_wizard_utils.bats` | 20 | Wizard utility functions (stdout/stderr separation, prompt functions) |
-| `test_ideation_mode.bats` | 38 | Multi-agent ideation: agent generation, templates, idea storage, integration |
+| `test_ideation_mode.bats` | 66 | Multi-agent ideation: agent generation, context-aware templates, idea storage, integration |
 
 **Integration Tests (136 tests):**
 

@@ -61,6 +61,7 @@ KORERO_MODE="coding"        # Default to coding mode
 PROJECT_SUBJECT=""
 AGENT_COUNT=3
 MAX_LOOPS="continuous"
+FOCUS_CONSTRAINT=""
 
 # Version
 VERSION="0.11.0"
@@ -80,6 +81,7 @@ Options:
     --subject <text>      Project subject for agent generation
     --agents <N>          Number of domain agents (default: 3, max: 10)
     --loops <N>           Max loops: number or "continuous" (default: continuous)
+    --focus <text>        Override auto-detected focus constraint
     --from <source>       Import tasks from: beads, github, prd, none
     --prd <file>          PRD file to convert (when --from prd)
     --label <label>       GitHub label filter (default: korero-task)
@@ -180,6 +182,15 @@ parse_arguments() {
                     shift 2
                 else
                     output_error "--loops requires a value (number or 'continuous')"
+                    exit $ENABLE_INVALID_ARGS
+                fi
+                ;;
+            --focus)
+                if [[ -n "$2" && ! "$2" =~ ^-- ]]; then
+                    FOCUS_CONSTRAINT="$2"
+                    shift 2
+                else
+                    output_error "--focus requires a text description"
                     exit $ENABLE_INVALID_ARGS
                 fi
                 ;;
@@ -439,6 +450,7 @@ main() {
     export ENABLE_GENERATED_AGENTS="$generated_agents"
     export ENABLE_AGENT_COUNT="$AGENT_COUNT"
     export ENABLE_MAX_LOOPS="$MAX_LOOPS"
+    export ENABLE_FOCUS_CONSTRAINT="${FOCUS_CONSTRAINT:-}"
 
     # Run core enable logic
     output_message ""
