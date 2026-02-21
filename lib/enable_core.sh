@@ -1077,6 +1077,28 @@ DESCRIPTION: [2-3 sentence description of what to do and why]
 JUSTIFICATION: [1-2 sentences on why this idea won the debate]
 ---END_KORERO_IDEA---
 \`\`\`
+
+### Minority Opinions (REQUIRED)
+
+After the winning idea output, document 2-3 runner-up ideas that were NOT selected.
+These preserve valuable insights for future iterations and prevent revisiting rejected paths.
+
+For EACH runner-up, output in this format:
+
+\`\`\`
+---KORERO_MINORITY_OPINION---
+TITLE: [one-line title]
+PROPOSED_BY: [agent name]
+CATEGORY: [category]
+REJECTION_RATIONALE: [1-2 sentences on why it was not selected]
+CORE_INSIGHT: [the valuable kernel of the idea worth preserving]
+RECONSIDER_WHEN: [conditions under which this idea should be revisited]
+---END_KORERO_MINORITY_OPINION---
+\`\`\`
+
+**Important:** Before proposing ideas in Phase 1, review any previous minority opinions
+in the .korero/ideas/ directory. Do NOT re-propose ideas that were already rejected
+unless the conditions in RECONSIDER_WHEN are now met.
 ${implementation_section}
 
 ## Status Reporting (CRITICAL)

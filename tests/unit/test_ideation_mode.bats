@@ -198,6 +198,17 @@ teardown() {
     echo "$output" | grep -q "KORERO_STATUS"
 }
 
+@test "generate_ideation_prompt_md includes minority opinion section" {
+    local output
+    output=$(generate_ideation_prompt_md "test-project" "unknown" "idea" "")
+
+    echo "$output" | grep -q "Minority Opinions"
+    echo "$output" | grep -q "KORERO_MINORITY_OPINION"
+    echo "$output" | grep -q "REJECTION_RATIONALE"
+    echo "$output" | grep -q "CORE_INSIGHT"
+    echo "$output" | grep -q "RECONSIDER_WHEN"
+}
+
 # =============================================================================
 # IDEATION AGENT.MD GENERATION (5 tests)
 # =============================================================================
