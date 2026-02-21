@@ -870,6 +870,68 @@ should_resume_session() {
     fi
 }
 
+# =============================================================================
+# PERMISSION DENIAL SUGGESTION FUNCTIONS
+# =============================================================================
+
+# Suggest ALLOWED_TOOLS pattern for a denied command
+suggest_permission_fix() {
+    local denied_cmd="$1"
+    local base_cmd="${denied_cmd%% *}"
+
+    case "$base_cmd" in
+        npm)     echo "Bash(npm *)" ;;
+        git)     echo "Bash(git *)" ;;
+        pytest)  echo "Bash(pytest)" ;;
+        make)    echo "Bash(make *)" ;;
+        cargo)   echo "Bash(cargo *)" ;;
+        yarn)    echo "Bash(yarn *)" ;;
+        pnpm)    echo "Bash(pnpm *)" ;;
+        go)      echo "Bash(go *)" ;;
+        python)  echo "Bash(python *)" ;;
+        pip)     echo "Bash(pip *)" ;;
+        bun)     echo "Bash(bun *)" ;;
+        docker)  echo "Bash(docker *)" ;;
+        mvn)     echo "Bash(mvn *)" ;;
+        gradle)  echo "Bash(gradle *)" ;;
+        *)       echo "Bash($denied_cmd)" ;;
+    esac
+}
+
+# Format permission denial message with fix suggestions
+format_permission_denial_message() {
+    local denied_commands=("$@")
+    local current_tools="${CLAUDE_ALLOWED_TOOLS:-}"
+
+    echo ""
+    echo "========================================="
+    echo "  Permission Denied — Action Required"
+    echo "========================================="
+    echo ""
+    echo "The following commands were denied:"
+    local suggestions=()
+    for cmd in "${denied_commands[@]}"; do
+        local suggestion
+        suggestion=$(suggest_permission_fix "$cmd")
+        echo "  - $cmd"
+        echo "    Suggested pattern: $suggestion"
+        suggestions+=("$suggestion")
+    done
+    echo ""
+    # Build the suggested ALLOWED_TOOLS line
+    local new_tools="$current_tools"
+    for s in "${suggestions[@]}"; do
+        if [[ "$new_tools" != *"$s"* ]]; then
+            new_tools="$new_tools,$s"
+        fi
+    done
+    echo "To fix, update ALLOWED_TOOLS in .korerorc:"
+    echo "  ALLOWED_TOOLS=\"$new_tools\""
+    echo ""
+    echo "Then restart the loop: korero"
+    echo "========================================="
+}
+
 # Export functions for use in korero_loop.sh
 export -f detect_output_format
 export -f parse_json_response
@@ -880,3 +942,5 @@ export -f detect_stuck_loop
 export -f store_session_id
 export -f get_last_session_id
 export -f should_resume_session
+export -f suggest_permission_fix
+export -f format_permission_denial_message

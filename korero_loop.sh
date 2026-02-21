@@ -1551,34 +1551,25 @@ main() {
                 reset_session "permission_denied"
                 update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "permission_denied" "halted" "permission_denied"
 
-                # Display helpful guidance for resolving permission issues
-                echo ""
-                echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
-                echo -e "${RED}║  PERMISSION DENIED - Loop Halted                          ║${NC}"
-                echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
-                echo ""
-                echo -e "${YELLOW}Claude Code was denied permission to execute commands.${NC}"
-                echo ""
-                echo -e "${YELLOW}To fix this:${NC}"
-                echo "  1. Edit .korerorc and update ALLOWED_TOOLS to include the required tools"
-                echo "  2. Common patterns:"
-                echo "     - Bash(npm *)     - All npm commands"
-                echo "     - Bash(npm install) - Only npm install"
-                echo "     - Bash(pnpm *)    - All pnpm commands"
-                echo "     - Bash(yarn *)    - All yarn commands"
-                echo ""
-                echo -e "${YELLOW}After updating .korerorc:${NC}"
-                echo "  korero --reset-session  # Clear stale session state"
-                echo "  korero --monitor        # Restart the loop"
-                echo ""
+                # Extract denied commands from analysis and show targeted suggestions
+                local denied_cmds_array=()
+                if [[ -f "$RESPONSE_ANALYSIS_FILE" ]]; then
+                    while IFS= read -r cmd; do
+                        [[ -n "$cmd" ]] && denied_cmds_array+=("$cmd")
+                    done < <(jq -r '.analysis.denied_commands[]' "$RESPONSE_ANALYSIS_FILE" 2>/dev/null)
+                fi
 
-                # Show current ALLOWED_TOOLS if .korerorc exists
-                if [[ -f ".korerorc" ]]; then
-                    local current_tools=$(grep "^ALLOWED_TOOLS=" ".korerorc" 2>/dev/null | cut -d= -f2- | tr -d '"')
-                    if [[ -n "$current_tools" ]]; then
-                        echo -e "${BLUE}Current ALLOWED_TOOLS:${NC} $current_tools"
-                        echo ""
-                    fi
+                if [[ ${#denied_cmds_array[@]} -gt 0 ]]; then
+                    format_permission_denial_message "${denied_cmds_array[@]}"
+                else
+                    echo ""
+                    echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
+                    echo -e "${RED}║  PERMISSION DENIED - Loop Halted                          ║${NC}"
+                    echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
+                    echo ""
+                    echo -e "${YELLOW}Claude Code was denied permission to execute commands.${NC}"
+                    echo -e "${YELLOW}Update ALLOWED_TOOLS in .korerorc and restart: korero${NC}"
+                    echo ""
                 fi
 
                 break

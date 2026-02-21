@@ -1110,3 +1110,54 @@ EOF
     local has_denials=$(jq -r '.has_permission_denials' "$result_file")
     assert_equal "$has_denials" "true"
 }
+
+# =============================================================================
+# Permission Fix Suggestion Tests
+# =============================================================================
+
+@test "suggest_permission_fix returns wildcard for npm commands" {
+    result=$(suggest_permission_fix "npm install lodash")
+    assert_equal "$result" "Bash(npm *)"
+}
+
+@test "suggest_permission_fix returns wildcard for git commands" {
+    result=$(suggest_permission_fix "git push origin main")
+    assert_equal "$result" "Bash(git *)"
+}
+
+@test "suggest_permission_fix returns wildcard for yarn commands" {
+    result=$(suggest_permission_fix "yarn add react")
+    assert_equal "$result" "Bash(yarn *)"
+}
+
+@test "suggest_permission_fix returns exact match for unknown commands" {
+    result=$(suggest_permission_fix "custom-script --arg")
+    assert_equal "$result" "Bash(custom-script --arg)"
+}
+
+@test "suggest_permission_fix handles single-word commands" {
+    result=$(suggest_permission_fix "pytest")
+    assert_equal "$result" "Bash(pytest)"
+}
+
+@test "format_permission_denial_message includes denied command" {
+    CLAUDE_ALLOWED_TOOLS="Write,Read,Edit"
+    result=$(format_permission_denial_message "npm test")
+    [[ "$result" == *"npm test"* ]]
+}
+
+@test "format_permission_denial_message includes suggested ALLOWED_TOOLS" {
+    CLAUDE_ALLOWED_TOOLS="Write,Read,Edit"
+    result=$(format_permission_denial_message "npm test")
+    [[ "$result" == *"ALLOWED_TOOLS="* ]]
+    [[ "$result" == *"Bash(npm *)"* ]]
+}
+
+@test "format_permission_denial_message handles multiple denied commands" {
+    CLAUDE_ALLOWED_TOOLS="Write,Read"
+    result=$(format_permission_denial_message "npm install" "git push")
+    [[ "$result" == *"npm install"* ]]
+    [[ "$result" == *"git push"* ]]
+    [[ "$result" == *"Bash(npm *)"* ]]
+    [[ "$result" == *"Bash(git *)"* ]]
+}
