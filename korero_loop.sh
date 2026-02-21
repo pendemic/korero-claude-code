@@ -16,6 +16,7 @@ source "$SCRIPT_DIR/lib/date_utils.sh"
 source "$SCRIPT_DIR/lib/timeout_utils.sh"
 source "$SCRIPT_DIR/lib/response_analyzer.sh"
 source "$SCRIPT_DIR/lib/circuit_breaker.sh"
+source "$SCRIPT_DIR/lib/compat_check.sh"
 
 # Configuration
 # Korero-specific files live in .korero/ subfolder
@@ -1454,6 +1455,9 @@ main() {
             log_status "INFO" "Loaded configuration from .korerorc"
         fi
     fi
+
+    # Run compatibility checks (warnings only, non-blocking)
+    run_compat_checks
 
     log_status "SUCCESS" "🚀 Korero loop starting with Claude Code"
     log_status "INFO" "Max calls per hour: $MAX_CALLS_PER_HOUR"
