@@ -761,6 +761,76 @@ tail -f .korero/logs/korero.log
   3. Run `korero --reset-session` after updating `.korerorc`
   4. Restart with `korero --monitor`
 
+## Frequently Asked Questions
+
+### Setup & Installation
+
+**Q: Why do I get "command not found" after installation?**
+
+Your shell hasn't loaded the new PATH. Either run `source ~/.bashrc` (or `~/.zshrc` for zsh) or restart your terminal.
+
+**Q: Korero says "Bash 3.2 detected" on macOS. What do I do?**
+
+macOS ships with an outdated Bash version. Install a newer one with `brew install bash`. See [System Requirements](#system-requirements) for details.
+
+**Q: How do I uninstall Korero?**
+
+Run `./install.sh uninstall` to remove all installed files from `~/.local/bin` and `~/.korero`.
+
+### Loop Execution
+
+**Q: Why does my loop exit immediately?**
+
+Run `korero --status` to check current state. Common causes:
+1. **Rate limit exhausted** — wait for hourly reset (shown in status)
+2. **Circuit breaker OPEN** — run `korero --circuit-status` to see why, then `korero --reset-circuit`
+3. **EXIT_SIGNAL=true** — previous session set exit signal; run `korero --reset-session` to clear
+
+**Q: What does "circuit breaker OPEN" mean?**
+
+The circuit breaker detected a stagnation pattern (no progress, repeated errors, or output decline) and halted the loop to prevent runaway API usage. Run `korero --circuit-status` for details and recovery suggestions.
+
+**Q: How do I increase the rate limit?**
+
+Add `MAX_CALLS_PER_HOUR=200` to your `.korerorc`. Higher limits mean faster API cost accumulation.
+
+**Q: Why do I keep getting permission denied errors?**
+
+Claude Code needs permission for certain operations. The error message suggests the exact pattern to add. Update `.korerorc`:
+```bash
+CLAUDE_ALLOWED_TOOLS="Write,Read,Edit,Bash(npm *),Bash(git *)"
+```
+
+### Configuration
+
+**Q: What can I configure?**
+
+Run `korero config show` to see all configuration options with current values, defaults, and sources.
+
+**Q: How do I run in idea-only mode (no code changes)?**
+
+Add `KORERO_MODE="idea"` to `.korerorc`. In this mode, Korero generates and debates ideas without implementing them. Winning ideas are saved to `.korero/ideas/`.
+
+**Q: Where are configuration files located?**
+
+- **Project config**: `.korerorc` in your project root
+- **Korero files**: `.korero/` directory in your project
+- **Global installation**: `~/.korero/` and `~/.local/bin/`
+
+### Circuit Breaker
+
+**Q: How do I make the circuit breaker less sensitive?**
+
+Increase thresholds in `.korerorc`:
+```bash
+CB_NO_PROGRESS_THRESHOLD=5   # Default: 3
+CB_SAME_ERROR_THRESHOLD=8    # Default: 5
+```
+
+**Q: How do I see circuit breaker history?**
+
+Run `korero --circuit-status` to see current state, threshold proximity, and recent transitions.
+
 ## Contributing
 
 Korero is actively seeking contributors! We're working toward v1.0.0 with clear priorities and a detailed roadmap.
