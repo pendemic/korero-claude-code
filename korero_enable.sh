@@ -675,6 +675,7 @@ phase_file_generation() {
     export ENABLE_GENERATED_AGENTS="$GENERATED_AGENTS"
     export ENABLE_AGENT_COUNT="$AGENT_COUNT"
     export ENABLE_MAX_LOOPS="$MAX_LOOPS"
+    export ENABLE_FOCUS_CONSTRAINT="${FOCUS_CONSTRAINT:-}"
 
     # Run core enable logic
     echo "Creating Korero configuration..."
@@ -750,6 +751,10 @@ phase_verification() {
 
     if [[ -d ".korero/ideas" ]]; then
         print_success ".korero/ideas/"
+    fi
+
+    if [[ -f ".korero/ideas/IDEAS.md" ]]; then
+        print_success ".korero/ideas/IDEAS.md"
     fi
 
     echo ""

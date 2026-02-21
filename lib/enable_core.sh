@@ -734,6 +734,326 @@ KORERORCEOF
 }
 
 # =============================================================================
+# IDEATION MODE - PROJECT CONTEXT GATHERING
+# =============================================================================
+
+# gather_project_context - Collect raw project information for context-aware generation
+#
+# Parameters:
+#   $1 (project_dir) - Project directory (default: current directory)
+#
+# Outputs to stdout: Text block with project context (capped at ~4000 chars)
+#
+gather_project_context() {
+    local project_dir="${1:-.}"
+    local context=""
+    local max_chars=4000
+
+    # 1. Directory tree (depth-limited, excluding common non-source dirs)
+    context+="=== DIRECTORY STRUCTURE ===
+"
+    local tree_output=""
+    if command -v find &>/dev/null; then
+        tree_output=$(find "$project_dir" -maxdepth 3 \
+            -not -path '*/.git/*' \
+            -not -path '*/.git' \
+            -not -path '*/node_modules/*' \
+            -not -path '*/node_modules' \
+            -not -path '*/__pycache__/*' \
+            -not -path '*/.korero/*' \
+            -not -path '*/.ralph/*' \
+            -not -path '*/.venv/*' \
+            -not -path '*/venv/*' \
+            -not -path '*/.env/*' \
+            -not -path '*/dist/*' \
+            -not -path '*/build/*' \
+            -not -path '*/.next/*' \
+            -not -path '*/target/*' \
+            -not -path '*/.tox/*' \
+            -not -name '*.pyc' \
+            -not -name '*.lock' \
+            -not -name 'package-lock.json' \
+            2>/dev/null | sort | head -200)
+    fi
+    if [[ -n "$tree_output" ]]; then
+        context+="$tree_output
+"
+    else
+        context+="(could not read directory tree)
+"
+    fi
+    context+="
+"
+
+    # 2. Package manifest (first found)
+    local manifest_file=""
+    local manifest_files=("package.json" "requirements.txt" "Cargo.toml" "go.mod" "pyproject.toml" "Gemfile" "setup.py" "pom.xml" "build.gradle")
+    for mf in "${manifest_files[@]}"; do
+        if [[ -f "$project_dir/$mf" ]]; then
+            manifest_file="$project_dir/$mf"
+            break
+        fi
+    done
+    if [[ -n "$manifest_file" ]]; then
+        context+="=== PACKAGE MANIFEST ($(basename "$manifest_file")) ===
+"
+        context+="$(head -50 "$manifest_file" 2>/dev/null)
+"
+        context+="
+"
+    fi
+
+    # 3. README (first found)
+    local readme_file=""
+    local readme_files=("README.md" "readme.md" "README.rst" "README.txt" "README" "docs/README.md")
+    for rf in "${readme_files[@]}"; do
+        if [[ -f "$project_dir/$rf" ]]; then
+            readme_file="$project_dir/$rf"
+            break
+        fi
+    done
+    if [[ -n "$readme_file" ]]; then
+        context+="=== README ($(basename "$readme_file")) ===
+"
+        context+="$(head -100 "$readme_file" 2>/dev/null)
+"
+        context+="
+"
+    fi
+
+    # 4. Key source files inventory (paths only, no content)
+    context+="=== SOURCE FILES ===
+"
+    local source_files=""
+    if command -v find &>/dev/null; then
+        source_files=$(find "$project_dir" -maxdepth 5 \
+            -not -path '*/.git/*' \
+            -not -path '*/node_modules/*' \
+            -not -path '*/__pycache__/*' \
+            -not -path '*/.korero/*' \
+            -not -path '*/.ralph/*' \
+            -not -path '*/.venv/*' \
+            -not -path '*/venv/*' \
+            -not -path '*/dist/*' \
+            -not -path '*/build/*' \
+            -not -path '*/.next/*' \
+            -not -path '*/target/*' \
+            \( -name '*.py' -o -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' \
+               -o -name '*.rs' -o -name '*.go' -o -name '*.java' -o -name '*.rb' \
+               -o -name '*.vue' -o -name '*.svelte' \) \
+            2>/dev/null | sort | head -150)
+    fi
+    if [[ -n "$source_files" ]]; then
+        context+="$source_files
+"
+    else
+        context+="(no source files found)
+"
+    fi
+    context+="
+"
+
+    # 5. Config files
+    local config_files=("docker-compose.yml" "docker-compose.yaml" "Dockerfile" "Makefile" ".env.example" "tsconfig.json" "vite.config.ts" "webpack.config.js" "next.config.js" "tailwind.config.js" "tailwind.config.ts")
+    local found_configs=""
+    for cf in "${config_files[@]}"; do
+        if [[ -f "$project_dir/$cf" ]]; then
+            found_configs+="$cf "
+        fi
+    done
+    if [[ -n "$found_configs" ]]; then
+        context+="=== CONFIG FILES ===
+$found_configs
+"
+    fi
+
+    # Cap total output at max_chars
+    if [[ ${#context} -gt $max_chars ]]; then
+        context="${context:0:$max_chars}
+...(truncated)"
+    fi
+
+    echo "$context"
+}
+
+# =============================================================================
+# IDEATION MODE - CONTEXT-AWARE CONFIGURATION
+# =============================================================================
+
+# generate_context_aware_config - Send project context to Claude CLI for intelligent analysis
+#
+# Parameters:
+#   $1 (subject) - Project subject/description
+#   $2 (project_type) - Detected project type
+#   $3 (agent_count) - Number of domain agents to generate
+#   $4 (max_loops) - Number of loops or "continuous"
+#   $5 (mode) - "idea" or "coding"
+#   $6 (project_context) - Raw context from gather_project_context()
+#
+# Sets global variables:
+#   CONFIG_AGENTS - Markdown agent descriptions with Lens questions
+#   CONFIG_CATEGORIES - Newline-separated category list with descriptions
+#   CONFIG_SCORING - Markdown table of weighted scoring criteria
+#   CONFIG_KEY_FILES - Grouped key file reference
+#   CONFIG_PROJECT_SUMMARY - 2-3 paragraph project description
+#   CONFIG_FOCUS_CONSTRAINT - Scope constraint sentence
+#   CONFIG_NOTES - Project-specific notes for agents
+#
+# Returns:
+#   0 on success
+#   1 on fallback (CONFIG_ vars set to empty)
+#
+generate_context_aware_config() {
+    local subject="$1"
+    local project_type="${2:-unknown}"
+    local agent_count="${3:-3}"
+    local max_loops="${4:-20}"
+    local mode="${5:-idea}"
+    local project_context="${6:-}"
+
+    # Reset config variables
+    CONFIG_AGENTS=""
+    CONFIG_CATEGORIES=""
+    CONFIG_SCORING=""
+    CONFIG_KEY_FILES=""
+    CONFIG_PROJECT_SUMMARY=""
+    CONFIG_FOCUS_CONSTRAINT=""
+    CONFIG_NOTES=""
+
+    if [[ -z "$project_context" && -z "$subject" ]]; then
+        enable_log "WARN" "No project context or subject provided, using generic defaults"
+        return 1
+    fi
+
+    local prompt_file output_file stderr_file
+    prompt_file=$(mktemp)
+    output_file=$(mktemp)
+    stderr_file=$(mktemp)
+
+    local loops_display="$max_loops"
+    if [[ "$max_loops" == "continuous" ]]; then
+        loops_display="unlimited"
+    fi
+
+    cat > "$prompt_file" << 'CONFIGPROMPTEOF'
+You are configuring a multi-agent ideation system for a software project. Analyze the project context below and generate a structured configuration.
+
+CONFIGPROMPTEOF
+
+    cat >> "$prompt_file" << CONFIGCONTEXTEOF
+
+PROJECT SUBJECT: ${subject}
+PROJECT TYPE: ${project_type}
+MODE: ${mode} (${mode} = idea generation only, coding = ideation + implementation)
+DOMAIN AGENTS REQUESTED: ${agent_count}
+TOTAL LOOPS: ${loops_display}
+
+--- PROJECT CONTEXT ---
+${project_context}
+--- END PROJECT CONTEXT ---
+
+Based on this project, generate the following configuration sections. Use the EXACT section markers shown. Do NOT include any text outside the markers.
+
+---AGENTS_START---
+For each of the ${agent_count} domain agents, output in this exact format:
+
+### Agent: [2-4 word Role Name]
+**Expertise:** [specific technical skills relevant to THIS project, 1 sentence]
+**Perspective:** [what this agent prioritizes, 1 sentence]
+**Focus Areas:** [comma-separated list of specific improvement areas for THIS project]
+**Lens:** [a question this agent asks about every idea, starting with "Does this..."]
+
+Separate agents with --- on its own line.
+---AGENTS_END---
+
+---CATEGORIES_START---
+List 8-12 idea categories specific to this project's domain. Each on its own line in format:
+- **Category Name** — Short description of what ideas in this category cover
+---CATEGORIES_END---
+
+---SCORING_START---
+Create 4-6 weighted scoring criteria as a markdown table. Weights must sum to 100%.
+| Criterion | Weight | Description |
+|-----------|--------|-------------|
+---SCORING_END---
+
+---KEY_FILES_START---
+Group the project's key source files by area (e.g., Backend, Frontend, Config). For each file, add a brief description of its purpose. Format:
+### Area Name
+- \`path/to/file\` — What this file does
+---KEY_FILES_END---
+
+---PROJECT_SUMMARY_START---
+Write 2-3 paragraphs describing this project for someone who has never seen it. Include: what it does, the tech stack, key features, and target users. Reference actual files and components from the project context.
+---PROJECT_SUMMARY_END---
+
+---FOCUS_CONSTRAINT_START---
+Write a 1-2 sentence scope constraint for the ideation process. Example: "All ideas MUST be about usability improvements and new feature additions for the end user." Tailor this to the project's domain.
+---FOCUS_CONSTRAINT_END---
+
+---NOTES_START---
+Write 3-6 bullet points of project-specific guidance for the agents. These should reference actual technologies, patterns, or constraints from the codebase. Format as: - Note text
+---NOTES_END---
+CONFIGCONTEXTEOF
+
+    local cli_exit_code=0
+    local claude_cmd="claude"
+
+    if command -v "$claude_cmd" &>/dev/null; then
+        if "$claude_cmd" --print --output-format json < "$prompt_file" > "$output_file" 2> "$stderr_file"; then
+            cli_exit_code=0
+        else
+            cli_exit_code=$?
+        fi
+    else
+        cli_exit_code=1
+    fi
+
+    rm -f "$prompt_file" "$stderr_file"
+
+    if [[ $cli_exit_code -eq 0 && -s "$output_file" ]]; then
+        # Extract result text from JSON response
+        local result_text=""
+        if command -v jq &>/dev/null; then
+            result_text=$(jq -r '.result // .' "$output_file" 2>/dev/null)
+        fi
+        if [[ -z "$result_text" || "$result_text" == "null" ]]; then
+            result_text=$(cat "$output_file")
+        fi
+        rm -f "$output_file"
+
+        # Parse sections using markers
+        CONFIG_AGENTS=$(echo "$result_text" | sed -n '/---AGENTS_START---/,/---AGENTS_END---/{//d;p}')
+        CONFIG_CATEGORIES=$(echo "$result_text" | sed -n '/---CATEGORIES_START---/,/---CATEGORIES_END---/{//d;p}')
+        CONFIG_SCORING=$(echo "$result_text" | sed -n '/---SCORING_START---/,/---SCORING_END---/{//d;p}')
+        CONFIG_KEY_FILES=$(echo "$result_text" | sed -n '/---KEY_FILES_START---/,/---KEY_FILES_END---/{//d;p}')
+        CONFIG_PROJECT_SUMMARY=$(echo "$result_text" | sed -n '/---PROJECT_SUMMARY_START---/,/---PROJECT_SUMMARY_END---/{//d;p}')
+        CONFIG_FOCUS_CONSTRAINT=$(echo "$result_text" | sed -n '/---FOCUS_CONSTRAINT_START---/,/---FOCUS_CONSTRAINT_END---/{//d;p}')
+        CONFIG_NOTES=$(echo "$result_text" | sed -n '/---NOTES_START---/,/---NOTES_END---/{//d;p}')
+
+        # Trim leading/trailing whitespace from each section
+        CONFIG_AGENTS=$(echo "$CONFIG_AGENTS" | sed '/^$/d' | sed '1{/^$/d}')
+        CONFIG_CATEGORIES=$(echo "$CONFIG_CATEGORIES" | sed '/^[[:space:]]*$/d')
+        CONFIG_SCORING=$(echo "$CONFIG_SCORING" | sed '/^[[:space:]]*$/d')
+        CONFIG_KEY_FILES=$(echo "$CONFIG_KEY_FILES" | sed '/^[[:space:]]*$/d')
+        CONFIG_PROJECT_SUMMARY=$(echo "$CONFIG_PROJECT_SUMMARY" | sed '/^[[:space:]]*$/d')
+        CONFIG_FOCUS_CONSTRAINT=$(echo "$CONFIG_FOCUS_CONSTRAINT" | sed '/^[[:space:]]*$/d')
+        CONFIG_NOTES=$(echo "$CONFIG_NOTES" | sed '/^[[:space:]]*$/d')
+
+        # Validate we got at least agents and project summary
+        if [[ -n "$CONFIG_AGENTS" ]] && echo "$CONFIG_AGENTS" | grep -q "### Agent:"; then
+            enable_log "INFO" "Context-aware configuration generated successfully"
+            return 0
+        fi
+    fi
+
+    rm -f "$output_file"
+
+    enable_log "WARN" "Could not generate context-aware config, using generic defaults"
+    return 1
+}
+
+# =============================================================================
 # IDEATION MODE - AGENT GENERATION
 # =============================================================================
 
@@ -964,18 +1284,112 @@ generate_ideation_prompt_md() {
     local project_type="${2:-unknown}"
     local mode="${3:-coding}"
     local subject="${4:-}"
+    local agent_count="${5:-3}"
+    local max_loops="${6:-continuous}"
 
-    local mode_description=""
+    # Read CONFIG_* globals set by generate_context_aware_config()
+    local project_summary="${CONFIG_PROJECT_SUMMARY:-}"
+    local agents_config="${CONFIG_AGENTS:-}"
+    local categories_config="${CONFIG_CATEGORIES:-}"
+    local scoring_config="${CONFIG_SCORING:-}"
+    local key_files_config="${CONFIG_KEY_FILES:-}"
+    local focus_constraint="${CONFIG_FOCUS_CONSTRAINT:-}"
+    local notes_config="${CONFIG_NOTES:-}"
+
+    # Calculate total agent count (domain + 3 evaluators)
+    local total_agents=$(( agent_count + 3 ))
+
+    # Mode-specific sections
+    local mode_mission=""
+    local mode_constraint=""
     local implementation_section=""
+    local idea_mode_no_implementation=""
+    local loop_display="${max_loops}"
 
     if [[ "$mode" == "idea" ]]; then
-        mode_description="You are running a **Continuous Idea Loop**. Your role is to facilitate multi-agent ideation and structured debate. You do NOT implement code, modify files, or make any changes to the project."
+        mode_mission="Each loop produces exactly ONE best idea through a multi-phase debate process. You do NOT implement anything. You only generate, debate, and document ideas."
+        mode_constraint="**IDEA GENERATION ONLY** — No code changes, no file edits, no tests, no implementation."
+        idea_mode_no_implementation="Ralph must NOT create, edit, or delete any project source files. Pure ideation only. However, Ralph MUST write to \`.korero/IDEAS.md\` and \`.korero/fix_plan.md\` to persist winning ideas — these are the only files that should be modified."
     else
-        mode_description="You are running a **Continuous Coding Loop**. Your role is to facilitate multi-agent ideation and structured debate, then implement the winning idea with code changes and a git commit."
-        implementation_section='
-## Phase 3: Implementation (Coding Mode)
+        mode_mission="Each loop produces exactly ONE best idea through a multi-phase debate process, then implements it with code changes and a git commit."
+        mode_constraint="**IDEATION + IMPLEMENTATION** — Generate the best idea through debate, then implement it."
+    fi
 
-After the best idea is selected in Phase 2:
+    # Build context section
+    local context_section=""
+    if [[ -n "$project_summary" ]]; then
+        context_section="${project_summary}"
+    else
+        context_section="You are Korero, orchestrating a **${total_agents}-person AI agent team** that generates improvement ideas for the **${project_name}** project through structured debate."
+    fi
+
+    # Build focus areas section
+    local focus_section=""
+    if [[ -n "$focus_constraint" ]]; then
+        focus_section="
+**FOCUS AREAS:**
+${focus_constraint}"
+    fi
+
+    # Build agent listing for PROMPT.md
+    local agent_listing=""
+    if [[ -n "$agents_config" ]]; then
+        agent_listing="${agents_config}"
+    else
+        agent_listing="Read AGENT.md for the full list of ${agent_count} domain expert agents and their specializations."
+    fi
+
+    # Build categories section
+    local categories_section=""
+    if [[ -n "$categories_config" ]]; then
+        categories_section="## Idea Categories (for classification)
+
+${categories_config}"
+    else
+        categories_section="## Idea Categories
+Classify each idea by the most relevant area of the project it targets."
+    fi
+
+    # Build scoring section
+    local scoring_section=""
+    if [[ -n "$scoring_config" ]]; then
+        scoring_section="## Scoring Criteria (used by Idea Orchestrator for final selection)
+
+${scoring_config}"
+    else
+        scoring_section="## Scoring Criteria (used by Idea Orchestrator for final selection)
+
+| Criterion | Weight | Description |
+|-----------|--------|-------------|
+| User Impact | 30% | How much does this improve the user experience? |
+| Feature Value | 25% | Does this add a genuinely new capability? |
+| Technical Feasibility | 20% | Can it be built with the current stack? |
+| Adoption Likelihood | 15% | Will users discover and use this? |
+| Non-Duplication | 10% | Is it different from prior winning ideas? |"
+    fi
+
+    # Build key files section
+    local key_files_section=""
+    if [[ -n "$key_files_config" ]]; then
+        key_files_section="## Key Files Reference (for agents to cite in their proposals)
+
+${key_files_config}"
+    fi
+
+    # Build notes section
+    local notes_section=""
+    if [[ -n "$notes_config" ]]; then
+        notes_section="## Project-Specific Notes
+
+${notes_config}"
+    fi
+
+    # Build implementation section for coding mode
+    if [[ "$mode" == "coding" ]]; then
+        implementation_section='
+### Phase 3b: Implementation (Coding Mode)
+
+After the winning idea is documented in Phase 4:
 
 1. **Plan** the implementation approach for the winning idea
 2. **Implement** the changes following project best practices
@@ -988,94 +1402,193 @@ After the best idea is selected in Phase 2:
 See AGENT.md for build, test, and run instructions.'
     fi
 
+    # Build anti-repetition rules based on max_loops
+    local anti_repetition=""
+    if [[ "$max_loops" != "continuous" ]] && [[ "$max_loops" -gt 5 ]]; then
+        local quarter=$(( max_loops / 4 ))
+        local half=$(( max_loops / 2 ))
+        local three_quarter=$(( max_loops * 3 / 4 ))
+        anti_repetition="## Anti-Repetition Rules
+
+Before proposing or selecting ideas in each loop, review ALL prior winning ideas.
+An idea is considered a DUPLICATE if:
+- It targets the same file AND the same function as a prior winner
+- It solves the same user problem as a prior winner
+- It is a minor variation of a prior winner
+
+To ensure diversity:
+- Loops 1-${quarter}: No category restrictions (natural exploration)
+- Loops $((quarter + 1))-${half}: At least 3 different categories must be represented among winners
+- Loops $((half + 1))-${three_quarter}: No category can have more than 3 total winners
+- Loops $((three_quarter + 1))-${max_loops}: Prioritize categories with 0-1 winners"
+    else
+        anti_repetition="## Anti-Repetition Rules
+
+Before proposing or selecting ideas in each loop, review ALL prior winning ideas.
+An idea is considered a DUPLICATE if:
+- It targets the same file AND the same function as a prior winner
+- It solves the same user problem as a prior winner
+- It is a minor variation of a prior winner
+
+Ensure category diversity across loops. Avoid repeating the same category more than 3 times."
+    fi
+
+    # Output the full PROMPT.md
     cat << IDEATIONEOF
-# Korero Multi-Agent Development Instructions
+# Korero Multi-Agent Idea Generation System
 
 ## Context
-You are Korero, an autonomous AI agent working on the **${project_name}** project.
-${mode_description}
+${context_section}
 
-**Project Type:** ${project_type}
-**Project Subject:** ${subject}
+${mode_constraint}
 
-## Multi-Agent Ideation Protocol
+**Your mission:** Generate ${loop_display} winning improvement ideas across ${loop_display} loops.
+${mode_mission}
+${focus_section}
 
-Each loop iteration, you execute a structured multi-agent debate to identify the single best improvement for this project.
+---
 
-### Phase 1: Idea Generation
+## The ${total_agents}-Agent Team
 
-Read the agent descriptions in AGENT.md. For EACH domain expert agent listed there (do NOT include the mandatory evaluation agents in this phase):
+### Idea Generators (${agent_count} agents — participate in Phase 1 and Phase 3)
 
-1. **Adopt that agent's persona completely** - think from their expertise and perspective
-2. **Review the project's current state** - read key files, understand what exists
-3. **Propose ONE specific, actionable improvement** from that agent's perspective
-4. **Format each proposal clearly:**
+${agent_listing}
 
-\`\`\`
-**[Agent Name] Proposes:** [Title of improvement]
-Rationale: [Why this matters from their perspective]
-Description: [Specific, actionable description of the improvement]
-Expected Impact: [What benefit this would bring]
-\`\`\`
+### Evaluators (3 agents — participate in Phase 2 and Phase 3)
 
-### Phase 2: Structured Debate
+$((agent_count + 1)). **Devil's Advocate** — Pokes holes. Finds risks, scope creep, hidden complexity, low adoption risk.
+    Asks: "Will users actually use this? How often? Is this solving a real pain point or a hypothetical one?
+    Could this confuse existing users? Is the usability gain worth the added complexity?"
+    Scores each idea on:
+    - User Demand (1-5, higher = more likely to be used daily)
+    - Usability Risk (1-5, higher = more likely to confuse existing users)
+    - Complexity Creep (1-5, higher = worse)
+    - Verdict: STRONG / MODERATE / WEAK
 
-After all domain agents have proposed their ideas, the three mandatory evaluation agents analyze each proposal through a structured debate.
+$((agent_count + 2)). **Technical Feasibility Agent** — Assesses implementation against project stack.
+    Asks: "How hard is this to build? Does it fit the current architecture? What are the dependencies?
+    Can we ship a useful v1 of this feature in a reasonable sprint?"
+    Scores each idea on:
+    - Implementation Effort (S/M/L/XL)
+    - Architecture Fit (1-5, higher = better fit)
+    - Breaking Change Risk (Low/Medium/High)
+    - Verdict: FEASIBLE / CHALLENGING / IMPRACTICAL
 
-#### Round 1: Evaluation
+$((agent_count + 3)). **Idea Orchestrator** — Synthesizer and final decision-maker. Weighs all arguments.
+    Selects the single best idea based on the scoring criteria below.
+    Strongly favors ideas that are immediately noticeable to users over invisible backend improvements.
 
-For EACH proposed idea, the evaluation agents provide their analysis:
+---
 
-**Devil's Advocate** critiques each proposal:
-- What could go wrong with this idea?
-- What are the hidden costs, risks, or unintended consequences?
-- What assumptions are being made that might not hold?
-- Is this solving a real problem or an imagined one?
-- Rate: STRONG CONCERN / MINOR CONCERN / ACCEPTABLE
+## Per-Loop Workflow (4 Phases)
 
-**Technical Feasibility Analyst** assesses each proposal:
-- How complex is the implementation? (Simple / Moderate / Complex)
-- What dependencies, constraints, or prerequisites exist?
-- What is the estimated effort? (Small: hours / Medium: days / Large: weeks)
-- Are there simpler alternatives that achieve the same outcome?
-- Rate: HIGHLY FEASIBLE / FEASIBLE / CHALLENGING / IMPRACTICAL
-
-**Idea Orchestrator** evaluates all proposals holistically:
-- Which ideas have the highest impact-to-effort ratio?
-- Are there synergies between proposals that could be combined?
-- Which idea best aligns with the project's current needs?
-- What is the strategic priority ordering?
-
-#### Round 2: Rebuttal
-
-Each original proposing agent gets ONE rebuttal opportunity:
-- Address the Devil's Advocate's concerns directly
-- Respond to feasibility questions with specific technical approaches
-- Refine or narrow the proposal based on feedback
-- Concede points where the criticism is valid
-
-#### Round 3: Final Selection
-
-The **Idea Orchestrator** makes the final decision:
-- Synthesize all feedback from Rounds 1 and 2
-- Select the SINGLE best idea (or a synthesized combination of compatible ideas)
-- Provide clear justification for why this idea won
-- State the expected impact and implementation approach
-
-### Winning Idea Output (REQUIRED)
-
-After the debate concludes, output the winning idea in this EXACT format:
+### Phase 1: Idea Generation (Independent Proposals)
+Each of the ${agent_count} idea generator agents independently proposes 1-2 improvement ideas.
+Present each as:
 
 \`\`\`
----KORERO_IDEA---
-LOOP: [loop number from context]
-SELECTED_IDEA: [one-line title of the winning idea]
-PROPOSED_BY: [name of the agent who proposed it]
-IMPACT: HIGH | MEDIUM | LOW
-EFFORT: SMALL | MEDIUM | LARGE
-DESCRIPTION: [2-3 sentence description of what to do and why]
-JUSTIFICATION: [1-2 sentences on why this idea won the debate]
----END_KORERO_IDEA---
+**[Agent Name] proposes:** [Idea Title]
+Type: [Usability Improvement | New Feature]
+Category: [from categories list below]
+Brief: [2-3 sentence description of what the user sees/does differently]
+\`\`\`
+
+Total: ${agent_count}-$((agent_count * 2)) raw ideas per loop.
+
+### Phase 2: Evaluation (Evaluator Review)
+The 3 evaluators review ALL ideas from Phase 1:
+
+**Devil's Advocate** scores each idea on User Demand, Usability Risk, Complexity Creep.
+**Technical Feasibility Agent** scores each idea on Effort, Architecture Fit, Breaking Change Risk.
+**Idea Orchestrator** provides initial ranking of top 3-5 ideas with rationale.
+
+### Phase 3: Debate (Back-and-forth)
+Structured 2-round debate:
+
+**Round 1 — Defenders respond:**
+The agents who proposed the top 3-5 ideas (per Orchestrator's ranking) each defend their idea
+against the evaluators' critiques. They can:
+- Address specific Devil's Advocate concerns
+- Propose scope reductions to address feasibility concerns
+- Cite specific files/functions in the codebase that support feasibility
+- Strengthen the value proposition
+
+**Round 2 — Evaluators counter:**
+Evaluators respond to the defenses. The Idea Orchestrator announces the FINAL WINNER
+with clear justification for why this idea beat the alternatives.
+
+### Phase 4: Winning Idea Documentation (CRITICAL — YOU MUST WRITE TO FILES)
+The winning idea is documented in full detail using the output format below.
+**You MUST perform ALL of these file writes at the end of each loop:**
+
+1. **APPEND the full winning idea to \`.korero/IDEAS.md\`** — This is the permanent record.
+   Use the output format below. Append it to the end of the file (do not overwrite existing ideas).
+
+2. **UPDATE the Winning Ideas Tracker table in \`.korero/fix_plan.md\`** — Fill in the row for
+   the current loop number with the winner's title, type, category, and proposing agent.
+   Change Status from "Pending" to "Complete".
+
+3. **UPDATE the Category Coverage table in \`.korero/fix_plan.md\`** — Increment the count for
+   the winning category and add the loop number.
+
+4. **UPDATE the Type Balance table in \`.korero/fix_plan.md\`** — Increment the count for
+   the winning type (Usability Improvement or New Feature).
+
+5. **CHECK OFF the phase checkboxes in \`.korero/fix_plan.md\`** — Mark all 5 checkboxes
+   for the current loop as \`[x]\`.
+
+If you do not write to these files, the ideas are LOST. This is the most important step.
+${implementation_section}
+
+---
+
+## Winning Idea Output Format
+
+For each loop, document the winner as:
+
+\`\`\`
+═══════════════════════════════════════════════════════════
+LOOP [N] WINNING IDEA
+═══════════════════════════════════════════════════════════
+
+**Title:** [Idea Title]
+**Type:** [Usability Improvement | New Feature]
+**Category:** [from categories list]
+**Proposed by:** [Agent Name]
+**Loop:** [N] of ${loop_display}
+
+### Description
+[3-5 paragraph detailed description of the idea, what it does, and how it works]
+
+### Implementation Instructions
+Step-by-step guide for a developer to implement this:
+1. [Step with specific file paths, function names, and code patterns from the codebase]
+2. [Step...]
+3. [Step...]
+...
+
+### Value Proposition
+**Business Value:**
+- [Bullet point with concrete benefit]
+- [Bullet point...]
+
+**Technical Value:**
+- [Bullet point with concrete benefit]
+- [Bullet point...]
+
+**User Impact:**
+- [Who benefits and how]
+
+### Evaluator Feedback Summary
+**Devil's Advocate:** [2-3 sentence summary of concerns and how they were addressed]
+**Technical Feasibility:** [2-3 sentence summary of implementation assessment]
+**Idea Orchestrator:** [2-3 sentence summary of why this idea won]
+
+### Files Most Likely Affected
+- \`path/to/file\` — [what changes]
+- \`path/to/file\` — [what changes]
+
+═══════════════════════════════════════════════════════════
 \`\`\`
 
 ### Minority Opinions (REQUIRED)
@@ -1103,17 +1616,22 @@ ${implementation_section}
 
 ## Status Reporting (CRITICAL)
 
-At the END of your response, ALWAYS include this status block:
+At the end of EACH LOOP, include this status block:
 
 \`\`\`
 ---KORERO_STATUS---
-STATUS: IN_PROGRESS | COMPLETE | BLOCKED
-TASKS_COMPLETED_THIS_LOOP: <number>
-FILES_MODIFIED: <number>
-TESTS_STATUS: PASSING | FAILING | NOT_RUN
-WORK_TYPE: IDEATION | IMPLEMENTATION | TESTING | DOCUMENTATION
+STATUS: IN_PROGRESS | COMPLETE
+LOOP: [N] of ${loop_display}
+PHASE_COMPLETED: GENERATION | EVALUATION | DEBATE | DOCUMENTATION
+WINNING_IDEA: [Title of winning idea]
+WINNING_TYPE: [Usability Improvement | New Feature]
+WINNING_CATEGORY: [Category]
+WINNING_AGENT: [Agent name who proposed it]
+CATEGORIES_COVERED: [comma-separated list of unique categories among all winners so far]
+IDEAS_GENERATED_THIS_LOOP: [number of raw ideas in Phase 1]
+PRIOR_WINNERS: [comma-separated titles of all prior winning ideas]
 EXIT_SIGNAL: false | true
-RECOMMENDATION: <one line summary of what to do next>
+RECOMMENDATION: [What the next loop should focus on for diversity]
 ---END_KORERO_STATUS---
 \`\`\`
 
@@ -1122,8 +1640,17 @@ RECOMMENDATION: <one line summary of what to do next>
 - **Coding mode:** Set EXIT_SIGNAL to \`true\` only when all fix_plan.md items are done AND no more meaningful improvements can be found through ideation.
 - **Default:** Keep EXIT_SIGNAL \`false\` - the loop should continue running.
 
+---
+
 ## Current Task
-Read AGENT.md for the agent descriptions, then execute the Multi-Agent Ideation Protocol above.
+Execute the next uncompleted loop (check fix_plan.md to see which loop is next).
+Follow the 4-phase workflow above. Begin with Phase 1.
+
+**REMINDER:** At the end of Phase 4 you MUST:
+- APPEND the winning idea to \`.korero/IDEAS.md\`
+- UPDATE the tracker, category, and type tables in \`.korero/fix_plan.md\`
+- CHECK OFF the checkboxes for the completed loop in \`.korero/fix_plan.md\`
+If IDEAS.md is not updated, the idea is lost and the loop was wasted.
 IDEATIONEOF
 }
 
@@ -1135,7 +1662,11 @@ IDEATIONEOF
 #   $3 (test_cmd) - Test command
 #   $4 (run_cmd) - Run command
 #   $5 (mode) - "idea" or "coding"
+#   $6 (agent_count) - Number of domain agents
+#   $7 (max_loops) - Maximum loops
+#   $8 (project_name) - Project name
 #
+# Reads CONFIG_* globals set by generate_context_aware_config()
 # Outputs to stdout
 #
 generate_ideation_agent_md() {
@@ -1144,9 +1675,46 @@ generate_ideation_agent_md() {
     local test_cmd="${3:-echo 'No test command configured'}"
     local run_cmd="${4:-echo 'No run command configured'}"
     local mode="${5:-coding}"
+    local agent_count="${6:-3}"
+    local max_loops="${7:-continuous}"
+    local project_name="${8:-$(basename "$(pwd)")}"
 
+    # Read CONFIG_* globals
+    local focus_constraint="${CONFIG_FOCUS_CONSTRAINT:-}"
+    local scoring_config="${CONFIG_SCORING:-}"
+    local notes_config="${CONFIG_NOTES:-}"
+
+    local total_agents=$(( agent_count + 3 ))
+
+    # Mode description
+    local mode_description=""
     local build_section=""
-    if [[ "$mode" == "coding" ]]; then
+    if [[ "$mode" == "idea" ]]; then
+        mode_description="**IDEA GENERATION ONLY** — No code changes, no file edits, no tests, no implementation.
+Korero operates as a ${total_agents}-agent debate team generating improvement ideas for ${project_name}."
+        build_section="
+## Build Instructions
+
+\`\`\`bash
+# No build — this is an idea generation run, not a code change run.
+echo 'Idea generation mode — no build required'
+\`\`\`
+
+## Test Instructions
+
+\`\`\`bash
+# No tests — this is an idea generation run.
+echo 'Idea generation mode — no tests required'
+\`\`\`
+
+## Run Instructions
+
+\`\`\`bash
+# No run — this is an idea generation run.
+echo 'Idea generation mode — no run required'
+\`\`\`"
+    else
+        mode_description="**IDEATION + IMPLEMENTATION** — Generate the best idea through ${total_agents}-agent debate, then implement it with code changes and a git commit."
         build_section="
 ## Build Instructions
 
@@ -1167,49 +1735,115 @@ ${test_cmd}
 \`\`\`bash
 # Start/run the project
 ${run_cmd}
-\`\`\`
-"
+\`\`\`"
     fi
 
-    cat << AGENTEOF
-# Korero Agent Configuration
+    # Focus section
+    local focus_section=""
+    if [[ -n "$focus_constraint" ]]; then
+        focus_section="## Focus
 
-## Domain Expert Agents
+${focus_constraint}"
+    fi
 
-These agents participate in each ideation round. Each adopts their persona
-to propose improvements from their unique perspective.
+    # Scoring section
+    local scoring_section=""
+    if [[ -n "$scoring_config" ]]; then
+        scoring_section="## Scoring Criteria (used by Idea Orchestrator for final selection)
 
-${domain_agents}
+${scoring_config}"
+    else
+        scoring_section="## Scoring Criteria (used by Idea Orchestrator for final selection)
 
-## Mandatory Evaluation Agents
+| Criterion | Weight | Description |
+|-----------|--------|-------------|
+| User Impact | 30% | How much does this improve the user experience? |
+| Feature Value | 25% | Does this add a genuinely new capability? |
+| Technical Feasibility | 20% | Can it be built with the current stack? |
+| Adoption Likelihood | 15% | Will users discover and use this? |
+| Non-Duplication | 10% | Is it different from prior winning ideas? |"
+    fi
 
-These three agents ALWAYS participate in the debate phase. They evaluate,
-challenge, and ultimately select the best idea from each round.
+    # Notes section
+    local notes_section=""
+    if [[ -n "$notes_config" ]]; then
+        notes_section="## Notes
 
-### Agent: Devil's Advocate
-**Role:** Challenge every proposal ruthlessly and expose weaknesses
-**Perspective:** Assumes the worst case; looks for flaws, hidden costs, and risks
-**Key Questions:** What could go wrong? What are we not considering? Is this really worth the effort? What are the hidden dependencies?
-
----
-
-### Agent: Technical Feasibility Analyst
-**Role:** Assess implementation complexity, constraints, and realistic effort
-**Perspective:** Practical engineering reality; focused on what is actually achievable
-**Key Questions:** How complex is this really? What will break? What is the simplest viable version? What are the technical prerequisites?
-
----
-
-### Agent: Idea Orchestrator
-**Role:** Synthesize feedback, rank proposals, and make the final selection
-**Perspective:** Strategic value; focused on highest impact for lowest effort
-**Key Questions:** Which idea matters most right now? Can ideas be combined? What gives us the best return on investment?
-${build_section}
-## Notes
+${notes_config}"
+    else
+        notes_section="## Notes
+- Korero must read the codebase thoroughly before each loop to ground ideas in reality
+- Ideas should reference specific files and functions in their proposals
+- Every idea must answer: \"What does the user see or do differently?\"
+- Aim for a healthy mix of idea types across all loops
 - Domain expert agents are generated based on the project subject
 - The 3 mandatory evaluation agents always participate in every debate
 - You can edit this file to add, remove, or modify agent descriptions
-- To regenerate agents, run \`korero-enable --force\`
+- To regenerate agents, run \`korero-enable --force\`"
+    fi
+
+    # No-implementation rule for idea mode
+    local idea_mode_rule=""
+    if [[ "$mode" == "idea" ]]; then
+        idea_mode_rule="6. **No Implementation:** Korero must NOT create, edit, or delete any project source files. Pure ideation only. However, Korero MUST write to \`.korero/IDEAS.md\` and \`.korero/fix_plan.md\` to persist winning ideas — these are the only files that should be modified."
+    else
+        idea_mode_rule="6. **Implementation:** After documenting the winning idea, implement it with code changes, tests, and a git commit."
+    fi
+
+    cat << AGENTEOF
+# Korero Agent Configuration — Multi-Agent Idea Generation
+
+## Mode
+${mode_description}
+
+${focus_section}
+
+## Loop Configuration
+- **Total Loops:** ${max_loops}
+- **Output per Loop:** Exactly 1 winning idea (fully documented)
+- **Total Output:** ${max_loops} winning ideas
+${build_section}
+
+## Agent Team (${total_agents} members)
+
+### Idea Generators (${agent_count})
+
+${domain_agents}
+
+### Evaluators (3)
+
+| # | Agent | Role | Evaluation Focus |
+|---|-------|------|-----------------|
+| $((agent_count + 1)) | Devil's Advocate | Critic | User adoption likelihood, usability risk, complexity creep |
+| $((agent_count + 2)) | Technical Feasibility Agent | Assessor | Effort sizing, architecture fit, breaking change risk |
+| $((agent_count + 3)) | Idea Orchestrator | Decision-maker | Final ranking using weighted scoring criteria |
+
+## Debate Rules
+
+1. **Independence:** In Phase 1, each generator proposes ideas WITHOUT seeing other generators' ideas.
+2. **Transparency:** In Phase 2, evaluators must score EVERY idea — no skipping.
+3. **Defense:** In Phase 3, only the top 3-5 ideas (per Orchestrator) proceed to debate.
+4. **Finality:** The Idea Orchestrator's Phase 3 decision is FINAL. No appeals.
+5. **Specificity:** All ideas must reference actual files, functions, or patterns from the codebase.
+${idea_mode_rule}
+7. **One Winner:** Exactly one idea wins per loop. No ties. No "honorable mentions."
+8. **Anti-Repetition:** Ideas materially similar to prior winners are automatically disqualified.
+
+${scoring_section}
+
+## Output Location (CRITICAL — MUST WRITE TO FILES)
+Korero MUST write winning ideas to **two files** at the end of every loop:
+
+1. **\`.korero/IDEAS.md\`** — APPEND the full winning idea write-up (description, implementation
+   instructions, value proposition, evaluator feedback, affected files). This is the permanent
+   record. Never overwrite — always append to the end.
+
+2. **\`.korero/fix_plan.md\`** — UPDATE the tracker table row, category coverage table, type
+   balance table, and check off the phase checkboxes for the completed loop.
+
+**If you do not write to these files, the ideas are LOST and the loop counts for nothing.**
+
+${notes_section}
 AGENTEOF
 }
 
@@ -1218,36 +1852,235 @@ AGENTEOF
 # Parameters:
 #   $1 (mode) - "idea" or "coding"
 #   $2 (tasks) - Tasks to include (for coding mode)
+#   $3 (project_name) - Project name
+#   $4 (agent_count) - Number of domain agents
+#   $5 (max_loops) - Maximum loops
 #
+# Reads CONFIG_* globals set by generate_context_aware_config()
 # Outputs to stdout
 #
 generate_ideation_fix_plan_md() {
     local mode="${1:-coding}"
     local tasks="${2:-}"
+    local project_name="${3:-$(basename "$(pwd)")}"
+    local agent_count="${4:-3}"
+    local max_loops="${5:-continuous}"
 
-    if [[ "$mode" == "idea" ]]; then
-        cat << 'IDEAFIXPLANEOF'
-# Korero Ideation Plan
+    # Read CONFIG_* globals
+    local categories_config="${CONFIG_CATEGORIES:-}"
+    local focus_constraint="${CONFIG_FOCUS_CONSTRAINT:-}"
 
-## Ideation Goals
-- [ ] Run multi-agent ideation loops to generate improvement proposals
-- [ ] Build a diverse set of ideas across all domain agent perspectives
-- [ ] Refine ideas through structured Devil's Advocate and feasibility debate
-- [ ] Capture the best ideas from each loop in .korero/ideas/
+    local total_agents=$(( agent_count + 3 ))
 
-## Completed Ideas
-(Winning ideas from each loop are automatically saved to .korero/ideas/IDEAS.md)
+    # For coding mode without ideation, fall back to standard fix_plan
+    if [[ "$mode" != "idea" && "$mode" != "coding" ]]; then
+        generate_fix_plan_md "$tasks"
+        return
+    fi
+
+    # For continuous mode, generate simpler plan
+    if [[ "$max_loops" == "continuous" ]]; then
+        cat << CONTFIXPLANEOF
+# Korero Idea Generation Plan — Continuous
+
+## Mission
+Generate winning improvements for ${project_name} through ${total_agents}-agent debate.
+Each loop runs 4 phases: Generation → Evaluation → Debate → Documentation.
+
+## Winning Ideas Tracker
+
+| Loop | Winner | Type | Category | Proposed By | Status |
+|------|--------|------|----------|-------------|--------|
+| (Updated automatically each loop) | — | — | — | — | — |
 
 ## Notes
 - Each loop produces exactly one winning idea through structured debate
-- Ideas accumulate in .korero/ideas/IDEAS.md
-- Individual loop results stored in .korero/ideas/loop_N_idea.md
+- Winning ideas are appended to .korero/IDEAS.md
+- This tracker table is updated at the end of each loop's Phase 4
 - Review IDEAS.md periodically to identify themes and priorities
-IDEAFIXPLANEOF
-    else
-        # Coding mode: use standard fix_plan with imported tasks
-        generate_fix_plan_md "$tasks"
+CONTFIXPLANEOF
+        return
     fi
+
+    # Generate the full tracker-based fix_plan for numbered loops
+
+    # Build mission description
+    local mission=""
+    if [[ -n "$focus_constraint" ]]; then
+        mission="Generate ${max_loops} winning improvements for ${project_name}
+through ${total_agents}-agent debate. Each loop runs 4 phases: Generation → Evaluation → Debate → Documentation.
+
+${focus_constraint}"
+    else
+        mission="Generate ${max_loops} winning improvements for ${project_name}
+through ${total_agents}-agent debate. Each loop runs 4 phases: Generation → Evaluation → Debate → Documentation."
+    fi
+
+    # Build Winning Ideas Tracker table rows
+    local tracker_rows=""
+    local i
+    for (( i=1; i<=max_loops; i++ )); do
+        tracker_rows="${tracker_rows}| ${i} | — | — | — | — | Pending |
+"
+    done
+
+    # Build Category Coverage table
+    local category_table=""
+    if [[ -n "$categories_config" ]]; then
+        # Parse categories from CONFIG_CATEGORIES (each line starting with - ** or - )
+        # Extract category names and build table rows
+        category_table="## Category Coverage
+
+| Category | Count | Loops |
+|----------|-------|-------|
+"
+        while IFS= read -r line; do
+            # Extract category name from lines like "- **Category Name** — description"
+            # or "- Category Name — description" or "- **Category Name**"
+            local cat_name=""
+            if [[ "$line" =~ ^-[[:space:]]*\*\*([^*]+)\*\* ]]; then
+                cat_name="${BASH_REMATCH[1]}"
+            elif [[ "$line" =~ ^-[[:space:]]*([^—–-]+) ]]; then
+                cat_name="${BASH_REMATCH[1]}"
+                cat_name="${cat_name%% }"  # trim trailing space
+            fi
+            if [[ -n "$cat_name" ]]; then
+                category_table="${category_table}| ${cat_name} | 0 | — |
+"
+            fi
+        done <<< "$categories_config"
+    else
+        category_table="## Category Coverage
+
+| Category | Count | Loops |
+|----------|-------|-------|
+| (Categories will be populated as ideas are generated) | 0 | — |"
+    fi
+
+    # Build Type Balance table
+    local half_loops=$(( max_loops / 2 ))
+    local type_table="## Type Balance
+
+| Type | Count | Target |
+|------|-------|--------|
+| Usability Improvement | 0 | ~${half_loops} |
+| New Feature | 0 | ~${half_loops} |"
+
+    # Build per-loop checklists with checkpoints
+    local loop_checklists=""
+    local quarter=$(( max_loops / 4 ))
+    local half=$(( max_loops / 2 ))
+    local three_quarter=$(( max_loops * 3 / 4 ))
+
+    for (( i=1; i<=max_loops; i++ )); do
+        local review_note=""
+        if [[ $i -eq 1 ]]; then
+            review_note=" (read codebase first)"
+        elif [[ $i -le 5 ]]; then
+            review_note=" (review Loop 1-$((i-1)) winners first)"
+        else
+            review_note=" (enforce category diversity — review coverage table)"
+        fi
+
+        local checkpoint=""
+        if [[ $i -eq $quarter ]]; then
+            checkpoint="
+- [ ] **Checkpoint:** Verify at least 3 different categories represented in winners so far"
+        elif [[ $i -eq $half ]]; then
+            checkpoint="
+- [ ] **Checkpoint:** Verify healthy type balance (roughly 50/50 usability vs new features)"
+        elif [[ $i -eq $three_quarter ]]; then
+            checkpoint="
+- [ ] **Checkpoint:** Review category coverage — prioritize underrepresented categories"
+        elif [[ $i -eq $max_loops ]]; then
+            checkpoint="
+- [ ] **FINAL CHECKPOINT:** Verify all loops complete, generate summary report"
+        fi
+
+        loop_checklists="${loop_checklists}
+## Loop ${i}
+
+- [ ] Phase 1: All ${agent_count} generators propose ideas${review_note}
+- [ ] Phase 2: All 3 evaluators score and rank ideas
+- [ ] Phase 3: Top ideas debated (2 rounds)
+- [ ] Phase 4: Winning idea documented in full format
+- [ ] Update tracker table above${checkpoint}
+
+**Winning Idea:** _(to be filled)_
+
+---
+"
+    done
+
+    # Build final deliverable section
+    local final_section="## Final Deliverable
+
+When all ${max_loops} loops are complete:
+1. Review IDEAS.md for the complete list of winning ideas
+2. Verify category coverage table shows diversity
+3. Verify type balance is roughly 50/50
+4. All ${max_loops} rows in the tracker table show \"Complete\"
+5. The winning ideas in IDEAS.md serve as the product improvement backlog"
+
+    # Output the full fix_plan.md
+    cat << FIXPLANEOF
+# Korero Idea Generation Plan — ${max_loops} Loops
+
+## Mission
+${mission}
+
+## Winning Ideas Tracker
+
+| Loop | Winner | Type | Category | Proposed By | Status |
+|------|--------|------|----------|-------------|--------|
+${tracker_rows}
+${category_table}
+
+${type_table}
+
+---
+${loop_checklists}
+${final_section}
+FIXPLANEOF
+}
+
+# generate_ideation_ideas_md - Generate IDEAS.md header with project context
+#
+# Parameters:
+#   $1 (project_name) - Project name
+#   $2 (max_loops) - Maximum loops
+#   $3 (total_agents) - Total agent count
+#
+# Reads CONFIG_FOCUS_CONSTRAINT global
+# Outputs to stdout
+#
+generate_ideation_ideas_md() {
+    local project_name="${1:-$(basename "$(pwd)")}"
+    local max_loops="${2:-continuous}"
+    local total_agents="${3:-6}"
+
+    local focus_constraint="${CONFIG_FOCUS_CONSTRAINT:-}"
+
+    local focus_description=""
+    if [[ -n "$focus_constraint" ]]; then
+        # Extract a short description from the focus constraint (first line, strip markdown)
+        focus_description=$(echo "$focus_constraint" | head -1 | sed 's/\*\*//g; s/^All ideas MUST be about //; s/^All ideas must be about //')
+    else
+        focus_description="Improvement Ideas"
+    fi
+
+    cat << IDEASEOF
+# ${project_name} Winning Ideas — ${focus_description}
+
+This file is the persistent record of all winning ideas from the ${total_agents}-agent debate process.
+Korero MUST append each winning idea to this file at the end of Phase 4 in every loop.
+
+**Total planned loops:** ${max_loops}
+**Format:** Each winning idea uses the ═══ separator format defined in PROMPT.md.
+
+---
+
+IDEASEOF
 }
 
 # =============================================================================
@@ -1279,6 +2112,7 @@ enable_korero_in_directory() {
     local generated_agents="${ENABLE_GENERATED_AGENTS:-}"
     local agent_count="${ENABLE_AGENT_COUNT:-3}"
     local max_loops="${ENABLE_MAX_LOOPS:-continuous}"
+    local focus_override="${ENABLE_FOCUS_CONSTRAINT:-}"
 
     # Check existing state (use || true to prevent set -e from exiting)
     check_existing_korero || true
@@ -1321,10 +2155,39 @@ enable_korero_in_directory() {
     local prompt_content agent_content fix_plan_content
 
     if [[ "$korero_mode" == "idea" || "$korero_mode" == "coding" ]]; then
-        # Ideation mode: use ideation-specific templates
-        prompt_content=$(generate_ideation_prompt_md "$project_name" "$DETECTED_PROJECT_TYPE" "$korero_mode" "$project_subject")
-        agent_content=$(generate_ideation_agent_md "$generated_agents" "$DETECTED_BUILD_CMD" "$DETECTED_TEST_CMD" "$DETECTED_RUN_CMD" "$korero_mode")
-        fix_plan_content=$(generate_ideation_fix_plan_md "$korero_mode" "$task_content")
+        # Gather project context and generate context-aware config
+        # (sets CONFIG_* globals: CONFIG_AGENTS, CONFIG_CATEGORIES, CONFIG_SCORING,
+        #  CONFIG_KEY_FILES, CONFIG_PROJECT_SUMMARY, CONFIG_FOCUS_CONSTRAINT, CONFIG_NOTES)
+        local project_context=""
+        project_context=$(gather_project_context "$(pwd)")
+
+        if [[ -n "$project_subject" && -n "$project_context" ]]; then
+            enable_log "INFO" "Generating context-aware configuration..."
+            if generate_context_aware_config "$project_subject" "$DETECTED_PROJECT_TYPE" "$agent_count" "$max_loops" "$korero_mode" "$project_context"; then
+                enable_log "SUCCESS" "Context-aware configuration generated"
+            else
+                enable_log "WARN" "Context-aware generation failed, using generic templates"
+                # CONFIG_* variables remain empty — template functions use fallbacks
+            fi
+        fi
+
+        # Apply focus constraint override if provided
+        if [[ -n "$focus_override" ]]; then
+            CONFIG_FOCUS_CONSTRAINT="$focus_override"
+        fi
+
+        # Calculate total agents for template functions
+        local total_agents=$(( agent_count + 3 ))
+
+        # Ideation mode: use context-aware ideation templates
+        prompt_content=$(generate_ideation_prompt_md "$project_name" "$DETECTED_PROJECT_TYPE" "$korero_mode" "$project_subject" "$agent_count" "$max_loops")
+        agent_content=$(generate_ideation_agent_md "$generated_agents" "$DETECTED_BUILD_CMD" "$DETECTED_TEST_CMD" "$DETECTED_RUN_CMD" "$korero_mode" "$agent_count" "$max_loops" "$project_name")
+        fix_plan_content=$(generate_ideation_fix_plan_md "$korero_mode" "$task_content" "$project_name" "$agent_count" "$max_loops")
+
+        # Generate IDEAS.md header for ideation modes
+        local ideas_content
+        ideas_content=$(generate_ideation_ideas_md "$project_name" "$max_loops" "$total_agents")
+        safe_create_file ".korero/ideas/IDEAS.md" "$ideas_content"
     else
         # Standard mode: use original templates
         prompt_content=$(generate_prompt_md "$project_name" "$DETECTED_PROJECT_TYPE" "$DETECTED_FRAMEWORK")
@@ -1374,7 +2237,10 @@ export -f generate_korerorc
 export -f _generate_generic_agents
 export -f _generate_agents_from_roles
 export -f generate_domain_agents
+export -f gather_project_context
+export -f generate_context_aware_config
 export -f generate_ideation_prompt_md
 export -f generate_ideation_agent_md
 export -f generate_ideation_fix_plan_md
+export -f generate_ideation_ideas_md
 export -f enable_korero_in_directory

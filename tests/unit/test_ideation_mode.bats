@@ -147,52 +147,54 @@ teardown() {
 # IDEATION PROMPT.MD GENERATION (6 tests)
 # =============================================================================
 
-@test "generate_ideation_prompt_md includes multi-agent protocol for idea mode" {
+@test "generate_ideation_prompt_md includes multi-agent system for idea mode" {
     local output
-    output=$(generate_ideation_prompt_md "test-project" "typescript" "idea" "data analysis tool")
+    output=$(generate_ideation_prompt_md "test-project" "typescript" "idea" "data analysis tool" "3" "10")
 
-    echo "$output" | grep -q "Multi-Agent Ideation Protocol"
-    echo "$output" | grep -q "Continuous Idea Loop"
-    echo "$output" | grep -q "KORERO_IDEA"
+    echo "$output" | grep -q "Multi-Agent Idea Generation System"
+    echo "$output" | grep -q "IDEA GENERATION ONLY"
     echo "$output" | grep -q "KORERO_STATUS"
 }
 
 @test "generate_ideation_prompt_md includes implementation section for coding mode" {
     local output
-    output=$(generate_ideation_prompt_md "test-project" "typescript" "coding" "web app")
+    output=$(generate_ideation_prompt_md "test-project" "typescript" "coding" "web app" "3" "20")
 
-    echo "$output" | grep -q "Continuous Coding Loop"
-    echo "$output" | grep -q "Phase 3: Implementation"
+    echo "$output" | grep -q "IDEATION + IMPLEMENTATION"
+    echo "$output" | grep -q "Phase 3b: Implementation"
     echo "$output" | grep -q "git commit"
 }
 
 @test "generate_ideation_prompt_md excludes implementation section for idea mode" {
     local output
-    output=$(generate_ideation_prompt_md "test-project" "typescript" "idea" "web app")
+    output=$(generate_ideation_prompt_md "test-project" "typescript" "idea" "web app" "3" "10")
 
-    ! echo "$output" | grep -q "Phase 3: Implementation"
-    echo "$output" | grep -q "do NOT implement code"
+    ! echo "$output" | grep -q "Phase 3b: Implementation"
+    echo "$output" | grep -q "do NOT implement"
 }
 
-@test "generate_ideation_prompt_md includes project subject" {
+@test "generate_ideation_prompt_md includes loop count and agent count" {
     local output
-    output=$(generate_ideation_prompt_md "test-project" "python" "idea" "machine learning pipeline")
+    output=$(generate_ideation_prompt_md "test-project" "python" "idea" "machine learning pipeline" "5" "20")
 
-    echo "$output" | grep -q "machine learning pipeline"
+    echo "$output" | grep -q "20 winning improvement ideas"
+    echo "$output" | grep -q "8-Agent Team"
+    echo "$output" | grep -q "5 agents"
 }
 
-@test "generate_ideation_prompt_md includes debate rounds" {
+@test "generate_ideation_prompt_md includes debate phases" {
     local output
-    output=$(generate_ideation_prompt_md "test-project" "unknown" "idea" "")
+    output=$(generate_ideation_prompt_md "test-project" "unknown" "idea" "" "3" "10")
 
-    echo "$output" | grep -q "Round 1: Evaluation"
-    echo "$output" | grep -q "Round 2: Rebuttal"
-    echo "$output" | grep -q "Round 3: Final Selection"
+    echo "$output" | grep -q "Phase 1: Idea Generation"
+    echo "$output" | grep -q "Phase 2: Evaluation"
+    echo "$output" | grep -q "Phase 3: Debate"
+    echo "$output" | grep -q "Phase 4: Winning Idea Documentation"
 }
 
 @test "generate_ideation_prompt_md includes EXIT_SIGNAL guidelines" {
     local output
-    output=$(generate_ideation_prompt_md "test-project" "unknown" "idea" "")
+    output=$(generate_ideation_prompt_md "test-project" "unknown" "idea" "" "3" "continuous")
 
     echo "$output" | grep -q "EXIT_SIGNAL"
     echo "$output" | grep -q "KORERO_STATUS"
@@ -213,24 +215,24 @@ teardown() {
 # IDEATION AGENT.MD GENERATION (5 tests)
 # =============================================================================
 
-@test "generate_ideation_agent_md includes domain agents" {
+@test "generate_ideation_agent_md includes domain agents in table" {
     local agents
     agents=$(_generate_generic_agents 2)
     local output
-    output=$(generate_ideation_agent_md "$agents" "npm build" "npm test" "npm start" "coding")
+    output=$(generate_ideation_agent_md "$agents" "npm build" "npm test" "npm start" "coding" "2" "20" "test-project")
 
-    echo "$output" | grep -q "Domain Expert Agents"
+    echo "$output" | grep -q "Idea Generators"
     echo "$output" | grep -q "Domain Innovation Expert"
 }
 
-@test "generate_ideation_agent_md always includes 3 mandatory agents" {
+@test "generate_ideation_agent_md always includes 3 mandatory evaluators" {
     local agents
     agents=$(_generate_generic_agents 1)
     local output
-    output=$(generate_ideation_agent_md "$agents" "" "" "" "idea")
+    output=$(generate_ideation_agent_md "$agents" "" "" "" "idea" "1" "10" "test-project")
 
     echo "$output" | grep -q "Devil's Advocate"
-    echo "$output" | grep -q "Technical Feasibility Analyst"
+    echo "$output" | grep -q "Technical Feasibility Agent"
     echo "$output" | grep -q "Idea Orchestrator"
 }
 
@@ -238,40 +240,88 @@ teardown() {
     local agents
     agents=$(_generate_generic_agents 1)
     local output
-    output=$(generate_ideation_agent_md "$agents" "npm run build" "npm test" "npm start" "coding")
+    output=$(generate_ideation_agent_md "$agents" "npm run build" "npm test" "npm start" "coding" "1" "10" "test-project")
 
     echo "$output" | grep -q "Build Instructions"
     echo "$output" | grep -q "npm run build"
 }
 
-@test "generate_ideation_agent_md excludes build commands in idea mode" {
+@test "generate_ideation_agent_md idea mode shows no-build message" {
     local agents
     agents=$(_generate_generic_agents 1)
     local output
-    output=$(generate_ideation_agent_md "$agents" "npm run build" "npm test" "npm start" "idea")
+    output=$(generate_ideation_agent_md "$agents" "npm run build" "npm test" "npm start" "idea" "1" "10" "test-project")
 
-    ! echo "$output" | grep -q "Build Instructions"
+    echo "$output" | grep -q "Idea generation mode"
+    echo "$output" | grep -q "no build required"
 }
 
-@test "generate_ideation_agent_md mentions editing capability" {
+@test "generate_ideation_agent_md includes debate rules" {
     local agents
     agents=$(_generate_generic_agents 1)
     local output
-    output=$(generate_ideation_agent_md "$agents" "" "" "" "idea")
+    output=$(generate_ideation_agent_md "$agents" "" "" "" "idea" "1" "10" "test-project")
 
-    echo "$output" | grep -q "edit this file"
+    echo "$output" | grep -q "Debate Rules"
+    echo "$output" | grep -q "Independence"
+    echo "$output" | grep -q "Anti-Repetition"
+}
+
+@test "generate_ideation_agent_md includes scoring criteria" {
+    local agents
+    agents=$(_generate_generic_agents 1)
+    local output
+    output=$(generate_ideation_agent_md "$agents" "" "" "" "idea" "1" "10" "test-project")
+
+    echo "$output" | grep -q "Scoring Criteria"
+}
+
+@test "generate_ideation_agent_md includes output location instructions" {
+    local agents
+    agents=$(_generate_generic_agents 1)
+    local output
+    output=$(generate_ideation_agent_md "$agents" "" "" "" "idea" "1" "10" "test-project")
+
+    echo "$output" | grep -q "Output Location"
+    echo "$output" | grep -q "IDEAS.md"
+    echo "$output" | grep -q "fix_plan.md"
+}
+
+@test "generate_ideation_agent_md uses CONFIG_SCORING when set" {
+    CONFIG_SCORING="| Custom Criterion | 50% | Custom description |
+| Another | 50% | Another desc |"
+    local agents
+    agents=$(_generate_generic_agents 1)
+    local output
+    output=$(generate_ideation_agent_md "$agents" "" "" "" "idea" "1" "10" "test-project")
+    unset CONFIG_SCORING
+
+    echo "$output" | grep -q "Custom Criterion"
+    echo "$output" | grep -q "50%"
+}
+
+@test "generate_ideation_agent_md uses CONFIG_FOCUS_CONSTRAINT when set" {
+    CONFIG_FOCUS_CONSTRAINT="Only UI/UX improvements are in scope."
+    local agents
+    agents=$(_generate_generic_agents 1)
+    local output
+    output=$(generate_ideation_agent_md "$agents" "" "" "" "idea" "1" "10" "test-project")
+    unset CONFIG_FOCUS_CONSTRAINT
+
+    echo "$output" | grep -q "Focus"
+    echo "$output" | grep -q "UI/UX improvements"
 }
 
 # =============================================================================
-# IDEATION FIX_PLAN.MD GENERATION (3 tests)
+# IDEATION FIX_PLAN.MD GENERATION (3 tests + 6 new)
 # =============================================================================
 
-@test "generate_ideation_fix_plan_md produces idea-mode plan" {
+@test "generate_ideation_fix_plan_md produces tracker-based plan for numbered loops" {
     local output
-    output=$(generate_ideation_fix_plan_md "idea" "")
+    output=$(generate_ideation_fix_plan_md "idea" "" "test-project" "3" "10")
 
-    echo "$output" | grep -q "Ideation Goals"
-    echo "$output" | grep -q "multi-agent ideation"
+    echo "$output" | grep -q "Idea Generation Plan"
+    echo "$output" | grep -q "Winning Ideas Tracker"
     echo "$output" | grep -q "IDEAS.md"
 }
 
@@ -279,17 +329,76 @@ teardown() {
     local tasks="- [ ] Build data pipeline
 - [ ] Add authentication"
     local output
-    output=$(generate_ideation_fix_plan_md "coding" "$tasks")
+    output=$(generate_ideation_fix_plan_md "coding" "$tasks" "test-project" "3" "10")
 
-    echo "$output" | grep -q "Build data pipeline"
-    echo "$output" | grep -q "Add authentication"
+    echo "$output" | grep -q "Winning Ideas Tracker"
+    echo "$output" | grep -q "10 Loops"
 }
 
-@test "generate_ideation_fix_plan_md defaults to standard plan for coding mode" {
+@test "generate_ideation_fix_plan_md produces continuous plan for continuous loops" {
     local output
-    output=$(generate_ideation_fix_plan_md "coding" "")
+    output=$(generate_ideation_fix_plan_md "idea" "" "test-project" "3" "continuous")
 
-    echo "$output" | grep -q "High Priority"
+    echo "$output" | grep -q "Continuous"
+    echo "$output" | grep -q "Winning Ideas Tracker"
+}
+
+@test "generate_ideation_fix_plan_md includes tracker rows matching max_loops" {
+    local output
+    output=$(generate_ideation_fix_plan_md "idea" "" "test-project" "3" "10")
+
+    local pending_count
+    pending_count=$(echo "$output" | grep -c "| Pending |")
+
+    assert_equal "$pending_count" "10"
+}
+
+@test "generate_ideation_fix_plan_md includes category coverage table with CONFIG_CATEGORIES" {
+    CONFIG_CATEGORIES="- **Data Management** — Data upload and processing
+- **Visualization** — Charts and graphs
+- **AI Features** — LLM-powered capabilities"
+    local output
+    output=$(generate_ideation_fix_plan_md "idea" "" "test-project" "3" "10")
+    unset CONFIG_CATEGORIES
+
+    echo "$output" | grep -q "Category Coverage"
+    echo "$output" | grep -q "Data Management"
+    echo "$output" | grep -q "Visualization"
+    echo "$output" | grep -q "AI Features"
+}
+
+@test "generate_ideation_fix_plan_md includes type balance table" {
+    local output
+    output=$(generate_ideation_fix_plan_md "idea" "" "test-project" "3" "10")
+
+    echo "$output" | grep -q "Type Balance"
+    echo "$output" | grep -q "Usability Improvement"
+    echo "$output" | grep -q "New Feature"
+}
+
+@test "generate_ideation_fix_plan_md includes per-loop checklists" {
+    local output
+    output=$(generate_ideation_fix_plan_md "idea" "" "test-project" "3" "10")
+
+    echo "$output" | grep -q "## Loop 1"
+    echo "$output" | grep -q "## Loop 10"
+    echo "$output" | grep -q "Phase 1: All 3 generators"
+    echo "$output" | grep -q "Phase 4: Winning idea documented"
+}
+
+@test "generate_ideation_fix_plan_md includes checkpoints" {
+    local output
+    output=$(generate_ideation_fix_plan_md "idea" "" "test-project" "3" "20")
+
+    echo "$output" | grep -q "Checkpoint"
+    echo "$output" | grep -q "FINAL CHECKPOINT"
+}
+
+@test "generate_ideation_fix_plan_md includes final deliverable section" {
+    local output
+    output=$(generate_ideation_fix_plan_md "idea" "" "test-project" "3" "10")
+
+    echo "$output" | grep -q "Final Deliverable"
 }
 
 # =============================================================================
@@ -441,7 +550,107 @@ EOF
 }
 
 # =============================================================================
-# INTEGRATION: ENABLE WITH IDEATION MODE (5 tests)
+# IDEAS.MD HEADER GENERATION (3 tests)
+# =============================================================================
+
+@test "generate_ideation_ideas_md includes project name" {
+    local output
+    output=$(generate_ideation_ideas_md "my-project" "10" "6")
+
+    echo "$output" | grep -q "my-project Winning Ideas"
+}
+
+@test "generate_ideation_ideas_md includes loop count" {
+    local output
+    output=$(generate_ideation_ideas_md "my-project" "20" "12")
+
+    echo "$output" | grep -q "20"
+    echo "$output" | grep -q "12-agent"
+}
+
+@test "generate_ideation_ideas_md uses focus constraint description" {
+    CONFIG_FOCUS_CONSTRAINT="All ideas MUST be about usability improvements"
+    local output
+    output=$(generate_ideation_ideas_md "my-project" "10" "6")
+    unset CONFIG_FOCUS_CONSTRAINT
+
+    echo "$output" | grep -q "usability improvements"
+}
+
+# =============================================================================
+# PROJECT CONTEXT GATHERING (5 tests)
+# =============================================================================
+
+@test "gather_project_context returns directory tree" {
+    mkdir -p src lib
+    echo "test" > src/main.py
+    echo "test" > lib/utils.py
+
+    local output
+    output=$(gather_project_context "$(pwd)")
+
+    echo "$output" | grep -q "DIRECTORY STRUCTURE"
+    echo "$output" | grep -q "src"
+}
+
+@test "gather_project_context reads package.json" {
+    cat > package.json << 'EOF'
+{
+    "name": "test-project",
+    "version": "1.0.0",
+    "dependencies": {
+        "express": "^4.18.0"
+    }
+}
+EOF
+
+    local output
+    output=$(gather_project_context "$(pwd)")
+
+    echo "$output" | grep -q "PACKAGE MANIFEST"
+    echo "$output" | grep -q "express"
+}
+
+@test "gather_project_context reads README.md" {
+    cat > README.md << 'EOF'
+# Test Project
+
+This is a test project for unit testing.
+EOF
+
+    local output
+    output=$(gather_project_context "$(pwd)")
+
+    echo "$output" | grep -q "README"
+    echo "$output" | grep -q "Test Project"
+}
+
+@test "gather_project_context handles missing README gracefully" {
+    # No README exists in temp dir
+    local output
+    output=$(gather_project_context "$(pwd)")
+
+    # Should still return something (at least directory tree)
+    [[ -n "$output" ]]
+}
+
+@test "gather_project_context respects size limit" {
+    # Create many files to generate a large context
+    mkdir -p src
+    for i in $(seq 1 50); do
+        echo "// file $i content" > "src/file_${i}.py"
+    done
+
+    local output
+    output=$(gather_project_context "$(pwd)")
+
+    # Should be capped at roughly 4000 chars
+    local char_count=${#output}
+    [[ $char_count -le 5000 ]]
+}
+
+# =============================================================================
+# INTEGRATION: ENABLE WITH IDEATION MODE (7 tests)
 # =============================================================================
 
 @test "enable_korero_in_directory creates ideation files in idea mode" {
@@ -459,9 +668,10 @@ EOF
     [[ -f ".korero/fix_plan.md" ]]
     [[ -f ".korerorc" ]]
     [[ -d ".korero/ideas" ]]
+    [[ -f ".korero/ideas/IDEAS.md" ]]
 }
 
-@test "enable_korero_in_directory idea mode PROMPT.md contains ideation protocol" {
+@test "enable_korero_in_directory idea mode PROMPT.md contains MMMlight-quality sections" {
     export ENABLE_FORCE="true"
     export ENABLE_KORERO_MODE="idea"
     export ENABLE_PROJECT_SUBJECT="web application"
@@ -471,8 +681,9 @@ EOF
 
     enable_korero_in_directory
 
-    grep -q "Multi-Agent Ideation Protocol" .korero/PROMPT.md
-    grep -q "KORERO_IDEA" .korero/PROMPT.md
+    grep -q "Multi-Agent Idea Generation System" .korero/PROMPT.md
+    grep -q "KORERO_STATUS" .korero/PROMPT.md
+    grep -q "Phase 4: Winning Idea Documentation" .korero/PROMPT.md
 }
 
 @test "enable_korero_in_directory coding mode includes implementation phase" {
@@ -489,7 +700,7 @@ EOF
     grep -q "git commit" .korero/PROMPT.md
 }
 
-@test "enable_korero_in_directory AGENT.md contains mandatory agents" {
+@test "enable_korero_in_directory AGENT.md contains mandatory evaluators" {
     export ENABLE_FORCE="true"
     export ENABLE_KORERO_MODE="idea"
     export ENABLE_GENERATED_AGENTS=$(_generate_generic_agents 2)
@@ -499,7 +710,7 @@ EOF
     enable_korero_in_directory
 
     grep -q "Devil's Advocate" .korero/AGENT.md
-    grep -q "Technical Feasibility Analyst" .korero/AGENT.md
+    grep -q "Technical Feasibility Agent" .korero/AGENT.md
     grep -q "Idea Orchestrator" .korero/AGENT.md
 }
 
@@ -510,5 +721,36 @@ EOF
     enable_korero_in_directory
 
     [[ -f ".korero/PROMPT.md" ]]
-    ! grep -q "Multi-Agent Ideation Protocol" .korero/PROMPT.md
+    ! grep -q "Multi-Agent Idea Generation System" .korero/PROMPT.md
+}
+
+@test "enable_korero_in_directory fix_plan.md has tracker table for numbered loops" {
+    export ENABLE_FORCE="true"
+    export ENABLE_KORERO_MODE="idea"
+    export ENABLE_PROJECT_SUBJECT="test tool"
+    export ENABLE_GENERATED_AGENTS=$(_generate_generic_agents 3)
+    export ENABLE_AGENT_COUNT="3"
+    export ENABLE_MAX_LOOPS="10"
+
+    enable_korero_in_directory
+
+    grep -q "Winning Ideas Tracker" .korero/fix_plan.md
+    grep -q "| Pending |" .korero/fix_plan.md
+    grep -q "## Loop 1" .korero/fix_plan.md
+    grep -q "## Loop 10" .korero/fix_plan.md
+}
+
+@test "enable_korero_in_directory IDEAS.md has project-specific header" {
+    export ENABLE_FORCE="true"
+    export ENABLE_KORERO_MODE="idea"
+    export ENABLE_PROJECT_SUBJECT="analysis tool"
+    export ENABLE_GENERATED_AGENTS=$(_generate_generic_agents 3)
+    export ENABLE_AGENT_COUNT="3"
+    export ENABLE_MAX_LOOPS="10"
+
+    enable_korero_in_directory
+
+    [[ -f ".korero/ideas/IDEAS.md" ]]
+    grep -q "Winning Ideas" .korero/ideas/IDEAS.md
+    grep -q "10" .korero/ideas/IDEAS.md
 }
