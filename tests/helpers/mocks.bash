@@ -279,3 +279,56 @@ set_mock_tmux_available() { MOCK_TMUX_AVAILABLE=true; }
 set_mock_tmux_unavailable() { MOCK_TMUX_AVAILABLE=false; }
 set_mock_git_repo() { MOCK_GIT_REPO=true; }
 set_mock_no_git_repo() { MOCK_GIT_REPO=false; }
+
+# =============================================================================
+# Mock Claude Response Library
+# =============================================================================
+
+# Resolve mocks directory relative to this helper file
+MOCK_RESPONSES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../mocks" 2>/dev/null && pwd)"
+
+# Load a mock response by category and name
+# Usage: load_mock_response "success" "simple_completion"
+load_mock_response() {
+    local category="$1"
+    local name="$2"
+    local mock_file="${MOCK_RESPONSES_DIR}/${category}/${name}.json"
+
+    if [[ ! -f "$mock_file" ]]; then
+        echo "Mock not found: $mock_file" >&2
+        return 1
+    fi
+
+    cat "$mock_file"
+}
+
+# Load mock and strip metadata (for use as actual response)
+# Usage: load_mock_response_content "success" "simple_completion"
+load_mock_response_content() {
+    local response
+    response=$(load_mock_response "$@") || return 1
+    echo "$response" | jq 'del(._mock_metadata)'
+}
+
+# Get expected behavior from mock metadata
+get_mock_expected_behavior() {
+    local response
+    response=$(load_mock_response "$@") || return 1
+    echo "$response" | jq -r '._mock_metadata.expected_behavior // "unspecified"'
+}
+
+# Get scenario description from mock metadata
+get_mock_scenario() {
+    local response
+    response=$(load_mock_response "$@") || return 1
+    echo "$response" | jq -r '._mock_metadata.scenario // "unspecified"'
+}
+
+# Write mock response to a file (useful for tests that need a file path)
+write_mock_to_file() {
+    local category="$1"
+    local name="$2"
+    local output_file="$3"
+
+    load_mock_response_content "$category" "$name" > "$output_file"
+}

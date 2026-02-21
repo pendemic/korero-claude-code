@@ -1,0 +1,12 @@
+{
+  "_mock_metadata": {
+    "scenario": "Generic API error response",
+    "use_when": "Testing error handling paths",
+    "expected_behavior": "Error detected, circuit breaker updated"
+  },
+  "error": {
+    "type": "api_error",
+    "message": "Internal server error occurred during processing"
+  },
+  "is_error": true
+}

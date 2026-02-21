@@ -1,0 +1,9 @@
+{
+  "_mock_metadata": {
+    "scenario": "Claude reports work in progress",
+    "use_when": "Testing continue decision when work ongoing",
+    "expected_behavior": "Loop continues, no exit"
+  },
+  "result": "Working on implementing the authentication module.\n\nKORERO_STATUS\nSTATUS: IN_PROGRESS\nFILES_MODIFIED: 2\nWORK_TYPE: implementation\nEXIT_SIGNAL: false\nEND_KORERO_STATUS",
+  "sessionId": "mock-session-status-1"
+}

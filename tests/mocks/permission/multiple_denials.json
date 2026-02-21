@@ -1,0 +1,13 @@
+{
+  "_mock_metadata": {
+    "scenario": "Multiple permission denials for different commands",
+    "use_when": "Testing multi-command permission denial handling",
+    "expected_behavior": "Loop exits with all denied commands listed"
+  },
+  "result": "I tried to run npm install and git push but both were denied.",
+  "permission_denials": [
+    {"tool": "Bash", "tool_input": {"command": "npm install"}, "reason": "Not in allowed tools"},
+    {"tool": "Bash", "tool_input": {"command": "git push origin main"}, "reason": "Not in allowed tools"}
+  ],
+  "sessionId": "mock-session-perm-2"
+}

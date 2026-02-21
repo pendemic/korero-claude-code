@@ -1,0 +1,9 @@
+{
+  "_mock_metadata": {
+    "scenario": "Claude signals project complete with exit",
+    "use_when": "Testing exit on project completion",
+    "expected_behavior": "Loop exits with project_complete"
+  },
+  "result": "All tasks in fix_plan.md are complete.\n\nKORERO_STATUS\nSTATUS: COMPLETE\nFILES_MODIFIED: 0\nWORK_TYPE: review\nEXIT_SIGNAL: true\nEND_KORERO_STATUS",
+  "sessionId": "mock-session-status-2"
+}
