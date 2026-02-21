@@ -1727,7 +1727,12 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -s|--status)
-            if [[ -f "$STATUS_FILE" ]]; then
+            # Use comprehensive status display
+            local script_dir
+            script_dir="$(dirname "${BASH_SOURCE[0]}")"
+            if [[ -f "$script_dir/korero_status.sh" ]]; then
+                bash "$script_dir/korero_status.sh"
+            elif [[ -f "$STATUS_FILE" ]]; then
                 echo "Current Status:"
                 cat "$STATUS_FILE" | jq . 2>/dev/null || cat "$STATUS_FILE"
             else
