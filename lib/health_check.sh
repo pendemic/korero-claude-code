@@ -293,6 +293,115 @@ run_health_checks() {
     fi
 }
 
+# Show dry-run summary without executing the loop
+# Usage: show_dry_run_summary [korero_dir] [max_calls] [allowed_tools] [prompt_file]
+show_dry_run_summary() {
+    local korero_dir="${1:-.korero}"
+    local max_calls="${2:-100}"
+    local allowed_tools="${3:-}"
+    local prompt_file="${4:-$korero_dir/PROMPT.md}"
+
+    echo "╔═══════════════════════════════════════════╗"
+    echo "║         KORERO DRY RUN PREVIEW            ║"
+    echo "╚═══════════════════════════════════════════╝"
+    echo ""
+
+    # Configuration summary
+    echo "── Configuration ──"
+    local mode="coding"
+    local subject=""
+    local agent_count="3"
+    local max_loops="continuous"
+
+    if [[ -f ".korerorc" ]]; then
+        mode=$(grep -E '^KORERO_MODE=' .korerorc 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"' || echo "coding")
+        subject=$(grep -E '^PROJECT_SUBJECT=' .korerorc 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"' || echo "")
+        agent_count=$(grep -E '^DOMAIN_AGENT_COUNT=' .korerorc 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"' || echo "3")
+        max_loops=$(grep -E '^MAX_LOOPS=' .korerorc 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"' || echo "continuous")
+    fi
+
+    printf "  %-20s %s\n" "Mode:" "${mode:-coding}"
+    printf "  %-20s %s\n" "Subject:" "${subject:-not set}"
+    printf "  %-20s %s\n" "Domain Agents:" "${agent_count:-3}"
+    printf "  %-20s %s\n" "Loop Limit:" "${max_loops:-continuous}"
+    printf "  %-20s %s\n" "Max API Calls:" "$max_calls"
+    printf "  %-20s %s\n" "Tool Permissions:" "${allowed_tools:-not configured}"
+    echo ""
+
+    # Prompt file check
+    echo "── Prompt ──"
+    if [[ -f "$prompt_file" ]]; then
+        local prompt_lines
+        prompt_lines=$(wc -l < "$prompt_file" | tr -d '[:space:]')
+        printf "  %-20s %s (%s lines)\n" "Prompt File:" "$prompt_file" "$prompt_lines"
+    else
+        printf "  %-20s %s\n" "Prompt File:" "NOT FOUND ($prompt_file)"
+    fi
+    echo ""
+
+    # Task summary
+    echo "── Tasks ──"
+    if [[ -f "$korero_dir/fix_plan.md" ]]; then
+        local total_tasks
+        total_tasks=$(grep -cE '^\s*-\s*\[' "$korero_dir/fix_plan.md" 2>/dev/null | tr -d '[:space:]')
+        total_tasks="${total_tasks:-0}"
+        local done_tasks
+        done_tasks=$(grep -cE '^\s*-\s*\[x\]' "$korero_dir/fix_plan.md" 2>/dev/null | tr -d '[:space:]')
+        done_tasks="${done_tasks:-0}"
+        local pending=$((total_tasks - done_tasks))
+        printf "  %-20s %s total, %s done, %s pending\n" "fix_plan.md:" "$total_tasks" "$done_tasks" "$pending"
+    else
+        printf "  %-20s %s\n" "fix_plan.md:" "not found"
+    fi
+    echo ""
+
+    # Execution plan
+    echo "── Execution Plan ──"
+    if [[ "$mode" == "idea" ]]; then
+        echo "  1. Generate domain agent ideas"
+        echo "  2. Run structured debate (3 rounds)"
+        echo "  3. Select winning idea"
+        echo "  4. Save to .korero/ideas/"
+    else
+        echo "  1. Generate domain agent ideas"
+        echo "  2. Run structured debate (3 rounds)"
+        echo "  3. Implement winning idea"
+        echo "  4. Git commit changes"
+    fi
+    echo ""
+
+    # Resource projections
+    echo "── Resource Projection ──"
+    local calls_per_loop=1
+    local projected_calls
+    if [[ "$max_loops" == "continuous" ]]; then
+        printf "  %-20s %s\n" "Est. Calls/Loop:" "$calls_per_loop"
+        printf "  %-20s %s\n" "Projected Usage:" "Up to $max_calls (rate limit)"
+    else
+        projected_calls=$((max_loops * calls_per_loop))
+        if [[ $projected_calls -gt $max_calls ]]; then
+            projected_calls=$max_calls
+        fi
+        printf "  %-20s %s\n" "Est. Calls/Loop:" "$calls_per_loop"
+        printf "  %-20s %s\n" "Projected Calls:" "$projected_calls (for $max_loops loops)"
+    fi
+    echo ""
+
+    # Run health checks
+    run_health_checks "$korero_dir" "$max_calls" "$allowed_tools"
+    local health_status=$?
+
+    echo ""
+    echo "── Result ──"
+    if [[ $health_status -eq 0 ]]; then
+        echo "  DRY RUN: Ready to start (no API calls consumed)"
+    else
+        echo "  DRY RUN: Issues detected — resolve before starting"
+    fi
+
+    return $health_status
+}
+
 export -f check_claude_cli
 export -f check_dependencies
 export -f check_session_health
@@ -301,3 +410,4 @@ export -f check_config_health
 export -f check_tools_health
 export -f check_project_health
 export -f run_health_checks
+export -f show_dry_run_summary
