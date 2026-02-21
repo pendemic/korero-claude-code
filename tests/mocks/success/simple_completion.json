@@ -1,0 +1,12 @@
+{
+  "_mock_metadata": {
+    "scenario": "Simple successful completion with no file changes",
+    "use_when": "Testing basic response parsing",
+    "expected_behavior": "Loop continues, no exit signal"
+  },
+  "result": "I've analyzed the code and found no issues to fix.",
+  "sessionId": "mock-session-123",
+  "metadata": {
+    "cost": { "input_tokens": 100, "output_tokens": 50 }
+  }
+}

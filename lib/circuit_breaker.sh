@@ -354,30 +354,86 @@ EOF
     echo -e "${GREEN}✅ Circuit breaker reset to CLOSED state${NC}"
 }
 
+# Format recovery suggestions based on circuit breaker open reason
+format_recovery_suggestion() {
+    local reason="$1"
+
+    echo ""
+    echo "========================================="
+    echo "  CIRCUIT BREAKER OPEN"
+    echo "========================================="
+    echo ""
+
+    # Determine the reason category from the reason string
+    if [[ "$reason" == *"No progress"* ]] || [[ "$reason" == *"no progress"* ]] || [[ "$reason" == *"No recovery"* ]]; then
+        echo "Reason: No file changes detected in recent consecutive loops."
+        echo ""
+        echo "Possible causes:"
+        echo "  1. Permission issues preventing file writes"
+        echo "     -> Check ALLOWED_TOOLS in .korerorc includes necessary Bash patterns"
+        echo "  2. Tasks in fix_plan.md may be blocked or unclear"
+        echo "     -> Review .korero/fix_plan.md and clarify or reprioritize tasks"
+        echo "  3. Claude may be stuck in analysis without taking action"
+        echo "     -> Review recent loop logs for patterns"
+    elif [[ "$reason" == *"Same error"* ]] || [[ "$reason" == *"same error"* ]]; then
+        echo "Reason: Same error pattern detected in recent consecutive loops."
+        echo ""
+        echo "Possible causes:"
+        echo "  1. Persistent test failure that can't be auto-fixed"
+        echo "     -> Review the error in logs and fix manually"
+        echo "  2. Missing dependency or configuration"
+        echo "     -> Check project setup and dependencies"
+        echo "  3. Syntax or logic error introduced in earlier loop"
+        echo "     -> Review recent commits with: git log --oneline -5"
+    elif [[ "$reason" == *"output"* ]] || [[ "$reason" == *"Output"* ]] || [[ "$reason" == *"decline"* ]]; then
+        echo "Reason: Output volume declined significantly over recent loops."
+        echo ""
+        echo "Possible causes:"
+        echo "  1. Rate limiting or API throttling"
+        echo "     -> Check rate limit status: korero --status"
+        echo "  2. Claude session becoming less productive"
+        echo "     -> Reset session: korero --reset-session"
+        echo "  3. Diminishing returns on current task set"
+        echo "     -> Review and refresh fix_plan.md with new tasks"
+    elif [[ "$reason" == *"Permission denied"* ]] || [[ "$reason" == *"permission"* ]]; then
+        echo "Reason: Permission denied for required commands in consecutive loops."
+        echo ""
+        echo "Possible causes:"
+        echo "  1. ALLOWED_TOOLS in .korerorc is too restrictive"
+        echo "     -> Add required tool patterns (see denied commands in logs)"
+        echo "  2. Sandbox mode blocking necessary operations"
+        echo "     -> Review sandbox configuration"
+    else
+        echo "Reason: $reason"
+        echo ""
+        echo "Review recent logs for details."
+    fi
+
+    echo ""
+    echo "To investigate:"
+    echo "  - Review recent logs: ls -lt .korero/logs/ | head -5"
+    echo "  - Check circuit state: korero --circuit-status"
+    echo ""
+    echo "To recover:"
+    echo "  1. Fix the underlying issue identified above"
+    echo "  2. Reset the circuit breaker: korero --reset-circuit"
+    echo "  3. Optionally reset session: korero --reset-session"
+    echo "  4. Restart the loop: korero"
+    echo "========================================="
+}
+
 # Check if loop should halt (used in main loop)
 should_halt_execution() {
     local state=$(get_circuit_state)
 
     if [[ "$state" == "$CB_STATE_OPEN" ]]; then
+        local reason=""
+        if [[ -f "$CB_STATE_FILE" ]]; then
+            reason=$(jq -r '.reason // ""' "$CB_STATE_FILE" 2>/dev/null || echo "")
+        fi
+
         show_circuit_status
-        echo ""
-        echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${RED}║  EXECUTION HALTED: Circuit Breaker Opened                 ║${NC}"
-        echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
-        echo ""
-        echo -e "${YELLOW}Korero has detected that no progress is being made.${NC}"
-        echo ""
-        echo -e "${YELLOW}Possible reasons:${NC}"
-        echo "  • Project may be complete (check .korero/fix_plan.md)"
-        echo "  • Claude may be stuck on an error"
-        echo "  • .korero/PROMPT.md may need clarification"
-        echo "  • Manual intervention may be required"
-        echo ""
-        echo -e "${YELLOW}To continue:${NC}"
-        echo "  1. Review recent logs: tail -20 .korero/logs/korero.log"
-        echo "  2. Check Claude output: ls -lt .korero/logs/claude_output_*.log | head -1"
-        echo "  3. Update .korero/fix_plan.md if needed"
-        echo "  4. Reset circuit breaker: korero --reset-circuit"
+        format_recovery_suggestion "$reason"
         echo ""
         return 0  # Signal to halt
     else
@@ -393,3 +449,4 @@ export -f record_loop_result
 export -f show_circuit_status
 export -f reset_circuit_breaker
 export -f should_halt_execution
+export -f format_recovery_suggestion

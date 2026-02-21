@@ -1,0 +1,12 @@
+{
+  "_mock_metadata": {
+    "scenario": "Completion with EXIT_SIGNAL true - project done",
+    "use_when": "Testing exit signal detection",
+    "expected_behavior": "Loop exits with project_complete"
+  },
+  "result": "All tasks are complete. The project is fully implemented.\n\nKORERO_STATUS\nSTATUS: COMPLETE\nFILES_MODIFIED: 0\nWORK_TYPE: review\nEXIT_SIGNAL: true\nEND_KORERO_STATUS",
+  "sessionId": "mock-session-789",
+  "metadata": {
+    "cost": { "input_tokens": 300, "output_tokens": 100 }
+  }
+}

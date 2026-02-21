@@ -200,89 +200,15 @@ teardown() {
     echo "$output" | grep -q "KORERO_STATUS"
 }
 
-@test "generate_ideation_prompt_md includes winning idea output format" {
+@test "generate_ideation_prompt_md includes minority opinion section" {
     local output
-    output=$(generate_ideation_prompt_md "test-project" "unknown" "idea" "" "3" "20")
+    output=$(generate_ideation_prompt_md "test-project" "unknown" "idea" "")
 
-    echo "$output" | grep -q "═══"
-    echo "$output" | grep -q "LOOP \[N\] WINNING IDEA"
-    echo "$output" | grep -q "Implementation Instructions"
-    echo "$output" | grep -q "Evaluator Feedback Summary"
-    echo "$output" | grep -q "Files Most Likely Affected"
-}
-
-@test "generate_ideation_prompt_md includes anti-repetition rules for numbered loops" {
-    local output
-    output=$(generate_ideation_prompt_md "test-project" "unknown" "idea" "" "3" "20")
-
-    echo "$output" | grep -q "Anti-Repetition Rules"
-    echo "$output" | grep -q "DUPLICATE"
-}
-
-@test "generate_ideation_prompt_md uses CONFIG_PROJECT_SUMMARY when set" {
-    CONFIG_PROJECT_SUMMARY="This is a test project for data analysis with Flask and React."
-    local output
-    output=$(generate_ideation_prompt_md "test-project" "python" "idea" "data tool" "3" "10")
-    unset CONFIG_PROJECT_SUMMARY
-
-    echo "$output" | grep -q "data analysis with Flask and React"
-}
-
-@test "generate_ideation_prompt_md uses CONFIG_CATEGORIES when set" {
-    CONFIG_CATEGORIES="- **Data Management** — Data upload and processing
-- **Visualization** — Charts and graphs"
-    local output
-    output=$(generate_ideation_prompt_md "test-project" "python" "idea" "" "3" "10")
-    unset CONFIG_CATEGORIES
-
-    echo "$output" | grep -q "Data Management"
-    echo "$output" | grep -q "Visualization"
-}
-
-@test "generate_ideation_prompt_md uses CONFIG_SCORING when set" {
-    CONFIG_SCORING="| User Impact | 40% | How much does this improve UX? |
-| Feasibility | 30% | Can it be built quickly? |
-| Novelty | 30% | Is it genuinely new? |"
-    local output
-    output=$(generate_ideation_prompt_md "test-project" "python" "idea" "" "3" "10")
-    unset CONFIG_SCORING
-
-    echo "$output" | grep -q "User Impact"
-    echo "$output" | grep -q "40%"
-}
-
-@test "generate_ideation_prompt_md uses CONFIG_KEY_FILES when set" {
-    CONFIG_KEY_FILES="### Backend
-- \`app/main.py\` — Flask app entry point
-### Frontend
-- \`src/App.tsx\` — React app root"
-    local output
-    output=$(generate_ideation_prompt_md "test-project" "python" "idea" "" "3" "10")
-    unset CONFIG_KEY_FILES
-
-    echo "$output" | grep -q "Key Files Reference"
-    echo "$output" | grep -q "app/main.py"
-    echo "$output" | grep -q "src/App.tsx"
-}
-
-@test "generate_ideation_prompt_md uses CONFIG_FOCUS_CONSTRAINT when set" {
-    CONFIG_FOCUS_CONSTRAINT="All ideas MUST be about usability improvements and new feature additions."
-    local output
-    output=$(generate_ideation_prompt_md "test-project" "python" "idea" "" "3" "10")
-    unset CONFIG_FOCUS_CONSTRAINT
-
-    echo "$output" | grep -q "FOCUS AREAS"
-    echo "$output" | grep -q "usability improvements"
-}
-
-@test "generate_ideation_prompt_md provides default scoring when CONFIG_SCORING empty" {
-    unset CONFIG_SCORING
-    local output
-    output=$(generate_ideation_prompt_md "test-project" "python" "idea" "" "3" "10")
-
-    echo "$output" | grep -q "User Impact"
-    echo "$output" | grep -q "30%"
-    echo "$output" | grep -q "Non-Duplication"
+    echo "$output" | grep -q "Minority Opinions"
+    echo "$output" | grep -q "KORERO_MINORITY_OPINION"
+    echo "$output" | grep -q "REJECTION_RATIONALE"
+    echo "$output" | grep -q "CORE_INSIGHT"
+    echo "$output" | grep -q "RECONSIDER_WHEN"
 }
 
 # =============================================================================

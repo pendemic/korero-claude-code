@@ -1,0 +1,12 @@
+{
+  "_mock_metadata": {
+    "scenario": "Single permission denial for npm install",
+    "use_when": "Testing permission denial detection and suggestion",
+    "expected_behavior": "Loop exits with permission_denied reason"
+  },
+  "result": "I need to run npm install but permission was denied.",
+  "permission_denials": [
+    {"tool": "Bash", "tool_input": {"command": "npm install lodash"}, "reason": "Not in allowed tools"}
+  ],
+  "sessionId": "mock-session-perm-1"
+}

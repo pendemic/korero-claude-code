@@ -1,0 +1,12 @@
+{
+  "_mock_metadata": {
+    "scenario": "Rate limit exceeded error",
+    "use_when": "Testing rate limit handling",
+    "expected_behavior": "Loop pauses and waits for reset"
+  },
+  "error": {
+    "type": "rate_limit",
+    "message": "Rate limit exceeded. Please wait 3600 seconds."
+  },
+  "is_error": true
+}

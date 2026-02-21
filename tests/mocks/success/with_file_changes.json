@@ -1,0 +1,12 @@
+{
+  "_mock_metadata": {
+    "scenario": "Successful completion with file changes reported",
+    "use_when": "Testing progress detection",
+    "expected_behavior": "Loop continues, progress detected"
+  },
+  "result": "I've updated 3 files to implement the new feature.\n\nKORERO_STATUS\nSTATUS: IN_PROGRESS\nFILES_MODIFIED: 3\nWORK_TYPE: implementation\nEXIT_SIGNAL: false\nEND_KORERO_STATUS",
+  "sessionId": "mock-session-456",
+  "metadata": {
+    "cost": { "input_tokens": 500, "output_tokens": 200 }
+  }
+}

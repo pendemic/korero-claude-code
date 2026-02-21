@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "korero-agent-protocol-v1",
+  "title": "Korero Agent Communication Protocol v1",
+  "description": "Schema for inter-agent messages during multi-agent ideation loops",
+
+  "definitions": {
+    "agent_id": {
+      "type": "string",
+      "description": "Unique identifier for the agent (e.g., 'domain-1', 'devils-advocate')"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of the message"
+    },
+    "proposal": {
+      "type": "object",
+      "description": "An idea proposed by a domain agent during the Generation phase",
+      "required": ["type", "sender", "timestamp", "title", "description", "category"],
+      "properties": {
+        "type": { "const": "PROPOSAL" },
+        "sender": { "$ref": "#/definitions/agent_id" },
+        "timestamp": { "$ref": "#/definitions/timestamp" },
+        "title": { "type": "string", "description": "Short title of the proposed idea" },
+        "description": { "type": "string", "description": "Detailed description of the idea" },
+        "category": { "type": "string", "description": "Category classification (e.g., 'Usability', 'Performance')" },
+        "idea_type": {
+          "type": "string",
+          "enum": ["new_feature", "improvement", "bug_fix", "refactor", "documentation"],
+          "description": "Type classification of the idea"
+        },
+        "files_affected": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of files most likely affected by implementation"
+        }
+      }
+    },
+    "challenge": {
+      "type": "object",
+      "description": "A challenge to a proposal during the Evaluation phase",
+      "required": ["type", "sender", "timestamp", "target_proposal", "concern"],
+      "properties": {
+        "type": { "const": "CHALLENGE" },
+        "sender": { "$ref": "#/definitions/agent_id" },
+        "timestamp": { "$ref": "#/definitions/timestamp" },
+        "target_proposal": { "type": "string", "description": "Title of the proposal being challenged" },
+        "concern": { "type": "string", "description": "The specific concern or weakness identified" },
+        "severity": {
+          "type": "string",
+          "enum": ["minor", "moderate", "major", "blocking"],
+          "description": "Severity of the concern"
+        }
+      }
+    },
+    "defense": {
+      "type": "object",
+      "description": "A defense of a proposal in response to a challenge",
+      "required": ["type", "sender", "timestamp", "in_response_to", "argument"],
+      "properties": {
+        "type": { "const": "DEFENSE" },
+        "sender": { "$ref": "#/definitions/agent_id" },
+        "timestamp": { "$ref": "#/definitions/timestamp" },
+        "in_response_to": { "type": "string", "description": "The concern being addressed" },
+        "argument": { "type": "string", "description": "The defense argument" }
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "description": "An evaluation score for a proposal",
+      "required": ["type", "sender", "timestamp", "target_proposal", "score", "verdict"],
+      "properties": {
+        "type": { "const": "EVALUATION" },
+        "sender": { "$ref": "#/definitions/agent_id" },
+        "timestamp": { "$ref": "#/definitions/timestamp" },
+        "target_proposal": { "type": "string" },
+        "score": {
+          "type": "object",
+          "properties": {
+            "user_demand": { "type": "integer", "minimum": 1, "maximum": 5 },
+            "complexity_creep": { "type": "integer", "minimum": 1, "maximum": 5 },
+            "architecture_fit": { "type": "integer", "minimum": 1, "maximum": 5 },
+            "effort": { "type": "string", "enum": ["S", "M", "L", "XL"] }
+          }
+        },
+        "verdict": {
+          "type": "string",
+          "enum": ["STRONG", "MODERATE", "WEAK", "REJECT"],
+          "description": "Overall verdict on the proposal"
+        },
+        "rationale": { "type": "string" }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "description": "The final selection of a winning idea",
+      "required": ["type", "sender", "timestamp", "winner", "rankings", "rationale"],
+      "properties": {
+        "type": { "const": "SELECTION" },
+        "sender": { "$ref": "#/definitions/agent_id" },
+        "timestamp": { "$ref": "#/definitions/timestamp" },
+        "winner": { "type": "string", "description": "Title of the winning proposal" },
+        "rankings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "rank": { "type": "integer" },
+              "title": { "type": "string" },
+              "score": { "type": "number" }
+            }
+          }
+        },
+        "rationale": { "type": "string", "description": "Why this idea was selected" }
+      }
+    }
+  },
+
+  "type": "object",
+  "description": "A complete debate record for one ideation loop",
+  "required": ["protocol_version", "loop_number", "messages"],
+  "properties": {
+    "protocol_version": { "const": "v1" },
+    "loop_number": { "type": "integer" },
+    "subject": { "type": "string" },
+    "started_at": { "$ref": "#/definitions/timestamp" },
+    "completed_at": { "$ref": "#/definitions/timestamp" },
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "$ref": "#/definitions/agent_id" },
+          "role": { "type": "string" },
+          "type": { "type": "string", "enum": ["domain", "evaluator"] }
+        }
+      }
+    },
+    "messages": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "$ref": "#/definitions/proposal" },
+          { "$ref": "#/definitions/challenge" },
+          { "$ref": "#/definitions/defense" },
+          { "$ref": "#/definitions/evaluation" },
+          { "$ref": "#/definitions/selection" }
+        ]
+      }
+    }
+  }
+}

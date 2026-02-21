@@ -32,6 +32,7 @@ fi
 source "$LIB_DIR/enable_core.sh"
 source "$LIB_DIR/wizard_utils.sh"
 source "$LIB_DIR/task_sources.sh"
+source "$LIB_DIR/compat_check.sh"
 
 # =============================================================================
 # CONFIGURATION
@@ -799,6 +800,9 @@ main() {
         show_help
         exit 0
     fi
+
+    # Run compatibility checks
+    run_compat_checks
 
     # Welcome banner
     echo ""
