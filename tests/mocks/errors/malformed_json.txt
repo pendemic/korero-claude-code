@@ -1,3 +1,0 @@
-{invalid json content here
-  this is not valid JSON
-  and should trigger text fallback parsing
