@@ -1736,6 +1736,11 @@ while [[ $# -gt 0 ]]; do
             bash "$SCRIPT_DIR/korero_status.sh"
             exit $?
             ;;
+        --config)
+            shift
+            bash "$SCRIPT_DIR/korero_config.sh" "$@"
+            exit $?
+            ;;
         -m|--monitor)
             USE_TMUX=true
             shift
