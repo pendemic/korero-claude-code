@@ -712,9 +712,9 @@ MAX_CALLS_PER_HOUR=100
 CLAUDE_TIMEOUT_MINUTES=15
 CLAUDE_OUTPUT_FORMAT="json"
 
-# Tool permissions
-# Comma-separated list of allowed tools
-ALLOWED_TOOLS="Write,Read,Edit,Bash(git *),Bash(npm *),Bash(pytest)"
+# Tool permissions (presets: @conservative, @standard, @permissive)
+# Mix presets with custom tools: @standard,Bash(docker *)
+ALLOWED_TOOLS="@standard"
 
 # Session management
 SESSION_CONTINUITY=true

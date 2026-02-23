@@ -16,6 +16,7 @@ source "$SCRIPT_DIR/lib/date_utils.sh"
 source "$SCRIPT_DIR/lib/timeout_utils.sh"
 source "$SCRIPT_DIR/lib/response_analyzer.sh"
 source "$SCRIPT_DIR/lib/circuit_breaker.sh"
+source "$SCRIPT_DIR/lib/permission_presets.sh"
 
 # Configuration
 # Korero-specific files live in .korero/ subfolder
@@ -146,6 +147,11 @@ load_korerorc() {
     [[ -n "$_env_CLAUDE_USE_CONTINUE" ]] && CLAUDE_USE_CONTINUE="$_env_CLAUDE_USE_CONTINUE"
     [[ -n "$_env_CLAUDE_SESSION_EXPIRY_HOURS" ]] && CLAUDE_SESSION_EXPIRY_HOURS="$_env_CLAUDE_SESSION_EXPIRY_HOURS"
     [[ -n "$_env_VERBOSE_PROGRESS" ]] && VERBOSE_PROGRESS="$_env_VERBOSE_PROGRESS"
+
+    # Expand any preset references in ALLOWED_TOOLS (e.g., @standard -> Write,Read,Edit,...)
+    if [[ -n "${CLAUDE_ALLOWED_TOOLS:-}" && "${CLAUDE_ALLOWED_TOOLS}" == *"@"* ]]; then
+        CLAUDE_ALLOWED_TOOLS=$(expand_allowed_tools "$CLAUDE_ALLOWED_TOOLS")
+    fi
 
     KORERORC_LOADED=true
     return 0
@@ -1547,7 +1553,7 @@ main() {
                 reset_session "permission_denied"
                 update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "permission_denied" "halted" "permission_denied"
 
-                # Display helpful guidance for resolving permission issues
+                # Extract denied commands and show actionable fix suggestions
                 echo ""
                 echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
                 echo -e "${RED}║  PERMISSION DENIED - Loop Halted                          ║${NC}"
@@ -1555,27 +1561,33 @@ main() {
                 echo ""
                 echo -e "${YELLOW}Claude Code was denied permission to execute commands.${NC}"
                 echo ""
-                echo -e "${YELLOW}To fix this:${NC}"
-                echo "  1. Edit .korerorc and update ALLOWED_TOOLS to include the required tools"
-                echo "  2. Common patterns:"
-                echo "     - Bash(npm *)     - All npm commands"
-                echo "     - Bash(npm install) - Only npm install"
-                echo "     - Bash(pnpm *)    - All pnpm commands"
-                echo "     - Bash(yarn *)    - All yarn commands"
-                echo ""
-                echo -e "${YELLOW}After updating .korerorc:${NC}"
-                echo "  korero --reset-session  # Clear stale session state"
-                echo "  korero --monitor        # Restart the loop"
-                echo ""
 
-                # Show current ALLOWED_TOOLS if .korerorc exists
-                if [[ -f ".korerorc" ]]; then
-                    local current_tools=$(grep "^ALLOWED_TOOLS=" ".korerorc" 2>/dev/null | cut -d= -f2- | tr -d '"')
-                    if [[ -n "$current_tools" ]]; then
-                        echo -e "${BLUE}Current ALLOWED_TOOLS:${NC} $current_tools"
-                        echo ""
+                # Try to extract denied commands from response analysis
+                local denied_cmds=()
+                if [[ -f "$RESPONSE_ANALYSIS_FILE" ]]; then
+                    local denied_json
+                    denied_json=$(jq -r '.analysis.denied_commands // [] | .[]' "$RESPONSE_ANALYSIS_FILE" 2>/dev/null)
+                    if [[ -n "$denied_json" ]]; then
+                        while IFS= read -r cmd; do
+                            [[ -n "$cmd" ]] && denied_cmds+=("$cmd")
+                        done <<< "$denied_json"
                     fi
                 fi
+
+                if [[ ${#denied_cmds[@]} -gt 0 ]]; then
+                    # Use actionable suggestion message with specific fixes
+                    format_permission_denial_message "${denied_cmds[@]}"
+                else
+                    # Fallback to generic guidance when commands aren't available
+                    echo "  Update ALLOWED_TOOLS in .korerorc to include the required tools."
+                    echo ""
+                    echo "  Or use a preset for broader permissions:"
+                    echo "    ALLOWED_TOOLS=\"@standard\"    # Read, Write, Edit, git, npm, pytest"
+                    echo "    ALLOWED_TOOLS=\"@permissive\"   # All Bash commands"
+                    echo ""
+                    echo "  Then restart: korero --reset-session && korero --monitor"
+                fi
+                echo ""
 
                 break
             fi

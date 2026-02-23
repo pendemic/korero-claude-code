@@ -3,7 +3,7 @@
 [![CI](https://github.com/pendemic/korero-claude-code/actions/workflows/test.yml/badge.svg)](https://github.com/pendemic/korero-claude-code/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Version](https://img.shields.io/badge/version-0.12.0-blue)
-![Tests](https://img.shields.io/badge/tests-531%20passing-green)
+![Tests](https://img.shields.io/badge/tests-555%20passing-green)
 [![GitHub Issues](https://img.shields.io/github/issues/pendemic/korero-claude-code)](https://github.com/pendemic/korero-claude-code/issues)
 
 > **Multi-agent ideation and development system for Claude Code**
@@ -18,7 +18,7 @@ Korero is a multi-agent ideation and development system for Claude Code with two
 
 **Version**: v0.12.0 - Active Development
 **Core Features**: Working and tested
-**Test Coverage**: 531 tests, 100% pass rate
+**Test Coverage**: 555 tests, 100% pass rate
 
 ### What's Working Now
 - **Multi-agent ideation system** with domain expert agents and structured debate protocol
@@ -430,8 +430,9 @@ MAX_CALLS_PER_HOUR=100
 CLAUDE_TIMEOUT_MINUTES=15
 CLAUDE_OUTPUT_FORMAT="json"
 
-# Tool permissions
-ALLOWED_TOOLS="Write,Read,Edit,Bash(git *),Bash(npm *),Bash(pytest)"
+# Tool permissions (presets: @conservative, @standard, @permissive)
+# Mix presets with custom tools: @standard,Bash(docker *)
+ALLOWED_TOOLS="@standard"
 
 # Session management
 SESSION_CONTINUITY=true
@@ -755,11 +756,11 @@ tail -f .korero/logs/korero.log
 - **tmux Session Lost** - Use `tmux list-sessions` and `tmux attach` to reconnect
 - **Session Expired** - Sessions expire after 24 hours by default; use `--reset-session` to start fresh
 - **timeout: command not found (macOS)** - Install GNU coreutils: `brew install coreutils`
-- **Permission Denied** - Korero halts when Claude Code is denied permission for commands:
-  1. Edit `.korerorc` and update `ALLOWED_TOOLS` to include required tools
-  2. Common patterns: `Bash(npm *)`, `Bash(git *)`, `Bash(pytest)`
-  3. Run `korero --reset-session` after updating `.korerorc`
-  4. Restart with `korero --monitor`
+- **Permission Denied** - Korero halts when Claude Code is denied permission and shows exact fix suggestions:
+  1. Korero auto-suggests the specific `ALLOWED_TOOLS` pattern needed (e.g., `Bash(npm *)`)
+  2. Use a preset: `ALLOWED_TOOLS="@standard"` (git, npm, pytest) or `@permissive` (all Bash)
+  3. Or mix presets with custom tools: `ALLOWED_TOOLS="@standard,Bash(docker *)"`
+  4. Run `korero --reset-session` after updating `.korerorc`, then restart with `korero --monitor`
 
 ## Contributing
 

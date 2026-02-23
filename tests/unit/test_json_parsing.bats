@@ -1110,3 +1110,53 @@ EOF
     local has_denials=$(jq -r '.has_permission_denials' "$result_file")
     assert_equal "$has_denials" "true"
 }
+
+# =============================================================================
+# PERMISSION DENIAL SUGGESTION TESTS (8 tests)
+# Tests for suggest_permission_fix() and format_permission_denial_message()
+# =============================================================================
+
+@test "suggest_permission_fix returns wildcard for npm commands" {
+    result=$(suggest_permission_fix "npm install lodash")
+    [ "$result" = "Bash(npm *)" ]
+}
+
+@test "suggest_permission_fix returns wildcard for git commands" {
+    result=$(suggest_permission_fix "git push origin main")
+    [ "$result" = "Bash(git *)" ]
+}
+
+@test "suggest_permission_fix returns wildcard for yarn commands" {
+    result=$(suggest_permission_fix "yarn add react")
+    [ "$result" = "Bash(yarn *)" ]
+}
+
+@test "suggest_permission_fix returns exact match for unknown commands" {
+    result=$(suggest_permission_fix "custom-script --arg")
+    [ "$result" = "Bash(custom-script --arg)" ]
+}
+
+@test "suggest_permission_fix handles single-word commands" {
+    result=$(suggest_permission_fix "pytest")
+    [ "$result" = "Bash(pytest)" ]
+}
+
+@test "format_permission_denial_message includes denied command" {
+    CLAUDE_ALLOWED_TOOLS="Write,Read,Edit"
+    result=$(format_permission_denial_message "npm test")
+    [[ "$result" == *"npm test"* ]]
+}
+
+@test "format_permission_denial_message includes suggested ALLOWED_TOOLS" {
+    CLAUDE_ALLOWED_TOOLS="Write,Read,Edit"
+    result=$(format_permission_denial_message "npm install")
+    [[ "$result" == *"ALLOWED_TOOLS="* ]]
+    [[ "$result" == *"Bash(npm *)"* ]]
+}
+
+@test "format_permission_denial_message mentions preset alternatives" {
+    CLAUDE_ALLOWED_TOOLS="Write,Read,Edit"
+    result=$(format_permission_denial_message "npm test")
+    [[ "$result" == *"@standard"* ]]
+    [[ "$result" == *"@permissive"* ]]
+}

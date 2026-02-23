@@ -60,6 +60,9 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - Two-stage error filtering to eliminate false positives
    - Multi-line error matching for accurate stuck loop detection
    - Confidence scoring for exit decisions
+   - **Permission denial suggestions**: `suggest_permission_fix()`, `format_permission_denial_message()`
+   - Maps denied commands to ALLOWED_TOOLS patterns (e.g., `npm install` → `Bash(npm *)`)
+   - Formats actionable fix messages with per-command suggestions and preset alternatives
 
 3. **lib/date_utils.sh** - Cross-platform date utilities
    - ISO timestamp generation for logging
@@ -99,6 +102,13 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - GitHub integration: `check_github_available()`, `fetch_github_tasks()`, `get_github_issue_count()`
    - PRD extraction: `extract_prd_tasks()`, supports checkbox and numbered list formats
    - Task normalization: `normalize_tasks()`, `prioritize_tasks()`, `import_tasks_from_sources()`
+
+8. **lib/permission_presets.sh** - Named permission template presets
+   - Three presets: `@conservative` (Read/Write/Edit), `@standard` (+ git, npm, pytest), `@permissive` (all Bash)
+   - `expand_tool_preset()` - Expands single `@name` to tool list
+   - `expand_allowed_tools()` - Splits by comma, expands `@`-prefixed items, passes through others
+   - `list_presets()` - Displays available presets with usage examples
+   - Mixed presets + custom tools: `@standard,Bash(docker *)`
 
 ## Key Commands
 
@@ -228,10 +238,19 @@ Korero uses modern Claude Code CLI flags for structured communication:
 **Configuration Variables:**
 ```bash
 CLAUDE_OUTPUT_FORMAT="json"           # Output format: json (default) or text
-CLAUDE_ALLOWED_TOOLS="Write,Read,Edit,Bash(git *),Bash(npm *),Bash(pytest)"  # Allowed tool permissions
+CLAUDE_ALLOWED_TOOLS="@standard"      # Preset or explicit tool permissions
 CLAUDE_USE_CONTINUE=true              # Enable session continuity
 CLAUDE_MIN_VERSION="2.0.76"           # Minimum Claude CLI version
 ```
+
+**Permission Presets:**
+| Preset | Expands To |
+|--------|-----------|
+| `@conservative` | `Write,Read,Edit` |
+| `@standard` | `Write,Read,Edit,Bash(git *),Bash(npm *),Bash(pytest)` |
+| `@permissive` | `Write,Read,Edit,Bash(*)` |
+
+Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 
 **CLI Options:**
 - `--output-format json|text` - Set Claude output format (default: json)
@@ -377,7 +396,7 @@ Korero installs to:
 - **Commands**: `~/.local/bin/` (korero, korero-monitor, korero-setup, korero-import, korero-migrate, korero-enable, korero-enable-ci)
 - **Templates**: `~/.korero/templates/`
 - **Scripts**: `~/.korero/` (korero_loop.sh, korero_monitor.sh, setup.sh, korero_import.sh, migrate_to_korero_folder.sh, korero_enable.sh, korero_enable_ci.sh)
-- **Libraries**: `~/.korero/lib/` (circuit_breaker.sh, response_analyzer.sh, date_utils.sh, timeout_utils.sh, enable_core.sh, wizard_utils.sh, task_sources.sh)
+- **Libraries**: `~/.korero/lib/` (circuit_breaker.sh, response_analyzer.sh, date_utils.sh, timeout_utils.sh, enable_core.sh, wizard_utils.sh, task_sources.sh, permission_presets.sh)
 
 After installation, the following global commands are available:
 - `korero` - Start the autonomous development loop
@@ -451,11 +470,17 @@ When Claude Code is denied permission to execute commands (e.g., `npm install`),
    - `permission_denial_count` (integer)
    - `denied_commands` (array of command strings)
 3. **Exit behavior**: When `has_permission_denials=true`, Korero exits with reason "permission_denied"
-4. **User guidance**: Korero displays instructions to update `ALLOWED_TOOLS` in `.korerorc`
+4. **Automatic fix suggestions**: `format_permission_denial_message()` shows per-command fixes with exact ALLOWED_TOOLS patterns
+5. **Command mapping**: `suggest_permission_fix()` maps common commands to wildcard patterns (e.g., `npm install` → `Bash(npm *)`)
 
 **Example `.korerorc` tool patterns:**
 ```bash
-# Broad patterns (recommended for development)
+# Using presets (recommended)
+ALLOWED_TOOLS="@standard"                     # Write, Read, Edit, git, npm, pytest
+ALLOWED_TOOLS="@standard,Bash(docker *)"      # Preset + custom tool
+ALLOWED_TOOLS="@permissive"                   # All Bash commands
+
+# Explicit patterns
 ALLOWED_TOOLS="Write,Read,Edit,Bash(git *),Bash(npm *),Bash(pytest)"
 
 # Specific patterns (more restrictive)
@@ -485,15 +510,15 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (531 tests across 16 files)
+### Test Files (555 tests across 17 files)
 
-**Unit Tests (395 tests):**
+**Unit Tests (419 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
 | `test_cli_parsing.bats` | 35 | CLI argument parsing for all flags |
 | `test_cli_modern.bats` | 33 | Modern CLI commands (Phase 1.1) + build_claude_command fix |
-| `test_json_parsing.bats` | 52 | JSON output format parsing + Claude CLI format + session management + array format |
+| `test_json_parsing.bats` | 60 | JSON output format parsing + Claude CLI format + session management + permission suggestions |
 | `test_session_continuity.bats` | 44 | Session lifecycle management + circuit breaker integration + issue #91 fix |
 | `test_exit_detection.bats` | 53 | Exit signal detection + EXIT_SIGNAL-based completion indicators + progress detection |
 | `test_rate_limiting.bats` | 15 | Rate limiting behavior |
@@ -502,6 +527,7 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_korero_enable.bats` | 22 | Korero enable integration tests (wizard, CI version, JSON output) |
 | `test_wizard_utils.bats` | 20 | Wizard utility functions (stdout/stderr separation, prompt functions) |
 | `test_ideation_mode.bats` | 66 | Multi-agent ideation: agent generation, context-aware templates, idea storage, integration |
+| `test_permission_presets.bats` | 16 | Permission presets: expansion, mixed tools, integration with CLI args |
 
 **Integration Tests (136 tests):**
 
