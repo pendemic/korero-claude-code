@@ -870,6 +870,69 @@ should_resume_session() {
     fi
 }
 
+# =============================================================================
+# PERMISSION DENIAL SUGGESTION FUNCTIONS
+# =============================================================================
+
+# Suggest ALLOWED_TOOLS pattern for a denied command
+# Maps common commands to wildcard patterns, unknown commands to exact match
+# Usage: suggest_permission_fix "npm install lodash"
+# Returns: "Bash(npm *)"
+suggest_permission_fix() {
+    local denied_cmd="$1"
+    local base_cmd="${denied_cmd%% *}"
+
+    case "$base_cmd" in
+        npm)     echo "Bash(npm *)" ;;
+        git)     echo "Bash(git *)" ;;
+        pytest)  echo "Bash(pytest)" ;;
+        make)    echo "Bash(make *)" ;;
+        cargo)   echo "Bash(cargo *)" ;;
+        yarn)    echo "Bash(yarn *)" ;;
+        pnpm)    echo "Bash(pnpm *)" ;;
+        go)      echo "Bash(go *)" ;;
+        python)  echo "Bash(python *)" ;;
+        pip)     echo "Bash(pip *)" ;;
+        docker)  echo "Bash(docker *)" ;;
+        *)       echo "Bash($denied_cmd)" ;;
+    esac
+}
+
+# Format permission denial message with fix suggestions
+# Usage: format_permission_denial_message "npm install" "git push"
+# Outputs actionable fix with per-command suggestions and composite ALLOWED_TOOLS
+format_permission_denial_message() {
+    local denied_commands=("$@")
+    local current_tools="${CLAUDE_ALLOWED_TOOLS:-Write,Read,Edit}"
+
+    echo "========================================="
+    echo "Permission denied for the following commands:"
+    echo ""
+
+    local new_tools="$current_tools"
+    for cmd in "${denied_commands[@]}"; do
+        local suggestion
+        suggestion=$(suggest_permission_fix "$cmd")
+        echo "  - $cmd"
+        echo "    Suggested fix: Add '$suggestion' to ALLOWED_TOOLS"
+        # Build composite tools string
+        if [[ "$new_tools" != *"$suggestion"* ]]; then
+            new_tools="$new_tools,$suggestion"
+        fi
+    done
+
+    echo ""
+    echo "To fix, update ALLOWED_TOOLS in .korerorc:"
+    echo "  ALLOWED_TOOLS=\"$new_tools\""
+    echo ""
+    echo "Or use a preset for broader permissions:"
+    echo "  ALLOWED_TOOLS=\"@standard\"              # Read, Write, Edit, git, npm, pytest"
+    echo "  ALLOWED_TOOLS=\"@permissive\"             # All Bash commands"
+    echo ""
+    echo "Then restart the loop: korero"
+    echo "========================================="
+}
+
 # Export functions for use in korero_loop.sh
 export -f detect_output_format
 export -f parse_json_response
@@ -880,3 +943,5 @@ export -f detect_stuck_loop
 export -f store_session_id
 export -f get_last_session_id
 export -f should_resume_session
+export -f suggest_permission_fix
+export -f format_permission_denial_message
