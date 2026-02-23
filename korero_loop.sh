@@ -555,20 +555,9 @@ should_exit_gracefully() {
         return 0
     fi
     
-    # 5. Check fix_plan.md for completion
-    # Fix #144: Only match valid markdown checkboxes, not date entries like [2026-01-29]
-    # Valid patterns: "- [ ]" (uncompleted) and "- [x]" or "- [X]" (completed)
-    if [[ -f "$KORERO_DIR/fix_plan.md" ]]; then
-        local uncompleted_items=$(grep -cE "^[[:space:]]*- \[ \]" "$KORERO_DIR/fix_plan.md" 2>/dev/null | tr -d '\r' || echo "0")
-        local completed_items=$(grep -cE "^[[:space:]]*- \[[xX]\]" "$KORERO_DIR/fix_plan.md" 2>/dev/null | tr -d '\r' || echo "0")
-        local total_items=$((uncompleted_items + completed_items))
-
-        if [[ $total_items -gt 0 ]] && [[ $completed_items -eq $total_items ]]; then
-            log_status "WARN" "Exit condition: All fix_plan.md items completed ($completed_items/$total_items)" >&2
-            echo "plan_complete"
-            return 0
-        fi
-    fi
+    # 5. fix_plan.md completion check removed
+    # Loop termination is controlled solely by MAX_LOOPS in .korerorc.
+    # Users set "continuous" or a specific number — that should be the authority.
 
     echo ""  # Return empty string instead of using return code
 }
