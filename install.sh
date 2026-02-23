@@ -202,6 +202,9 @@ EOF
     cp "$SCRIPT_DIR/korero_enable.sh" "$KORERO_HOME/"
     cp "$SCRIPT_DIR/korero_enable_ci.sh" "$KORERO_HOME/"
 
+    # Copy status script to Korero home
+    cp "$SCRIPT_DIR/korero_status.sh" "$KORERO_HOME/"
+
     # Make all commands executable
     chmod +x "$INSTALL_DIR/korero"
     chmod +x "$INSTALL_DIR/korero-monitor"
@@ -215,6 +218,7 @@ EOF
     chmod +x "$KORERO_HOME/migrate_to_korero_folder.sh"
     chmod +x "$KORERO_HOME/korero_enable.sh"
     chmod +x "$KORERO_HOME/korero_enable_ci.sh"
+    chmod +x "$KORERO_HOME/korero_status.sh"
     chmod +x "$KORERO_HOME/lib/"*.sh
 
     log "SUCCESS" "Korero scripts installed to $INSTALL_DIR"

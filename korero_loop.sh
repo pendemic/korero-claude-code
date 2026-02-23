@@ -1733,13 +1733,8 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -s|--status)
-            if [[ -f "$STATUS_FILE" ]]; then
-                echo "Current Status:"
-                cat "$STATUS_FILE" | jq . 2>/dev/null || cat "$STATUS_FILE"
-            else
-                echo "No status file found. Korero may not be running."
-            fi
-            exit 0
+            bash "$SCRIPT_DIR/korero_status.sh"
+            exit $?
             ;;
         -m|--monitor)
             USE_TMUX=true
