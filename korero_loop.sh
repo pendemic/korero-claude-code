@@ -403,6 +403,30 @@ format_duration() {
     fi
 }
 
+# Print visual progress indicator
+# Usage: print_progress <loop_number> <phase_name> <phase_percentage>
+print_progress() {
+    local loop_num=$1
+    local phase_name=$2
+    local percent=$3
+
+    # Clamp percentage to 0-100
+    [[ $percent -lt 0 ]] && percent=0
+    [[ $percent -gt 100 ]] && percent=100
+
+    # Calculate filled/empty blocks (10 total)
+    local filled=$((percent / 10))
+    local empty=$((10 - filled))
+
+    # Build progress bar
+    local bar=""
+    for ((i=0; i<filled; i++)); do bar+="█"; done
+    for ((i=0; i<empty; i++)); do bar+="░"; done
+
+    # Print with colors
+    echo -e "${BLUE}[${bar}] ${percent}%${NC} | Loop ${loop_num} | Phase: ${phase_name}"
+}
+
 # Record loop duration and compute rolling average
 update_loop_duration() {
     local duration="$1"
@@ -1620,6 +1644,15 @@ main() {
         init_call_tracking
 
         log_status "LOOP" "=== Starting Loop #$loop_count ==="
+
+        # Display visual progress indicator
+        local progress_percent=0
+        local progress_phase="Executing"
+        if [[ "$max_loops" != "continuous" && "$max_loops" =~ ^[0-9]+$ && $max_loops -gt 0 ]]; then
+            progress_percent=$(( (loop_count - 1) * 100 / max_loops ))
+            progress_phase="Executing ($loop_count/$max_loops)"
+        fi
+        print_progress "$loop_count" "$progress_phase" "$progress_percent"
 
         # Check circuit breaker before attempting execution
         if should_halt_execution; then

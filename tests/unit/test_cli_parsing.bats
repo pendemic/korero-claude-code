@@ -464,3 +464,40 @@ build_korero_cmd_for_test() {
     # Should only be "korero" with no extra flags
     [[ "$result" == "korero" ]]
 }
+
+# =============================================================================
+# VISUAL LOOP PROGRESS INDICATOR TESTS (4 tests)
+# =============================================================================
+
+@test "print_progress outputs correct format with loop number" {
+    BLUE='' NC=''
+    source <(sed -n '/^print_progress()/,/^}/p' "$KORERO_SCRIPT")
+    result=$(print_progress 5 "Executing" 50)
+    [[ "$result" == *"Loop 5"* ]]
+    [[ "$result" == *"50%"* ]]
+    [[ "$result" == *"Phase: Executing"* ]]
+}
+
+@test "print_progress renders correct fill level at 80%" {
+    BLUE='' NC=''
+    source <(sed -n '/^print_progress()/,/^}/p' "$KORERO_SCRIPT")
+    result=$(print_progress 3 "Testing" 80)
+    [[ "$result" == *"████████░░"* ]]
+    [[ "$result" == *"80%"* ]]
+}
+
+@test "print_progress renders empty bar at 0%" {
+    BLUE='' NC=''
+    source <(sed -n '/^print_progress()/,/^}/p' "$KORERO_SCRIPT")
+    result=$(print_progress 1 "Starting" 0)
+    [[ "$result" == *"░░░░░░░░░░"* ]]
+    [[ "$result" == *"0%"* ]]
+}
+
+@test "print_progress renders full bar at 100%" {
+    BLUE='' NC=''
+    source <(sed -n '/^print_progress()/,/^}/p' "$KORERO_SCRIPT")
+    result=$(print_progress 10 "Complete" 100)
+    [[ "$result" == *"██████████"* ]]
+    [[ "$result" == *"100%"* ]]
+}

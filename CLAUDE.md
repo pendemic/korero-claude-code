@@ -198,6 +198,12 @@ tmux list-sessions
 tmux attach -t <session-name>
 ```
 
+Each loop iteration displays a visual progress indicator:
+```
+[████████░░] 80% | Loop 8 | Phase: Executing (8/10)
+```
+When `MAX_LOOPS` is set to a number, the bar shows completion percentage. In continuous mode, it shows 0% with the current loop number.
+
 ### Running Tests
 ```bash
 # Run all tests (420 tests)
@@ -513,13 +519,13 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (559 tests across 17 files)
+### Test Files (563 tests across 17 files)
 
-**Unit Tests (423 tests):**
+**Unit Tests (427 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
-| `test_cli_parsing.bats` | 35 | CLI argument parsing for all flags |
+| `test_cli_parsing.bats` | 39 | CLI argument parsing for all flags + progress indicator |
 | `test_cli_modern.bats` | 33 | Modern CLI commands (Phase 1.1) + build_claude_command fix |
 | `test_json_parsing.bats` | 64 | JSON output format parsing + Claude CLI format + session management + permission suggestions |
 | `test_session_continuity.bats` | 44 | Session lifecycle management + circuit breaker integration + issue #91 fix |
