@@ -1427,6 +1427,10 @@ See AGENT.md for build, test, and run instructions.'
         anti_repetition="## Anti-Repetition Rules
 
 Before proposing or selecting ideas in each loop, review ALL prior winning ideas.
+Also review the Minority Opinions sections for previously rejected ideas.
+If proposing an idea similar to a prior minority opinion, explain why circumstances
+have changed to warrant reconsideration.
+
 An idea is considered a DUPLICATE if:
 - It targets the same file AND the same function as a prior winner
 - It solves the same user problem as a prior winner
@@ -1441,6 +1445,10 @@ To ensure diversity:
         anti_repetition="## Anti-Repetition Rules
 
 Before proposing or selecting ideas in each loop, review ALL prior winning ideas.
+Also review the Minority Opinions sections for previously rejected ideas.
+If proposing an idea similar to a prior minority opinion, explain why circumstances
+have changed to warrant reconsideration.
+
 An idea is considered a DUPLICATE if:
 - It targets the same file AND the same function as a prior winner
 - It solves the same user problem as a prior winner
@@ -1531,7 +1539,8 @@ against the evaluators' critiques. They can:
 
 **Round 2 — Evaluators counter:**
 Evaluators respond to the defenses. The Idea Orchestrator announces the FINAL WINNER
-with clear justification for why this idea beat the alternatives.
+with clear justification for why this idea beat the alternatives, and identifies 2-3
+RUNNER-UPS whose insights should be preserved in the Minority Opinions section.
 
 ### Phase 4: Winning Idea Documentation (CRITICAL — YOU MUST WRITE TO FILES)
 The winning idea is documented in full detail using the output format below.
@@ -1603,6 +1612,27 @@ Step-by-step guide for a developer to implement this:
 ### Files Most Likely Affected
 - \`path/to/file\` — [what changes]
 - \`path/to/file\` — [what changes]
+
+### Minority Opinions (Preserved for Future Reference)
+
+The following ideas were strong contenders but not selected.
+Their insights are preserved for potential future consideration.
+
+**Runner-Up 1: [Idea Title]**
+- **Proposed by:** [Agent Name]
+- **Category:** [Category]
+- **Rejection rationale:** [1-2 sentences why not selected]
+- **Core insight to preserve:** [Key value worth remembering]
+- **Reconsider when:** [Conditions that would make this relevant again]
+
+**Runner-Up 2: [Idea Title]**
+- **Proposed by:** [Agent Name]
+- **Category:** [Category]
+- **Rejection rationale:** [1-2 sentences]
+- **Core insight to preserve:** [Key value]
+- **Reconsider when:** [Conditions]
+
+[Optional Runner-Up 3 if relevant]
 
 ═══════════════════════════════════════════════════════════
 \`\`\`
