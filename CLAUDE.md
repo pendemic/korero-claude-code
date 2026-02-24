@@ -184,6 +184,14 @@ korero --dry-run
 # Configuration validation
 korero --validate
 
+# Inline help topics
+korero --help presets         # Permission preset details
+korero --help circuit-breaker # Circuit breaker states and thresholds
+korero --help config          # .korerorc configuration reference
+
+# Start coding from an ideation idea
+korero --start-idea 5         # Create branch from loop 5's winning idea
+
 # Circuit breaker management
 korero --reset-circuit
 korero --circuit-status
@@ -269,11 +277,14 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--output-format json|text` - Set Claude output format (default: json)
 - `--allowed-tools "Write,Read,Bash(git *)"` - Restrict allowed tools
 - `--no-continue` - Disable session continuity, start fresh each loop
+- `--help <topic>` - Show detailed help on a specific topic (presets, circuit-breaker, session, tools, modes, exit-detection, rate-limiting, config)
+- `--start-idea N` - Create a feature branch from winning idea N and start coding loop
 
 **Loop Context:**
 Each loop iteration injects context via `build_loop_context()`:
 - Current loop number
 - Remaining tasks from fix_plan.md
+- Idea context (when started via `--start-idea`)
 - Circuit breaker state (if not CLOSED)
 - Previous loop work summary
 
@@ -526,24 +537,29 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (572 tests across 17 files)
+### Test Files (684 tests across 22 files)
 
-**Unit Tests (436 tests):**
+**Unit Tests (548 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
-| `test_cli_parsing.bats` | 42 | CLI argument parsing for all flags + progress indicator + dry-run |
+| `test_cli_parsing.bats` | 51 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea |
 | `test_cli_modern.bats` | 33 | Modern CLI commands (Phase 1.1) + build_claude_command fix |
 | `test_json_parsing.bats` | 64 | JSON output format parsing + Claude CLI format + session management + permission suggestions |
 | `test_session_continuity.bats` | 44 | Session lifecycle management + circuit breaker integration + issue #91 fix |
-| `test_exit_detection.bats` | 53 | Exit signal detection + EXIT_SIGNAL-based completion indicators + progress detection |
-| `test_rate_limiting.bats` | 15 | Rate limiting behavior |
+| `test_exit_detection.bats` | 58 | Exit signal detection + EXIT_SIGNAL-based completion indicators + progress detection |
+| `test_rate_limiting.bats` | 25 | Rate limiting behavior |
 | `test_enable_core.bats` | 38 | Enable core library (idempotency, project detection, template generation, config validation) |
 | `test_task_sources.bats` | 23 | Task sources (beads, GitHub, PRD extraction, normalization) |
 | `test_korero_enable.bats` | 22 | Korero enable integration tests (wizard, CI version, JSON output) |
 | `test_wizard_utils.bats` | 20 | Wizard utility functions (stdout/stderr separation, prompt functions) |
 | `test_ideation_mode.bats` | 66 | Multi-agent ideation: agent generation, context-aware templates, idea storage, integration |
 | `test_permission_presets.bats` | 16 | Permission presets: expansion, mixed tools, integration with CLI args |
+| `test_korero_ideas.bats` | 31 | Ideas browsing, search, get_idea_title, sanitize_branch_name |
+| `test_agent_protocol.bats` | 21 | Agent protocol tests |
+| `test_duration_tracking.bats` | 16 | Loop duration tracking |
+| `test_korero_config.bats` | 9 | Configuration management |
+| `test_korero_status.bats` | 11 | Status reporting |
 
 **Integration Tests (136 tests):**
 

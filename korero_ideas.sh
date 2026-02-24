@@ -209,6 +209,54 @@ _check_and_print_match() {
     return 0
 }
 
+# Extract idea title for a given loop number
+# Returns the title on stdout, or empty string if not found
+get_idea_title() {
+    local loop_num="$1"
+
+    if [[ ! -f "$IDEAS_FILE" ]]; then
+        return 1
+    fi
+
+    local in_section=false
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^LOOP\ ${loop_num}\ WINNING\ IDEA ]]; then
+            in_section=true
+            continue
+        fi
+        if [[ "$in_section" == "true" ]]; then
+            if [[ "$line" =~ ^\*\*Title:\*\*\ (.*) ]]; then
+                echo "${BASH_REMATCH[1]}"
+                return 0
+            fi
+            # Stop at next loop header
+            if [[ "$line" =~ ^LOOP\ [0-9]+\ WINNING\ IDEA ]]; then
+                break
+            fi
+        fi
+    done < "$IDEAS_FILE"
+
+    return 1
+}
+
+# Convert an idea title to a valid git branch name
+sanitize_branch_name() {
+    local title="$1"
+    local sanitized
+
+    # Lowercase, replace spaces/special chars with hyphens, strip leading/trailing hyphens
+    sanitized=$(echo "$title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
+
+    # Truncate to 50 chars to keep branch names reasonable
+    if [[ ${#sanitized} -gt 50 ]]; then
+        sanitized="${sanitized:0:50}"
+        sanitized="${sanitized%-}"
+    fi
+
+    echo "$sanitized"
+}
+
 case "${1:-}" in
     list)
         list_ideas

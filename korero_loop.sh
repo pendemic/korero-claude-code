@@ -34,6 +34,7 @@ CALL_COUNT_FILE="$KORERO_DIR/.call_count"
 TIMESTAMP_FILE="$KORERO_DIR/.last_reset"
 USE_TMUX=false
 DRY_RUN=false
+START_IDEA_LOOP=""
 
 # Duration tracking configuration
 DURATION_HISTORY_FILE="$KORERO_DIR/.loop_durations"
@@ -529,6 +530,98 @@ show_dry_run_info() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
+# Start idea-to-branch workflow
+# Extracts a winning idea from IDEAS.md, creates a feature branch, and starts coding loop
+start_idea_workflow() {
+    local loop_num="$1"
+    local ideas_script="$SCRIPT_DIR/korero_ideas.sh"
+
+    if [[ ! -f "$ideas_script" ]]; then
+        echo "Error: korero_ideas.sh not found at $ideas_script" >&2
+        return 1
+    fi
+
+    # Source helper functions from korero_ideas.sh (only the functions, not the case block)
+    local ideas_file="${KORERO_DIR}/IDEAS.md"
+    if [[ ! -f "$ideas_file" ]]; then
+        echo "Error: No IDEAS.md found. Run ideation loops first." >&2
+        return 1
+    fi
+
+    # Extract title using inline parsing (avoids sourcing the entire script)
+    local title=""
+    local in_section=false
+    local idea_body=""
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^LOOP\ ${loop_num}\ WINNING\ IDEA ]]; then
+            in_section=true
+            continue
+        fi
+        if [[ "$in_section" == "true" ]]; then
+            if [[ "$line" =~ ^LOOP\ [0-9]+\ WINNING\ IDEA ]]; then
+                break
+            fi
+            if [[ "$line" =~ ^\*\*Title:\*\*\ (.*) ]]; then
+                title="${BASH_REMATCH[1]}"
+            fi
+            # Skip separator lines
+            if [[ ! "$line" =~ ^═+ ]]; then
+                idea_body+="$line"$'\n'
+            fi
+        fi
+    done < "$ideas_file"
+
+    if [[ -z "$title" ]]; then
+        echo "Error: No winning idea found for loop $loop_num." >&2
+        return 1
+    fi
+
+    # Sanitize title for branch name
+    local sanitized
+    sanitized=$(echo "$title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
+    if [[ ${#sanitized} -gt 50 ]]; then
+        sanitized="${sanitized:0:50}"
+        sanitized="${sanitized%-}"
+    fi
+
+    local branch_name="feature/loop-${loop_num}-${sanitized}"
+
+    echo ""
+    echo -e "${GREEN}Starting idea-to-branch workflow${NC}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Idea:   $title"
+    echo "  Branch: $branch_name"
+    echo ""
+
+    # Create and switch to the feature branch
+    if ! git checkout -b "$branch_name" 2>/dev/null; then
+        echo "Error: Failed to create branch '$branch_name'." >&2
+        echo "  Branch may already exist. Use: git checkout $branch_name" >&2
+        return 1
+    fi
+
+    echo -e "  ${GREEN}Branch created and checked out.${NC}"
+
+    # Save idea context for build_loop_context() to pick up
+    local idea_context_file="$KORERO_DIR/.idea_context"
+    cat > "$idea_context_file" << IDEAEOF
+IDEA_LOOP=$loop_num
+IDEA_TITLE=$title
+IDEA_BRANCH=$branch_name
+IDEAEOF
+    echo "$idea_body" >> "$idea_context_file"
+
+    echo "  Idea context saved to $idea_context_file"
+    echo ""
+    echo "  Mode set to: coding"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    # Override mode to coding for implementation
+    export KORERO_MODE="coding"
+}
+
 # Check if we can make another call
 can_make_call() {
     local calls_made=0
@@ -857,7 +950,18 @@ build_loop_context() {
     if [[ -f "$RESPONSE_ANALYSIS_FILE" ]]; then
         local prev_summary=$(jq -r '.analysis.work_summary // ""' "$RESPONSE_ANALYSIS_FILE" 2>/dev/null | head -c 200)
         if [[ -n "$prev_summary" && "$prev_summary" != "null" ]]; then
-            context+="Previous: ${prev_summary}"
+            context+="Previous: ${prev_summary}. "
+        fi
+    fi
+
+    # Add idea context if implementing a specific idea
+    if [[ -f "$KORERO_DIR/.idea_context" ]]; then
+        local idea_title=""
+        local idea_loop=""
+        idea_title=$(grep "^IDEA_TITLE=" "$KORERO_DIR/.idea_context" 2>/dev/null | cut -d= -f2-)
+        idea_loop=$(grep "^IDEA_LOOP=" "$KORERO_DIR/.idea_context" 2>/dev/null | cut -d= -f2-)
+        if [[ -n "$idea_title" ]]; then
+            context+="Implementing idea from loop ${idea_loop}: ${idea_title}. "
         fi
     fi
 
@@ -1890,6 +1994,7 @@ Options:
     -t, --timeout MIN       Set Claude Code execution timeout in minutes (default: $CLAUDE_TIMEOUT_MINUTES)
     --dry-run               Show what would happen without executing
     --validate              Validate .korerorc configuration and exit
+    --start-idea N          Create branch from winning idea N and start coding loop
     --reset-circuit         Reset circuit breaker to CLOSED state
     --circuit-status        Show circuit breaker status and exit
     --reset-session         Reset session state and exit (clears session continuity)
@@ -1925,13 +2030,236 @@ Examples:
     $0 --no-continue            # Disable session continuity
     $0 --session-expiry 48      # 48-hour session expiration
 
+Help Topics:
+    korero --help <topic>       Show detailed help on a specific topic
+
+    Available topics:
+      presets          Permission preset details (@conservative, @standard, @permissive)
+      circuit-breaker  Circuit breaker states, thresholds, and recovery
+      session          Session continuity and lifecycle management
+      tools            Allowed tools syntax and patterns
+      modes            Korero modes (coding vs idea)
+      exit-detection   Exit signal detection and completion indicators
+      rate-limiting    Rate limiting configuration and behavior
+      config           .korerorc configuration reference
+
 HELPEOF
+}
+
+# Show detailed help on a specific topic
+show_help_topic() {
+    local topic="$1"
+    case "$topic" in
+        presets)
+            cat << 'TOPICEOF'
+PERMISSION PRESETS
+==================
+
+Korero provides three built-in permission presets for ALLOWED_TOOLS:
+
+  @conservative    Write, Read, Edit
+                   Safest option — no shell access. Claude can only modify files.
+
+  @standard        Write, Read, Edit, Bash(git *), Bash(npm *), Bash(pytest)
+                   Recommended for most projects. Covers common dev workflows.
+
+  @permissive      Write, Read, Edit, Bash(*)
+                   Full shell access. Use when Claude needs arbitrary commands.
+
+Mixing presets with custom tools:
+  ALLOWED_TOOLS="@standard,Bash(docker *)"
+  ALLOWED_TOOLS="@conservative,Bash(git commit)"
+
+Set in .korerorc:
+  ALLOWED_TOOLS="@standard"
+
+Or via CLI:
+  korero --allowed-tools "@standard,Bash(cargo *)"
+TOPICEOF
+            ;;
+        circuit-breaker|circuit_breaker|cb)
+            cat << 'TOPICEOF'
+CIRCUIT BREAKER
+================
+
+Prevents runaway loops by detecting stagnation patterns.
+
+States:
+  CLOSED     Normal operation. Loop runs freely.
+  HALF_OPEN  Monitoring mode. Loop continues with extra scrutiny.
+  OPEN       Halted. Loop stops until manually reset.
+
+Thresholds:
+  No progress:        3 loops with no file changes → OPEN
+  Same error:         5 loops with repeated errors → OPEN
+  Output decline:     70% drop in output volume    → OPEN
+  Permission denials: 2 loops with denied commands  → OPEN
+
+Commands:
+  korero --circuit-status    Show current state and counters
+  korero --reset-circuit     Reset to CLOSED state
+TOPICEOF
+            ;;
+        session|sessions)
+            cat << 'TOPICEOF'
+SESSION CONTINUITY
+===================
+
+Korero preserves Claude Code sessions across loop iterations for context.
+
+How it works:
+  - Session ID stored in .korero/.claude_session_id
+  - Passed via --continue flag to maintain conversation context
+  - Expires after 24 hours (configurable with --session-expiry)
+
+Auto-reset triggers:
+  - Circuit breaker opens
+  - Manual interrupt (Ctrl+C)
+  - Project completion detected
+
+Commands:
+  korero --reset-session         Clear session state
+  korero --session-expiry 48     Set 48-hour expiration
+  korero --no-continue           Disable session continuity entirely
+TOPICEOF
+            ;;
+        tools)
+            cat << 'TOPICEOF'
+ALLOWED TOOLS SYNTAX
+=====================
+
+Tools control what Claude Code can do during loop execution.
+
+Basic tools:
+  Write    Create new files
+  Read     Read file contents
+  Edit     Modify existing files
+
+Bash patterns (wildcard matching):
+  Bash(git *)       Any git command
+  Bash(npm *)       Any npm command
+  Bash(pytest)      Exactly pytest
+  Bash(*)           Any bash command
+
+Combining tools (comma-separated):
+  ALLOWED_TOOLS="Write,Read,Edit,Bash(git *),Bash(npm *)"
+
+Using presets (see: korero --help presets):
+  ALLOWED_TOOLS="@standard"
+  ALLOWED_TOOLS="@standard,Bash(docker *)"
+
+Set via .korerorc or CLI --allowed-tools flag.
+TOPICEOF
+            ;;
+        modes|mode)
+            cat << 'TOPICEOF'
+KORERO MODES
+==============
+
+Korero supports two loop modes:
+
+  coding   Ideation → Debate → Implementation → Git Commit
+           Full development cycle. Claude writes and commits code.
+           Set: KORERO_MODE="coding" in .korerorc
+
+  idea     Ideation → Debate → Save Best Idea
+           No code changes. Winning ideas saved to .korero/ideas/.
+           Set: KORERO_MODE="idea" in .korerorc
+
+Configure via korero-enable wizard or .korerorc directly.
+Browse saved ideas: korero ideas list
+TOPICEOF
+            ;;
+        exit-detection|exit|exits)
+            cat << 'TOPICEOF'
+EXIT DETECTION
+===============
+
+Korero uses dual-condition checking to prevent premature exits:
+
+Conditions (BOTH required):
+  1. completion_indicators >= 2  (heuristic from natural language patterns)
+  2. EXIT_SIGNAL: true           (Claude's explicit signal in KORERO_STATUS)
+
+Other exit triggers:
+  - 2+ consecutive "done" signals
+  - 3+ test-only loops (no feature work)
+  - All fix_plan.md items checked off
+
+Why dual-condition?
+  Phrases like "feature done, moving to tests" contain completion keywords
+  but don't mean the project is finished. EXIT_SIGNAL prevents false exits.
+TOPICEOF
+            ;;
+        rate-limiting|rate|ratelimit)
+            cat << 'TOPICEOF'
+RATE LIMITING
+==============
+
+Prevents excessive API usage by limiting calls per hour.
+
+Defaults:
+  Max calls per hour: 100
+  Reset: Automatic hourly countdown
+
+Configuration:
+  korero --calls 50              Set to 50 calls/hour
+  .korerorc: MAX_CALLS_PER_HOUR=200
+
+When limit is reached:
+  - Loop pauses with countdown timer
+  - Resumes automatically when the hour resets
+  - Call count persists across script restarts
+
+Files:
+  .korero/.call_count    Current call counter
+  .korero/.last_reset    Last reset timestamp
+TOPICEOF
+            ;;
+        config|configuration|korerorc)
+            cat << 'TOPICEOF'
+.KORERORC CONFIGURATION
+========================
+
+Project-level configuration file. Loaded automatically on loop start.
+
+Key variables:
+  KORERO_MODE="coding"           Loop mode: coding or idea
+  PROJECT_SUBJECT="my project"   Subject for agent generation
+  DOMAIN_AGENT_COUNT=3           Number of domain expert agents (1-10)
+  MAX_LOOPS="continuous"         Loop limit: number or "continuous"
+  ALLOWED_TOOLS="@standard"      Permission preset or explicit tools
+  MAX_CALLS_PER_HOUR=100         API call rate limit
+
+Validation:
+  korero --validate              Check .korerorc for errors
+
+Create via:
+  korero-enable                  Interactive wizard
+  korero-enable-ci               Non-interactive (CI/scripts)
+TOPICEOF
+            ;;
+        *)
+            echo "Unknown help topic: $topic"
+            echo ""
+            echo "Available topics:"
+            echo "  presets, circuit-breaker, session, tools,"
+            echo "  modes, exit-detection, rate-limiting, config"
+            echo ""
+            echo "Usage: korero --help <topic>"
+            return 1
+            ;;
+    esac
 }
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
         -h|--help)
+            if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
+                show_help_topic "$2"
+                exit $?
+            fi
             show_help
             exit 0
             ;;
@@ -2044,6 +2372,17 @@ while [[ $# -gt 0 ]]; do
             CLAUDE_SESSION_EXPIRY_HOURS="$2"
             shift 2
             ;;
+        --start-idea)
+            if [[ -z "${2:-}" || ! "$2" =~ ^[1-9][0-9]*$ ]]; then
+                echo "Error: --start-idea requires a positive loop number"
+                echo "Usage: korero --start-idea <loop_number>"
+                echo ""
+                echo "List available ideas: korero ideas list"
+                exit 1
+            fi
+            START_IDEA_LOOP="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown option: $1"
             show_help
@@ -2059,6 +2398,12 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         load_korerorc 2>/dev/null || true
         show_dry_run_info
         exit 0
+    fi
+
+    # Start idea-to-branch workflow if requested
+    if [[ -n "${START_IDEA_LOOP:-}" ]]; then
+        load_korerorc 2>/dev/null || true
+        start_idea_workflow "$START_IDEA_LOOP"
     fi
 
     # If tmux mode requested, set it up

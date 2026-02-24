@@ -236,3 +236,50 @@ teardown() {
 @test "korero_loop.sh help mentions ideas command" {
     grep -q "ideas" "$REPO_ROOT/korero_loop.sh"
 }
+
+# ===== get_idea_title =====
+
+@test "get_idea_title extracts title for valid loop" {
+    source <(sed -n '/^get_idea_title()/,/^}/p' "$REPO_ROOT/korero_ideas.sh")
+    KORERO_DIR=".korero"
+    IDEAS_FILE="$KORERO_DIR/IDEAS.md"
+    run get_idea_title 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == "Shell Compatibility Detection" ]]
+}
+
+@test "get_idea_title returns error for missing loop" {
+    source <(sed -n '/^get_idea_title()/,/^}/p' "$REPO_ROOT/korero_ideas.sh")
+    KORERO_DIR=".korero"
+    IDEAS_FILE="$KORERO_DIR/IDEAS.md"
+    run get_idea_title 99
+    [ "$status" -eq 1 ]
+}
+
+@test "get_idea_title returns error when no IDEAS.md" {
+    source <(sed -n '/^get_idea_title()/,/^}/p' "$REPO_ROOT/korero_ideas.sh")
+    KORERO_DIR=".korero"
+    IDEAS_FILE="$KORERO_DIR/NONEXISTENT.md"
+    run get_idea_title 1
+    [ "$status" -eq 1 ]
+}
+
+# ===== sanitize_branch_name =====
+
+@test "sanitize_branch_name converts to lowercase with hyphens" {
+    source <(sed -n '/^sanitize_branch_name()/,/^}/p' "$REPO_ROOT/korero_ideas.sh")
+    result=$(sanitize_branch_name "Shell Compatibility Detection")
+    [[ "$result" == "shell-compatibility-detection" ]]
+}
+
+@test "sanitize_branch_name strips special characters" {
+    source <(sed -n '/^sanitize_branch_name()/,/^}/p' "$REPO_ROOT/korero_ideas.sh")
+    result=$(sanitize_branch_name "Feature: Auto-Deploy (v2.0)")
+    [[ "$result" == "feature-auto-deploy-v2-0" ]]
+}
+
+@test "sanitize_branch_name truncates long names" {
+    source <(sed -n '/^sanitize_branch_name()/,/^}/p' "$REPO_ROOT/korero_ideas.sh")
+    result=$(sanitize_branch_name "This Is An Extremely Long Feature Title That Should Definitely Be Truncated To Keep Branch Names Reasonable")
+    [[ ${#result} -le 50 ]]
+}

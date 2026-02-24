@@ -524,3 +524,75 @@ build_korero_cmd_for_test() {
     [[ "$output" == *"Allowed tools:"* ]]
     [[ "$output" == *"Output format:"* ]]
 }
+
+# =============================================================================
+# INLINE HELP TOPICS TESTS (5 tests)
+# =============================================================================
+
+@test "--help with topic shows topic-specific content" {
+    run bash "$KORERO_SCRIPT" --help presets
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PERMISSION PRESETS"* ]]
+    [[ "$output" == *"@conservative"* ]]
+    [[ "$output" == *"@standard"* ]]
+    [[ "$output" == *"@permissive"* ]]
+}
+
+@test "--help circuit-breaker shows circuit breaker details" {
+    run bash "$KORERO_SCRIPT" --help circuit-breaker
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CIRCUIT BREAKER"* ]]
+    [[ "$output" == *"CLOSED"* ]]
+    [[ "$output" == *"HALF_OPEN"* ]]
+    [[ "$output" == *"OPEN"* ]]
+}
+
+@test "--help with unknown topic shows error and available topics" {
+    run bash "$KORERO_SCRIPT" --help nonexistent
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Unknown help topic"* ]]
+    [[ "$output" == *"Available topics"* ]]
+}
+
+@test "--help without topic shows general help with topics list" {
+    run bash "$KORERO_SCRIPT" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Available topics:"* ]]
+    [[ "$output" == *"presets"* ]]
+}
+
+@test "--help config shows .korerorc reference" {
+    run bash "$KORERO_SCRIPT" --help config
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"KORERORC CONFIGURATION"* ]]
+    [[ "$output" == *"KORERO_MODE"* ]]
+    [[ "$output" == *"ALLOWED_TOOLS"* ]]
+}
+
+# =============================================================================
+# IDEA-TO-BRANCH WORKFLOW TESTS (4 tests)
+# =============================================================================
+
+@test "--start-idea without number shows error" {
+    run bash "$KORERO_SCRIPT" --start-idea
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"requires a positive loop number"* ]]
+}
+
+@test "--start-idea with non-numeric arg shows error" {
+    run bash "$KORERO_SCRIPT" --start-idea abc
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"requires a positive loop number"* ]]
+}
+
+@test "--start-idea with zero shows error" {
+    run bash "$KORERO_SCRIPT" --start-idea 0
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"requires a positive loop number"* ]]
+}
+
+@test "--start-idea with valid number but no IDEAS.md shows error" {
+    run bash "$KORERO_SCRIPT" --start-idea 5
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"No IDEAS.md found"* ]] || [[ "$output" == *"not found"* ]]
+}
