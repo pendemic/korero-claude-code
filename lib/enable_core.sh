@@ -1184,6 +1184,7 @@ generate_domain_agents() {
     local subject="$1"
     local project_type="${2:-unknown}"
     local count="${3:-3}"
+    local project_context="${4:-}"
 
     if [[ -z "$subject" ]]; then
         _generate_generic_agents "$count"
@@ -1219,6 +1220,20 @@ Output ONLY in this exact markdown format (no additional text before or after):
 
 Repeat the above format for each agent. Use --- as separator between agents.
 AGENTPROMPTEOF
+
+    # Append project context if available for context-aware agent generation
+    if [[ -n "$project_context" ]]; then
+        cat >> "$prompt_file" << CTXEOF
+
+--- PROJECT CONTEXT ---
+${project_context}
+--- END PROJECT CONTEXT ---
+
+Use the project context above to tailor agents to the actual codebase structure,
+technologies, and patterns found in this project. Agents should reflect the specific
+domains, components, and technical concerns visible in the project files.
+CTXEOF
+    fi
 
     local cli_exit_code=0
     local claude_cmd="claude"
@@ -2110,6 +2125,7 @@ enable_korero_in_directory() {
     local agent_count="${ENABLE_AGENT_COUNT:-3}"
     local max_loops="${ENABLE_MAX_LOOPS:-continuous}"
     local focus_override="${ENABLE_FOCUS_CONSTRAINT:-}"
+    local pre_gathered_context="${ENABLE_PROJECT_CONTEXT:-}"
 
     # Check existing state (use || true to prevent set -e from exiting)
     check_existing_korero || true
@@ -2155,8 +2171,11 @@ enable_korero_in_directory() {
         # Gather project context and generate context-aware config
         # (sets CONFIG_* globals: CONFIG_AGENTS, CONFIG_CATEGORIES, CONFIG_SCORING,
         #  CONFIG_KEY_FILES, CONFIG_PROJECT_SUMMARY, CONFIG_FOCUS_CONSTRAINT, CONFIG_NOTES)
-        local project_context=""
-        project_context=$(gather_project_context "$(pwd)")
+        # Reuse pre-gathered context from callers if available to avoid redundant work
+        local project_context="$pre_gathered_context"
+        if [[ -z "$project_context" ]]; then
+            project_context=$(gather_project_context "$(pwd)")
+        fi
 
         if [[ -n "$project_subject" && -n "$project_context" ]]; then
             enable_log "INFO" "Generating context-aware configuration..."
