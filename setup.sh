@@ -39,13 +39,14 @@ fi
 # - src/ stays at root for compatibility with existing tooling
 # - All Korero-specific files go in .korero/ subfolder
 mkdir -p src
-mkdir -p .korero/{specs/stdlib,examples,logs,docs/generated}
+mkdir -p .korero/{specs/stdlib,examples,logs,docs/generated,protocols}
 
 # Copy templates to .korero/
 cp "$TEMPLATES_DIR/PROMPT.md" .korero/
 cp "$TEMPLATES_DIR/fix_plan.md" .korero/fix_plan.md
 cp "$TEMPLATES_DIR/AGENT.md" .korero/AGENT.md
 cp -r "$TEMPLATES_DIR/specs"/* .korero/specs/ 2>/dev/null || true
+cp -r "$TEMPLATES_DIR/protocols"/* .korero/protocols/ 2>/dev/null || true
 
 # Generate .korerorc configuration file
 # Source enable_core.sh if available for generate_korerorc(), otherwise create inline

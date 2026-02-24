@@ -236,6 +236,7 @@ create_korero_structure() {
         ".korero/examples"
         ".korero/logs"
         ".korero/docs/generated"
+        ".korero/protocols"
     )
 
     # Add ideas directory for ideation modes
@@ -2214,6 +2215,16 @@ enable_korero_in_directory() {
     safe_create_file ".korero/PROMPT.md" "$prompt_content"
     safe_create_file ".korero/AGENT.md" "$agent_content"
     safe_create_file ".korero/fix_plan.md" "$fix_plan_content"
+
+    # Copy protocol templates if available
+    local templates_dir
+    templates_dir=$(get_templates_dir 2>/dev/null || echo "")
+    if [[ -n "$templates_dir" && -d "$templates_dir/protocols" ]]; then
+        for proto_file in "$templates_dir/protocols/"*; do
+            [[ -f "$proto_file" ]] || continue
+            safe_create_file ".korero/protocols/$(basename "$proto_file")" "$(cat "$proto_file")"
+        done
+    fi
 
     # Detect task sources for .korerorc
     detect_task_sources
