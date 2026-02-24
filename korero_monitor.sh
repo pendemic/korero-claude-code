@@ -39,6 +39,18 @@ cleanup() {
 # Set up signal handlers
 trap cleanup SIGINT SIGTERM EXIT
 
+# Format seconds into human-readable duration
+format_duration() {
+    local seconds="$1"
+    local minutes=$((seconds / 60))
+    local remaining=$((seconds % 60))
+    if [[ $minutes -gt 0 ]]; then
+        echo "${minutes}m ${remaining}s"
+    else
+        echo "${remaining}s"
+    fi
+}
+
 # Main display function
 display_status() {
     clear_screen
@@ -58,11 +70,27 @@ display_status() {
         local calls_made=$(echo "$status_data" | jq -r '.calls_made_this_hour // "0"' 2>/dev/null || echo "0")
         local max_calls=$(echo "$status_data" | jq -r '.max_calls_per_hour // "100"' 2>/dev/null || echo "100")
         local status=$(echo "$status_data" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
-        
+        local loop_start=$(echo "$status_data" | jq -r '.loop_start_time // 0' 2>/dev/null || echo "0")
+        local last_dur=$(echo "$status_data" | jq -r '.last_loop_duration_sec // 0' 2>/dev/null || echo "0")
+        local avg_dur=$(echo "$status_data" | jq -r '.average_loop_duration_sec // 0' 2>/dev/null || echo "0")
+
         echo -e "${CYAN}┌─ Current Status ────────────────────────────────────────────────────────┐${NC}"
         echo -e "${CYAN}│${NC} Loop Count:     ${WHITE}#$loop_count${NC}"
         echo -e "${CYAN}│${NC} Status:         ${GREEN}$status${NC}"
         echo -e "${CYAN}│${NC} API Calls:      $calls_made/$max_calls"
+        if [[ "$loop_start" -gt 0 ]]; then
+            local current_time
+            current_time=$(date +%s)
+            local elapsed=$((current_time - loop_start))
+            local dur_line="Duration: $(format_duration $elapsed)"
+            if [[ "$avg_dur" -gt 0 ]]; then
+                dur_line="$dur_line (avg: $(format_duration $avg_dur))"
+            fi
+            echo -e "${CYAN}│${NC} $dur_line"
+            if [[ "$last_dur" -gt 0 ]]; then
+                echo -e "${CYAN}│${NC} Last Loop:      $(format_duration $last_dur)"
+            fi
+        fi
         echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────┘${NC}"
         echo
         

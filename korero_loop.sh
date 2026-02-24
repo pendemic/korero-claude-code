@@ -34,6 +34,10 @@ CALL_COUNT_FILE="$KORERO_DIR/.call_count"
 TIMESTAMP_FILE="$KORERO_DIR/.last_reset"
 USE_TMUX=false
 
+# Duration tracking configuration
+DURATION_HISTORY_FILE="$KORERO_DIR/.loop_durations"
+MAX_DURATION_ENTRIES=10
+
 # Save environment variable state BEFORE setting defaults
 # These are used by load_korerorc() to determine which values came from environment
 _env_MAX_CALLS_PER_HOUR="${MAX_CALLS_PER_HOUR:-}"
@@ -350,6 +354,11 @@ update_status() {
     local status=$4
     local exit_reason=${5:-""}
     
+    local loop_start=${LOOP_START_TIME:-0}
+    local last_dur=${LAST_LOOP_DURATION:-0}
+    local avg_dur
+    avg_dur=$(get_average_duration)
+
     cat > "$STATUS_FILE" << STATUSEOF
 {
     "timestamp": "$(get_iso_timestamp)",
@@ -359,9 +368,60 @@ update_status() {
     "last_action": "$last_action",
     "status": "$status",
     "exit_reason": "$exit_reason",
-    "next_reset": "$(get_next_hour_time)"
+    "next_reset": "$(get_next_hour_time)",
+    "loop_start_time": $loop_start,
+    "last_loop_duration_sec": $last_dur,
+    "average_loop_duration_sec": $avg_dur
 }
 STATUSEOF
+}
+
+# Format seconds into human-readable duration
+format_duration() {
+    local seconds="$1"
+    local minutes=$((seconds / 60))
+    local remaining=$((seconds % 60))
+    if [[ $minutes -gt 0 ]]; then
+        echo "${minutes}m ${remaining}s"
+    else
+        echo "${remaining}s"
+    fi
+}
+
+# Record loop duration and compute rolling average
+update_loop_duration() {
+    local duration="$1"
+
+    # Append to history file
+    echo "$duration" >> "$DURATION_HISTORY_FILE"
+
+    # Keep only last N entries
+    if [[ -f "$DURATION_HISTORY_FILE" ]]; then
+        tail -n "$MAX_DURATION_ENTRIES" "$DURATION_HISTORY_FILE" > "${DURATION_HISTORY_FILE}.tmp"
+        mv "${DURATION_HISTORY_FILE}.tmp" "$DURATION_HISTORY_FILE"
+    fi
+}
+
+# Calculate average duration from history
+get_average_duration() {
+    if [[ ! -f "$DURATION_HISTORY_FILE" ]]; then
+        echo "0"
+        return
+    fi
+
+    local total=0
+    local count=0
+    while read -r dur; do
+        [[ -z "$dur" ]] && continue
+        total=$((total + dur))
+        ((count++))
+    done < "$DURATION_HISTORY_FILE"
+
+    if [[ $count -gt 0 ]]; then
+        echo $((total / count))
+    else
+        echo "0"
+    fi
 }
 
 # Check if we can make another call
@@ -1501,6 +1561,9 @@ main() {
     while true; do
         loop_count=$((loop_count + 1))
 
+        # Capture loop start time for duration tracking
+        LOOP_START_TIME=$(date +%s)
+
         # Check loop limit (from .korerorc MAX_LOOPS setting)
         local max_loops="${MAX_LOOPS:-continuous}"
         if [[ "$max_loops" != "continuous" && "$max_loops" =~ ^[0-9]+$ ]]; then
@@ -1600,7 +1663,14 @@ main() {
         # Execute Claude Code
         execute_claude_code "$loop_count"
         local exec_result=$?
-        
+
+        # Record loop duration
+        local loop_end_time
+        loop_end_time=$(date +%s)
+        LAST_LOOP_DURATION=$((loop_end_time - LOOP_START_TIME))
+        update_loop_duration "$LAST_LOOP_DURATION"
+        log_status "INFO" "Loop #$loop_count duration: $(format_duration $LAST_LOOP_DURATION)"
+
         if [ $exec_result -eq 0 ]; then
             update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "completed" "success"
 
