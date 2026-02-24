@@ -33,6 +33,7 @@ LIVE_LOG_FILE="$KORERO_DIR/live.log"  # Fixed file for live output monitoring
 CALL_COUNT_FILE="$KORERO_DIR/.call_count"
 TIMESTAMP_FILE="$KORERO_DIR/.last_reset"
 USE_TMUX=false
+DRY_RUN=false
 
 # Duration tracking configuration
 DURATION_HISTORY_FILE="$KORERO_DIR/.loop_durations"
@@ -461,6 +462,71 @@ get_average_duration() {
     else
         echo "0"
     fi
+}
+
+# Display dry run information and exit
+show_dry_run_info() {
+    echo ""
+    echo -e "${BLUE}DRY RUN MODE - No Claude Code calls will be made${NC}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    # Prompt files
+    if [[ -f "$PROMPT_FILE" ]]; then
+        echo "Prompt file: $PROMPT_FILE ($(wc -c < "$PROMPT_FILE" 2>/dev/null || echo "?") bytes)"
+    else
+        echo "Prompt file: $PROMPT_FILE (NOT FOUND)"
+    fi
+    if [[ -f "$KORERO_DIR/fix_plan.md" ]]; then
+        echo "Fix plan:    $KORERO_DIR/fix_plan.md ($(wc -c < "$KORERO_DIR/fix_plan.md" 2>/dev/null || echo "?") bytes)"
+    fi
+    if [[ -f "$KORERO_DIR/AGENT.md" ]]; then
+        echo "Agent config: $KORERO_DIR/AGENT.md ($(wc -c < "$KORERO_DIR/AGENT.md" 2>/dev/null || echo "?") bytes)"
+    fi
+    echo ""
+
+    # Configuration
+    echo "Allowed tools:      $CLAUDE_ALLOWED_TOOLS"
+    echo "Output format:      $CLAUDE_OUTPUT_FORMAT"
+    echo "Session continuity: $CLAUDE_USE_CONTINUE"
+    echo "Max calls/hour:     $MAX_CALLS_PER_HOUR"
+    echo "Timeout:            ${CLAUDE_TIMEOUT_MINUTES}m"
+    echo ""
+
+    # Session state
+    local session_id=""
+    if [[ -f "$CLAUDE_SESSION_FILE" ]]; then
+        session_id=$(cat "$CLAUDE_SESSION_FILE" 2>/dev/null || echo "")
+    fi
+    if [[ -n "$session_id" ]]; then
+        echo "Session ID: ${session_id:0:20}..."
+    else
+        echo "Session ID: none (new session will be created)"
+    fi
+
+    # Circuit breaker
+    local cb_state="UNKNOWN"
+    if [[ -f "$KORERO_DIR/.circuit_breaker_state" ]]; then
+        cb_state=$(cat "$KORERO_DIR/.circuit_breaker_state" 2>/dev/null || echo "UNKNOWN")
+    fi
+    echo "Circuit breaker: $cb_state"
+    echo ""
+
+    # Loop config
+    local max_loops="${MAX_LOOPS:-continuous}"
+    echo "Loop limit: $max_loops"
+    echo ""
+
+    # Command preview
+    echo "Command that would run:"
+    echo "  claude --print --output-format $CLAUDE_OUTPUT_FORMAT \\"
+    if [[ -n "$CLAUDE_ALLOWED_TOOLS" ]]; then
+        echo "    --allowedTools \"$CLAUDE_ALLOWED_TOOLS\" \\"
+    fi
+    echo "    -p <prompt content>"
+    echo ""
+    echo "Run without --dry-run to execute."
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
 # Check if we can make another call
@@ -1822,6 +1888,8 @@ Options:
     -v, --verbose           Show detailed progress updates during execution
     -l, --live              Show Claude Code output in real-time (streaming mode)
     -t, --timeout MIN       Set Claude Code execution timeout in minutes (default: $CLAUDE_TIMEOUT_MINUTES)
+    --dry-run               Show what would happen without executing
+    --validate              Validate .korerorc configuration and exit
     --reset-circuit         Reset circuit breaker to CLOSED state
     --circuit-status        Show circuit breaker status and exit
     --reset-session         Reset session state and exit (clears session continuity)
@@ -1927,6 +1995,20 @@ while [[ $# -gt 0 ]]; do
             echo -e "\033[0;32m✅ Session state reset successfully\033[0m"
             exit 0
             ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        --validate)
+            SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+            source "$SCRIPT_DIR/lib/enable_core.sh"
+            if validate_korerorc ".korerorc"; then
+                echo -e "\033[0;32m✅ Configuration valid: .korerorc\033[0m"
+                exit 0
+            else
+                exit 1
+            fi
+            ;;
         --circuit-status)
             # Source the circuit breaker library
             SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
@@ -1972,6 +2054,13 @@ done
 
 # Only execute when run directly, not when sourced
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    # Dry run mode: show config and exit without executing
+    if [[ "$DRY_RUN" == "true" ]]; then
+        load_korerorc 2>/dev/null || true
+        show_dry_run_info
+        exit 0
+    fi
+
     # If tmux mode requested, set it up
     if [[ "$USE_TMUX" == "true" ]]; then
         check_tmux_available

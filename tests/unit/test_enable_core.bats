@@ -386,3 +386,64 @@ EOF
     content=$(cat test_file.txt)
     [[ "$content" == "original content" ]]
 }
+
+# =============================================================================
+# CONFIGURATION VALIDATION (6 tests)
+# =============================================================================
+
+@test "validate_korerorc passes valid config" {
+    cat > "$TEST_DIR/.korerorc" << 'EOF'
+KORERO_MODE="coding"
+ALLOWED_TOOLS="@standard"
+MAX_LOOPS="20"
+EOF
+    run validate_korerorc "$TEST_DIR/.korerorc"
+    assert_success
+}
+
+@test "validate_korerorc passes valid idea mode config" {
+    cat > "$TEST_DIR/.korerorc" << 'EOF'
+KORERO_MODE="idea"
+ALLOWED_TOOLS="@conservative"
+MAX_LOOPS="continuous"
+EOF
+    run validate_korerorc "$TEST_DIR/.korerorc"
+    assert_success
+}
+
+@test "validate_korerorc detects unknown preset" {
+    cat > "$TEST_DIR/.korerorc" << 'EOF'
+ALLOWED_TOOLS="@standrd"
+EOF
+    run validate_korerorc "$TEST_DIR/.korerorc"
+    assert_failure
+    [[ "$output" == *"Unknown preset '@standrd'"* ]]
+    [[ "$output" == *"@standard"* ]]
+}
+
+@test "validate_korerorc detects malformed Bash pattern" {
+    cat > "$TEST_DIR/.korerorc" << 'EOF'
+ALLOWED_TOOLS="Bash(git"
+EOF
+    run validate_korerorc "$TEST_DIR/.korerorc"
+    assert_failure
+    [[ "$output" == *"missing closing parenthesis"* ]]
+}
+
+@test "validate_korerorc detects invalid KORERO_MODE" {
+    cat > "$TEST_DIR/.korerorc" << 'EOF'
+KORERO_MODE="debug"
+EOF
+    run validate_korerorc "$TEST_DIR/.korerorc"
+    assert_failure
+    [[ "$output" == *"Invalid KORERO_MODE"* ]]
+}
+
+@test "validate_korerorc detects invalid MAX_LOOPS" {
+    cat > "$TEST_DIR/.korerorc" << 'EOF'
+MAX_LOOPS="forever"
+EOF
+    run validate_korerorc "$TEST_DIR/.korerorc"
+    assert_failure
+    [[ "$output" == *"Invalid MAX_LOOPS"* ]]
+}

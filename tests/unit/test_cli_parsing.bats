@@ -501,3 +501,26 @@ build_korero_cmd_for_test() {
     [[ "$result" == *"██████████"* ]]
     [[ "$result" == *"100%"* ]]
 }
+
+# =============================================================================
+# DRY RUN MODE TESTS (3 tests)
+# =============================================================================
+
+@test "--dry-run flag is recognized and exits cleanly" {
+    run bash "$KORERO_SCRIPT" --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DRY RUN MODE"* ]]
+}
+
+@test "--dry-run shows prompt file info" {
+    run bash "$KORERO_SCRIPT" --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Prompt file:"* ]]
+}
+
+@test "--dry-run shows allowed tools and output format" {
+    run bash "$KORERO_SCRIPT" --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Allowed tools:"* ]]
+    [[ "$output" == *"Output format:"* ]]
+}

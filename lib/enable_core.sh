@@ -124,6 +124,95 @@ is_korero_enabled() {
 }
 
 # =============================================================================
+# CONFIGURATION VALIDATION
+# =============================================================================
+
+# Validate .korerorc configuration file
+# Returns 0 if valid, 1 if errors found
+# Outputs errors to stderr with line numbers and suggestions
+validate_korerorc() {
+    local config_file="${1:-.korerorc}"
+    local errors=0
+    local line_num=0
+
+    if [[ ! -f "$config_file" ]]; then
+        echo "Error: $config_file not found" >&2
+        return 1
+    fi
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        ((line_num++))
+
+        # Skip comments and empty lines
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line// }" ]] && continue
+
+        # Check for unclosed quotes
+        local quote_count
+        quote_count=$(echo "$line" | tr -cd '"' | wc -c)
+        if (( quote_count % 2 != 0 )); then
+            echo "$config_file:$line_num - Unclosed quote" >&2
+            echo "  $line" >&2
+            ((errors++))
+        fi
+
+        # Check ALLOWED_TOOLS presets
+        if [[ "$line" =~ ALLOWED_TOOLS.*@([a-zA-Z]+) ]]; then
+            local preset="${BASH_REMATCH[1]}"
+            if [[ ! "$preset" =~ ^(conservative|standard|permissive)$ ]]; then
+                echo "$config_file:$line_num - Unknown preset '@$preset'" >&2
+                echo "  $line" >&2
+                # Suggest closest match
+                case "$preset" in
+                    conserv*|conser*) echo "  Did you mean: @conservative" >&2 ;;
+                    stand*|standa*) echo "  Did you mean: @standard" >&2 ;;
+                    permis*|permi*) echo "  Did you mean: @permissive" >&2 ;;
+                    *) echo "  Valid presets: @conservative, @standard, @permissive" >&2 ;;
+                esac
+                ((errors++))
+            fi
+        fi
+
+        # Check Bash() pattern syntax
+        if echo "$line" | grep -q 'Bash('; then
+            if ! echo "$line" | grep -qE 'Bash\([^)]+\)'; then
+                echo "$config_file:$line_num - Malformed Bash pattern (missing closing parenthesis)" >&2
+                echo "  $line" >&2
+                ((errors++))
+            fi
+        fi
+
+        # Check KORERO_MODE validity
+        if [[ "$line" =~ KORERO_MODE=[\"\']*([a-zA-Z]+) ]]; then
+            local mode="${BASH_REMATCH[1]}"
+            if [[ ! "$mode" =~ ^(coding|idea)$ ]]; then
+                echo "$config_file:$line_num - Invalid KORERO_MODE '$mode'" >&2
+                echo "  Valid modes: coding, idea" >&2
+                ((errors++))
+            fi
+        fi
+
+        # Check MAX_LOOPS validity
+        if [[ "$line" =~ MAX_LOOPS=[\"\']*([a-zA-Z0-9]+) ]]; then
+            local loops_val="${BASH_REMATCH[1]}"
+            if [[ "$loops_val" != "continuous" && ! "$loops_val" =~ ^[0-9]+$ ]]; then
+                echo "$config_file:$line_num - Invalid MAX_LOOPS '$loops_val'" >&2
+                echo "  Must be a positive integer or 'continuous'" >&2
+                ((errors++))
+            fi
+        fi
+
+    done < "$config_file"
+
+    if [[ $errors -gt 0 ]]; then
+        echo "" >&2
+        echo "$errors error(s) found. Fix and re-run: korero --validate" >&2
+        return 1
+    fi
+    return 0
+}
+
+# =============================================================================
 # SAFE FILE OPERATIONS
 # =============================================================================
 
@@ -2280,6 +2369,7 @@ enable_korero_in_directory() {
 export -f enable_log
 export -f check_existing_korero
 export -f is_korero_enabled
+export -f validate_korerorc
 export -f safe_create_file
 export -f safe_create_dir
 export -f create_korero_structure

@@ -76,6 +76,7 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - Automatic detection with caching for performance
 
 5. **lib/enable_core.sh** - Shared logic for korero enable commands
+   - Configuration validation: `validate_korerorc()` - validates presets, Bash patterns, mode, loop limits with actionable errors
    - Idempotency checks: `check_existing_korero()`, `is_korero_enabled()`
    - Safe file operations: `safe_create_file()`, `safe_create_dir()`
    - Project detection: `detect_project_context()`, `detect_git_info()`, `detect_task_sources()`
@@ -176,6 +177,12 @@ korero --monitor --calls 50 --prompt my_custom_prompt.md
 
 # Check current status
 korero --status
+
+# Dry run - show what would happen without executing
+korero --dry-run
+
+# Configuration validation
+korero --validate
 
 # Circuit breaker management
 korero --reset-circuit
@@ -519,19 +526,19 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (563 tests across 17 files)
+### Test Files (572 tests across 17 files)
 
-**Unit Tests (427 tests):**
+**Unit Tests (436 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
-| `test_cli_parsing.bats` | 39 | CLI argument parsing for all flags + progress indicator |
+| `test_cli_parsing.bats` | 42 | CLI argument parsing for all flags + progress indicator + dry-run |
 | `test_cli_modern.bats` | 33 | Modern CLI commands (Phase 1.1) + build_claude_command fix |
 | `test_json_parsing.bats` | 64 | JSON output format parsing + Claude CLI format + session management + permission suggestions |
 | `test_session_continuity.bats` | 44 | Session lifecycle management + circuit breaker integration + issue #91 fix |
 | `test_exit_detection.bats` | 53 | Exit signal detection + EXIT_SIGNAL-based completion indicators + progress detection |
 | `test_rate_limiting.bats` | 15 | Rate limiting behavior |
-| `test_enable_core.bats` | 32 | Enable core library (idempotency, project detection, template generation) |
+| `test_enable_core.bats` | 38 | Enable core library (idempotency, project detection, template generation, config validation) |
 | `test_task_sources.bats` | 23 | Task sources (beads, GitHub, PRD extraction, normalization) |
 | `test_korero_enable.bats` | 22 | Korero enable integration tests (wizard, CI version, JSON output) |
 | `test_wizard_utils.bats` | 20 | Wizard utility functions (stdout/stderr separation, prompt functions) |
