@@ -1675,6 +1675,7 @@ Options:
     -c, --calls NUM         Set max calls per hour (default: $MAX_CALLS_PER_HOUR)
     -p, --prompt FILE       Set prompt file (default: $PROMPT_FILE)
     -s, --status            Show current status and exit
+    ideas <cmd>             Browse and search winning ideas (list, show, search)
     -m, --monitor           Start with tmux session and live monitor (requires tmux)
     -v, --verbose           Show detailed progress updates during execution
     -l, --live              Show Claude Code output in real-time (streaming mode)
@@ -1739,6 +1740,11 @@ while [[ $# -gt 0 ]]; do
         --config)
             shift
             bash "$SCRIPT_DIR/korero_config.sh" "$@"
+            exit $?
+            ;;
+        ideas)
+            shift
+            bash "$SCRIPT_DIR/korero_ideas.sh" "$@"
             exit $?
             ;;
         -m|--monitor)
