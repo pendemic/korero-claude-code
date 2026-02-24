@@ -1160,3 +1160,31 @@ EOF
     [[ "$result" == *"@standard"* ]]
     [[ "$result" == *"@permissive"* ]]
 }
+
+@test "format_permission_denial_message shows three numbered options" {
+    CLAUDE_ALLOWED_TOOLS="Write,Read,Edit"
+    result=$(format_permission_denial_message "npm install")
+    [[ "$result" == *"Option 1:"* ]]
+    [[ "$result" == *"Option 2:"* ]]
+    [[ "$result" == *"Option 3:"* ]]
+}
+
+@test "format_permission_denial_message shows PERMISSION DENIED header" {
+    CLAUDE_ALLOWED_TOOLS="Write,Read,Edit"
+    result=$(format_permission_denial_message "npm install")
+    [[ "$result" == *"PERMISSION DENIED - Choose a fix:"* ]]
+}
+
+@test "format_permission_denial_message option 1 shows quick fix with composite tools" {
+    CLAUDE_ALLOWED_TOOLS="Write,Read,Edit"
+    result=$(format_permission_denial_message "npm install" "git push")
+    [[ "$result" == *"Quick fix (minimal permissions)"* ]]
+    [[ "$result" == *"Write,Read,Edit,Bash(npm *),Bash(git *)"* ]]
+}
+
+@test "format_permission_denial_message option 2 recommends @standard preset" {
+    CLAUDE_ALLOWED_TOOLS="Write,Read,Edit"
+    result=$(format_permission_denial_message "npm install")
+    [[ "$result" == *"Use @standard preset (recommended)"* ]]
+    [[ "$result" == *'ALLOWED_TOOLS="@standard"'* ]]
+}

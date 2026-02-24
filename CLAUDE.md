@@ -470,7 +470,10 @@ When Claude Code is denied permission to execute commands (e.g., `npm install`),
    - `permission_denial_count` (integer)
    - `denied_commands` (array of command strings)
 3. **Exit behavior**: When `has_permission_denials=true`, Korero exits with reason "permission_denied"
-4. **Automatic fix suggestions**: `format_permission_denial_message()` shows per-command fixes with exact ALLOWED_TOOLS patterns
+4. **Progressive fix suggestions**: `format_permission_denial_message()` presents three numbered options:
+   - **Option 1: Quick fix** - Adds only the specific patterns needed for the denied commands
+   - **Option 2: @standard preset** (recommended) - Covers git, npm, pytest for most projects
+   - **Option 3: @permissive** - All Bash commands for maximum flexibility
 5. **Command mapping**: `suggest_permission_fix()` maps common commands to wildcard patterns (e.g., `npm install` → `Bash(npm *)`)
 
 **Example `.korerorc` tool patterns:**
@@ -510,15 +513,15 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (555 tests across 17 files)
+### Test Files (559 tests across 17 files)
 
-**Unit Tests (419 tests):**
+**Unit Tests (423 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
 | `test_cli_parsing.bats` | 35 | CLI argument parsing for all flags |
 | `test_cli_modern.bats` | 33 | Modern CLI commands (Phase 1.1) + build_claude_command fix |
-| `test_json_parsing.bats` | 60 | JSON output format parsing + Claude CLI format + session management + permission suggestions |
+| `test_json_parsing.bats` | 64 | JSON output format parsing + Claude CLI format + session management + permission suggestions |
 | `test_session_continuity.bats` | 44 | Session lifecycle management + circuit breaker integration + issue #91 fix |
 | `test_exit_detection.bats` | 53 | Exit signal detection + EXIT_SIGNAL-based completion indicators + progress detection |
 | `test_rate_limiting.bats` | 15 | Rate limiting behavior |
