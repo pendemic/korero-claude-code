@@ -38,6 +38,10 @@ USE_TMUX=false
 DURATION_HISTORY_FILE="$KORERO_DIR/.loop_durations"
 MAX_DURATION_ENTRIES=10
 
+# Rate limit warning flags (reset each hour)
+RATE_WARNED_80=false
+RATE_WARNED_95=false
+
 # Save environment variable state BEFORE setting defaults
 # These are used by load_korerorc() to determine which values came from environment
 _env_MAX_CALLS_PER_HOUR="${MAX_CALLS_PER_HOUR:-}"
@@ -313,6 +317,8 @@ init_call_tracking() {
     if [[ "$current_hour" != "$last_reset_hour" ]]; then
         echo "0" > "$CALL_COUNT_FILE"
         echo "$current_hour" > "$TIMESTAMP_FILE"
+        RATE_WARNED_80=false
+        RATE_WARNED_95=false
         log_status "INFO" "Call counter reset for new hour: $current_hour"
     fi
 
@@ -359,6 +365,14 @@ update_status() {
     local avg_dur
     avg_dur=$(get_average_duration)
 
+    # Determine rate limit warning state
+    local rate_warning=""
+    if [[ "$RATE_WARNED_95" == "true" ]]; then
+        rate_warning="rate_limit_imminent"
+    elif [[ "$RATE_WARNED_80" == "true" ]]; then
+        rate_warning="rate_limit_approaching"
+    fi
+
     cat > "$STATUS_FILE" << STATUSEOF
 {
     "timestamp": "$(get_iso_timestamp)",
@@ -371,7 +385,8 @@ update_status() {
     "next_reset": "$(get_next_hour_time)",
     "loop_start_time": $loop_start,
     "last_loop_duration_sec": $last_dur,
-    "average_loop_duration_sec": $avg_dur
+    "average_loop_duration_sec": $avg_dur,
+    "rate_limit_warning": "$rate_warning"
 }
 STATUSEOF
 }
@@ -450,6 +465,25 @@ increment_call_counter() {
     echo "$calls_made"
 }
 
+# Check if rate limit warnings should be emitted
+check_rate_limit_warnings() {
+    local calls_made="$1"
+    local threshold_80=$((MAX_CALLS_PER_HOUR * 80 / 100))
+    local threshold_95=$((MAX_CALLS_PER_HOUR * 95 / 100))
+
+    if [[ $calls_made -ge $threshold_80 ]] && [[ "$RATE_WARNED_80" == "false" ]]; then
+        local remaining=$((MAX_CALLS_PER_HOUR - calls_made))
+        log_status "WARN" "API budget: 80% used ($remaining calls remaining)"
+        RATE_WARNED_80=true
+    fi
+
+    if [[ $calls_made -ge $threshold_95 ]] && [[ "$RATE_WARNED_95" == "false" ]]; then
+        local remaining=$((MAX_CALLS_PER_HOUR - calls_made))
+        log_status "WARN" "API budget: 95% used ($remaining calls remaining) — consider saving work"
+        RATE_WARNED_95=true
+    fi
+}
+
 # Wait for rate limit reset with countdown
 wait_for_reset() {
     local calls_made=$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")
@@ -474,9 +508,11 @@ wait_for_reset() {
     done
     printf "\n"
     
-    # Reset counter
+    # Reset counter and warning flags
     echo "0" > "$CALL_COUNT_FILE"
     echo "$(date +%Y%m%d%H)" > "$TIMESTAMP_FILE"
+    RATE_WARNED_80=false
+    RATE_WARNED_95=false
     log_status "SUCCESS" "Rate limit reset! Ready for new calls."
 }
 
@@ -1122,6 +1158,9 @@ execute_claude_code() {
     local loop_count=$1
     local calls_made=$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")
     calls_made=$((calls_made + 1))
+
+    # Rate limit approach warnings
+    check_rate_limit_warnings "$calls_made"
 
     # Fix #141: Capture git HEAD SHA at loop start to detect commits as progress
     # Store in file for access by progress detection after Claude execution

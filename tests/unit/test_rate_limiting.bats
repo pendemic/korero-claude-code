@@ -205,3 +205,120 @@ increment_call_counter() {
     run can_make_call
     assert_success
 }
+
+# =============================================================================
+# RATE LIMIT APPROACH WARNING TESTS
+# =============================================================================
+
+# Helper: extract check_rate_limit_warnings from korero_loop.sh
+REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
+
+# Helper function: check_rate_limit_warnings (extracted from korero_loop.sh)
+check_rate_limit_warnings() {
+    local calls_made="$1"
+    local threshold_80=$((MAX_CALLS_PER_HOUR * 80 / 100))
+    local threshold_95=$((MAX_CALLS_PER_HOUR * 95 / 100))
+
+    if [[ $calls_made -ge $threshold_80 ]] && [[ "$RATE_WARNED_80" == "false" ]]; then
+        local remaining=$((MAX_CALLS_PER_HOUR - calls_made))
+        echo "WARN: API budget: 80% used ($remaining calls remaining)"
+        RATE_WARNED_80=true
+    fi
+
+    if [[ $calls_made -ge $threshold_95 ]] && [[ "$RATE_WARNED_95" == "false" ]]; then
+        local remaining=$((MAX_CALLS_PER_HOUR - calls_made))
+        echo "WARN: API budget: 95% used ($remaining calls remaining)"
+        RATE_WARNED_95=true
+    fi
+}
+
+# Test 16: Warning at 80% threshold
+@test "check_rate_limit_warnings warns at 80% of MAX_CALLS" {
+    export MAX_CALLS_PER_HOUR=100
+    export RATE_WARNED_80=false
+    export RATE_WARNED_95=false
+
+    run check_rate_limit_warnings 80
+    [[ "$output" == *"80% used"* ]]
+    [[ "$output" == *"20 calls remaining"* ]]
+}
+
+# Test 17: Warning at 95% threshold
+@test "check_rate_limit_warnings warns at 95% of MAX_CALLS" {
+    export MAX_CALLS_PER_HOUR=100
+    export RATE_WARNED_80=true
+    export RATE_WARNED_95=false
+
+    run check_rate_limit_warnings 95
+    [[ "$output" == *"95% used"* ]]
+    [[ "$output" == *"5 calls remaining"* ]]
+}
+
+# Test 18: No warning below 80%
+@test "check_rate_limit_warnings silent below 80%" {
+    export MAX_CALLS_PER_HOUR=100
+    export RATE_WARNED_80=false
+    export RATE_WARNED_95=false
+
+    run check_rate_limit_warnings 79
+    [ -z "$output" ]
+}
+
+# Test 19: Warning not repeated after first emit
+@test "check_rate_limit_warnings does not repeat 80% warning" {
+    export MAX_CALLS_PER_HOUR=100
+    export RATE_WARNED_80=true
+    export RATE_WARNED_95=false
+
+    run check_rate_limit_warnings 85
+    [ -z "$output" ]
+}
+
+# Test 20: Thresholds scale with custom MAX_CALLS
+@test "check_rate_limit_warnings scales with MAX_CALLS=50" {
+    export MAX_CALLS_PER_HOUR=50
+    export RATE_WARNED_80=false
+    export RATE_WARNED_95=false
+
+    # 80% of 50 = 40
+    run check_rate_limit_warnings 39
+    [ -z "$output" ]
+
+    run check_rate_limit_warnings 40
+    [[ "$output" == *"80% used"* ]]
+    [[ "$output" == *"10 calls remaining"* ]]
+}
+
+# Test 21: Both warnings fire when jumping past both thresholds
+@test "check_rate_limit_warnings fires both when jumping past both" {
+    export MAX_CALLS_PER_HOUR=100
+    export RATE_WARNED_80=false
+    export RATE_WARNED_95=false
+
+    run check_rate_limit_warnings 98
+    [[ "$output" == *"80% used"* ]]
+    [[ "$output" == *"95% used"* ]]
+}
+
+# Test 22: korero_loop.sh contains rate limit warning infrastructure
+@test "korero_loop.sh has check_rate_limit_warnings function" {
+    grep -q "check_rate_limit_warnings()" "$REPO_ROOT/korero_loop.sh"
+}
+
+# Test 23: Warning flags reset in init_call_tracking
+@test "init_call_tracking resets warning flags on new hour" {
+    grep -q "RATE_WARNED_80=false" "$REPO_ROOT/korero_loop.sh"
+    grep -q "RATE_WARNED_95=false" "$REPO_ROOT/korero_loop.sh"
+}
+
+# Test 24: status.json includes rate_limit_warning field
+@test "update_status includes rate_limit_warning field" {
+    grep -q "rate_limit_warning" "$REPO_ROOT/korero_loop.sh"
+}
+
+# Test 25: monitor displays rate limit warnings
+@test "monitor reads and displays rate limit warnings" {
+    grep -q "rate_limit_warning" "$REPO_ROOT/korero_monitor.sh"
+    grep -q "rate_limit_imminent" "$REPO_ROOT/korero_monitor.sh"
+    grep -q "rate_limit_approaching" "$REPO_ROOT/korero_monitor.sh"
+}

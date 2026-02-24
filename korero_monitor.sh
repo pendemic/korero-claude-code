@@ -73,11 +73,17 @@ display_status() {
         local loop_start=$(echo "$status_data" | jq -r '.loop_start_time // 0' 2>/dev/null || echo "0")
         local last_dur=$(echo "$status_data" | jq -r '.last_loop_duration_sec // 0' 2>/dev/null || echo "0")
         local avg_dur=$(echo "$status_data" | jq -r '.average_loop_duration_sec // 0' 2>/dev/null || echo "0")
+        local rate_warning=$(echo "$status_data" | jq -r '.rate_limit_warning // ""' 2>/dev/null || echo "")
 
         echo -e "${CYAN}┌─ Current Status ────────────────────────────────────────────────────────┐${NC}"
         echo -e "${CYAN}│${NC} Loop Count:     ${WHITE}#$loop_count${NC}"
         echo -e "${CYAN}│${NC} Status:         ${GREEN}$status${NC}"
         echo -e "${CYAN}│${NC} API Calls:      $calls_made/$max_calls"
+        if [[ "$rate_warning" == "rate_limit_imminent" ]]; then
+            echo -e "${CYAN}│${NC} ${RED}⚠ API budget: 95% used — save work soon${NC}"
+        elif [[ "$rate_warning" == "rate_limit_approaching" ]]; then
+            echo -e "${CYAN}│${NC} ${YELLOW}⚠ API budget: 80% used${NC}"
+        fi
         if [[ "$loop_start" -gt 0 ]]; then
             local current_time
             current_time=$(date +%s)
