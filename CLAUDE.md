@@ -76,7 +76,8 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - Automatic detection with caching for performance
 
 5. **lib/enable_core.sh** - Shared logic for korero enable commands
-   - Configuration validation: `validate_korerorc()` - validates presets, Bash patterns, mode, loop limits with actionable errors
+   - Configuration validation: `validate_korerorc()` - line-by-line validation, `validate_korerorc_verbose()` - rich per-field checkmark output
+   - Quick Start: `run_quickstart_wizard()` - streamlined 3-question setup for new users
    - Idempotency checks: `check_existing_korero()`, `is_korero_enabled()`
    - Safe file operations: `safe_create_file()`, `safe_create_dir()`
    - Project detection: `detect_project_context()`, `detect_git_info()`, `detect_task_sources()`
@@ -189,8 +190,14 @@ korero --help presets         # Permission preset details
 korero --help circuit-breaker # Circuit breaker states and thresholds
 korero --help config          # .korerorc configuration reference
 
+# Quick start for new users (3-question setup)
+korero --quickstart
+
 # Start coding from an ideation idea
 korero --start-idea 5         # Create branch from loop 5's winning idea
+
+# Verbose config validation with per-field checkmarks
+korero --validate-config
 
 # Circuit breaker management
 korero --reset-circuit
@@ -279,6 +286,8 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--no-continue` - Disable session continuity, start fresh each loop
 - `--help <topic>` - Show detailed help on a specific topic (presets, circuit-breaker, session, tools, modes, exit-detection, rate-limiting, config)
 - `--start-idea N` - Create a feature branch from winning idea N and start coding loop
+- `--quickstart` - Quick 3-question setup wizard for new users (mode, project description, permissions)
+- `--validate-config` - Verbose configuration validation with per-field success/error checkmarks
 
 **Loop Context:**
 Each loop iteration injects context via `build_loop_context()`:
@@ -537,19 +546,19 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (684 tests across 22 files)
+### Test Files (697 tests across 22 files)
 
-**Unit Tests (548 tests):**
+**Unit Tests (561 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
-| `test_cli_parsing.bats` | 51 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea |
+| `test_cli_parsing.bats` | 57 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea, quickstart, validate-config |
 | `test_cli_modern.bats` | 33 | Modern CLI commands (Phase 1.1) + build_claude_command fix |
 | `test_json_parsing.bats` | 64 | JSON output format parsing + Claude CLI format + session management + permission suggestions |
 | `test_session_continuity.bats` | 44 | Session lifecycle management + circuit breaker integration + issue #91 fix |
 | `test_exit_detection.bats` | 58 | Exit signal detection + EXIT_SIGNAL-based completion indicators + progress detection |
 | `test_rate_limiting.bats` | 25 | Rate limiting behavior |
-| `test_enable_core.bats` | 38 | Enable core library (idempotency, project detection, template generation, config validation) |
+| `test_enable_core.bats` | 45 | Enable core library (idempotency, project detection, template generation, config validation, quickstart, verbose validation) |
 | `test_task_sources.bats` | 23 | Task sources (beads, GitHub, PRD extraction, normalization) |
 | `test_korero_enable.bats` | 22 | Korero enable integration tests (wizard, CI version, JSON output) |
 | `test_wizard_utils.bats` | 20 | Wizard utility functions (stdout/stderr separation, prompt functions) |

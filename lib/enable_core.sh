@@ -2365,6 +2365,193 @@ enable_korero_in_directory() {
     return $ENABLE_SUCCESS
 }
 
+# Quick Start Wizard — streamlined 3-question setup for new users
+# Reuses enable_korero_in_directory() with sensible defaults
+run_quickstart_wizard() {
+    echo ""
+    echo "KORERO QUICK START"
+    echo "═══════════════════════════════════════════════"
+    echo ""
+    echo "Let's get you started quickly!"
+    echo ""
+
+    # Check if already enabled
+    if is_korero_enabled; then
+        echo "Korero is already enabled in this directory."
+        echo "Run 'korero' to start, or 'korero-enable --force' to reconfigure."
+        return 0
+    fi
+
+    # Question 1: Mode
+    echo "1. Mode: coding (implement ideas) or idea (generate only)?"
+    local mode
+    read -rp "   [coding/idea, default: coding]: " mode
+    mode="${mode:-coding}"
+    [[ "$mode" != "coding" && "$mode" != "idea" ]] && mode="coding"
+
+    # Question 2: Project description
+    echo ""
+    echo "2. Describe your project in a few words:"
+    local project_subject
+    read -rp "   > " project_subject
+    [[ -z "$project_subject" ]] && project_subject="software project"
+
+    # Question 3: Permission level
+    echo ""
+    echo "3. Permission level:"
+    echo "   - conservative: Read, Write, Edit only"
+    echo "   - standard: + git, npm, pytest (recommended)"
+    echo "   - permissive: all bash commands"
+    local perm_level
+    read -rp "   [conservative/standard/permissive, default: standard]: " perm_level
+    perm_level="${perm_level:-standard}"
+
+    # Map to ALLOWED_TOOLS preset
+    local allowed_tools
+    case "$perm_level" in
+        conservative) allowed_tools="@conservative" ;;
+        permissive)   allowed_tools="@permissive" ;;
+        *)            allowed_tools="@standard" ;;
+    esac
+
+    echo ""
+    echo "═══════════════════════════════════════════════"
+
+    # Delegate to enable_korero_in_directory with quickstart defaults
+    export ENABLE_FORCE=false
+    export ENABLE_KORERO_MODE="$mode"
+    export ENABLE_PROJECT_SUBJECT="$project_subject"
+    export ENABLE_AGENT_COUNT=3
+    export ENABLE_MAX_LOOPS="continuous"
+
+    enable_korero_in_directory
+
+    # Overwrite ALLOWED_TOOLS in .korerorc with chosen preset
+    if [[ -f ".korerorc" ]]; then
+        sed -i "s|^ALLOWED_TOOLS=.*|ALLOWED_TOOLS=\"$allowed_tools\"|" ".korerorc"
+    fi
+
+    echo ""
+    echo "You're ready! Run 'korero' to start."
+    echo "For more options, run 'korero-enable'."
+    echo "═══════════════════════════════════════════════"
+}
+
+# Verbose configuration validation — shows checkmarks for valid fields
+# Used by --validate-config flag
+validate_korerorc_verbose() {
+    local config_file="${1:-.korerorc}"
+    local errors=0
+
+    if [[ ! -f "$config_file" ]]; then
+        echo "✗ Configuration file not found: $config_file"
+        return 1
+    fi
+
+    # Check bash syntax
+    if ! bash -n "$config_file" 2>/dev/null; then
+        echo "✗ Bash syntax error in $config_file"
+        bash -n "$config_file" 2>&1 | head -5
+        ((errors++))
+    else
+        echo "✓ .korerorc syntax valid"
+    fi
+
+    # Source config to get values
+    (
+        source "$config_file" 2>/dev/null
+
+        local field_errors=0
+
+        # Validate KORERO_MODE
+        if [[ -n "${KORERO_MODE:-}" ]]; then
+            if [[ "$KORERO_MODE" == "coding" || "$KORERO_MODE" == "idea" ]]; then
+                echo "✓ KORERO_MODE: $KORERO_MODE (valid)"
+            else
+                echo "✗ KORERO_MODE: $KORERO_MODE"
+                echo "  Error: Must be 'coding' or 'idea'"
+                ((field_errors++))
+            fi
+        fi
+
+        # Validate ALLOWED_TOOLS
+        if [[ -n "${ALLOWED_TOOLS:-}" ]]; then
+            local tools_valid=true
+            local IFS=','
+            for tool in $ALLOWED_TOOLS; do
+                # Trim whitespace without xargs
+                tool="${tool#"${tool%%[![:space:]]*}"}"
+                tool="${tool%"${tool##*[![:space:]]}"}"
+                if [[ "$tool" == @* ]]; then
+                    local preset="${tool#@}"
+                    if [[ "$preset" != "conservative" && "$preset" != "standard" && "$preset" != "permissive" ]]; then
+                        echo "✗ ALLOWED_TOOLS: $ALLOWED_TOOLS"
+                        echo "  Error: Unknown preset '@$preset'"
+                        case "$preset" in
+                            standrd|stanard|standart) echo "  Did you mean: @standard" ;;
+                            conservatve|conservativ) echo "  Did you mean: @conservative" ;;
+                            permisive|permisve) echo "  Did you mean: @permissive" ;;
+                            *) echo "  Valid presets: @conservative, @standard, @permissive" ;;
+                        esac
+                        tools_valid=false
+                        ((field_errors++))
+                        break
+                    fi
+                elif [[ "$tool" == Bash\(* && "$tool" != *\) ]]; then
+                    echo "✗ ALLOWED_TOOLS: $ALLOWED_TOOLS"
+                    echo "  Error: Unclosed parenthesis in Bash pattern '$tool'"
+                    tools_valid=false
+                    ((field_errors++))
+                    break
+                fi
+            done
+            if [[ "$tools_valid" == "true" ]]; then
+                echo "✓ ALLOWED_TOOLS: $ALLOWED_TOOLS (valid)"
+            fi
+        fi
+
+        # Validate MAX_LOOPS
+        if [[ -n "${MAX_LOOPS:-}" ]]; then
+            if [[ "$MAX_LOOPS" == "continuous" || "$MAX_LOOPS" =~ ^[0-9]+$ ]]; then
+                echo "✓ MAX_LOOPS: $MAX_LOOPS (valid)"
+            else
+                echo "✗ MAX_LOOPS: $MAX_LOOPS"
+                echo "  Error: Must be a positive integer or 'continuous'"
+                ((field_errors++))
+            fi
+        fi
+
+        # Validate PROJECT_SUBJECT
+        if [[ -n "${PROJECT_SUBJECT:-}" ]]; then
+            echo "✓ PROJECT_SUBJECT: \"$PROJECT_SUBJECT\" (valid)"
+        fi
+
+        # Validate DOMAIN_AGENT_COUNT
+        if [[ -n "${DOMAIN_AGENT_COUNT:-}" ]]; then
+            if [[ "$DOMAIN_AGENT_COUNT" =~ ^[0-9]+$ && "$DOMAIN_AGENT_COUNT" -ge 1 && "$DOMAIN_AGENT_COUNT" -le 10 ]]; then
+                echo "✓ DOMAIN_AGENT_COUNT: $DOMAIN_AGENT_COUNT (valid)"
+            else
+                echo "✗ DOMAIN_AGENT_COUNT: $DOMAIN_AGENT_COUNT"
+                echo "  Error: Must be an integer between 1 and 10"
+                ((field_errors++))
+            fi
+        fi
+
+        exit $field_errors
+    )
+    local field_result=$?
+    errors=$((errors + field_result))
+
+    echo ""
+    if [[ $errors -eq 0 ]]; then
+        echo "Configuration valid. Ready to run: korero"
+        return 0
+    else
+        echo "$errors error(s) found. Fix and re-run: korero --validate-config"
+        return 1
+    fi
+}
+
 # Export functions for use in other scripts
 export -f enable_log
 export -f check_existing_korero
@@ -2391,3 +2578,5 @@ export -f generate_ideation_agent_md
 export -f generate_ideation_fix_plan_md
 export -f generate_ideation_ideas_md
 export -f enable_korero_in_directory
+export -f run_quickstart_wizard
+export -f validate_korerorc_verbose

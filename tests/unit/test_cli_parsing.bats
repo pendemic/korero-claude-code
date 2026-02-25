@@ -596,3 +596,68 @@ build_korero_cmd_for_test() {
     [ "$status" -ne 0 ]
     [[ "$output" == *"No IDEAS.md found"* ]] || [[ "$output" == *"not found"* ]]
 }
+
+# =============================================================================
+# QUICKSTART WIZARD TESTS (3 tests)
+# =============================================================================
+
+@test "--quickstart flag is recognized" {
+    # Provide input for the 3 questions, but expect it to run quickstart wizard
+    run bash -c "echo -e 'coding\ntest project\nstandard' | bash '$KORERO_SCRIPT' --quickstart"
+    # Should show the quickstart header
+    [[ "$output" == *"KORERO QUICK START"* ]]
+}
+
+@test "--quickstart shows mode question" {
+    run bash -c "echo -e 'coding\ntest\nstandard' | bash '$KORERO_SCRIPT' --quickstart"
+    [[ "$output" == *"Mode:"* ]]
+    [[ "$output" == *"coding"* ]]
+    [[ "$output" == *"idea"* ]]
+}
+
+@test "--quickstart shows permission level question" {
+    run bash -c "echo -e 'coding\ntest\nstandard' | bash '$KORERO_SCRIPT' --quickstart"
+    [[ "$output" == *"Permission level"* ]]
+    [[ "$output" == *"conservative"* ]]
+    [[ "$output" == *"standard"* ]]
+    [[ "$output" == *"permissive"* ]]
+}
+
+# =============================================================================
+# VALIDATE-CONFIG VERBOSE TESTS (3 tests)
+# =============================================================================
+
+@test "--validate-config shows checkmarks for valid config" {
+    cat > .korerorc << 'EOF'
+KORERO_MODE="coding"
+ALLOWED_TOOLS="@standard"
+MAX_LOOPS="20"
+EOF
+    run bash "$KORERO_SCRIPT" --validate-config
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"✓"* ]]
+    [[ "$output" == *"Configuration valid"* ]]
+}
+
+@test "--validate-config detects invalid preset with suggestion" {
+    cat > .korerorc << 'EOF'
+ALLOWED_TOOLS="@standrd"
+EOF
+    run bash "$KORERO_SCRIPT" --validate-config
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"✗"* ]] || [[ "$output" == *"Unknown preset"* ]]
+}
+
+@test "--validate-config shows per-field validation results" {
+    cat > .korerorc << 'EOF'
+KORERO_MODE="coding"
+ALLOWED_TOOLS="@standard"
+MAX_LOOPS="continuous"
+PROJECT_SUBJECT="test project"
+EOF
+    run bash "$KORERO_SCRIPT" --validate-config
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"KORERO_MODE: coding"* ]]
+    [[ "$output" == *"ALLOWED_TOOLS: @standard"* ]]
+    [[ "$output" == *"MAX_LOOPS: continuous"* ]]
+}

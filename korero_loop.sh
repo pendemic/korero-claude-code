@@ -1994,6 +1994,8 @@ Options:
     -t, --timeout MIN       Set Claude Code execution timeout in minutes (default: $CLAUDE_TIMEOUT_MINUTES)
     --dry-run               Show what would happen without executing
     --validate              Validate .korerorc configuration and exit
+    --validate-config       Verbose config validation with per-field checkmarks
+    --quickstart            Quick 3-question setup for new users
     --start-idea N          Create branch from winning idea N and start coding loop
     --reset-circuit         Reset circuit breaker to CLOSED state
     --circuit-status        Show circuit breaker status and exit
@@ -2336,6 +2338,19 @@ while [[ $# -gt 0 ]]; do
             else
                 exit 1
             fi
+            ;;
+        --validate-config)
+            SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+            source "$SCRIPT_DIR/lib/enable_core.sh"
+            validate_korerorc_verbose ".korerorc"
+            exit $?
+            ;;
+        --quickstart)
+            SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+            source "$SCRIPT_DIR/lib/enable_core.sh"
+            source "$SCRIPT_DIR/lib/wizard_utils.sh" 2>/dev/null || true
+            run_quickstart_wizard
+            exit $?
             ;;
         --circuit-status)
             # Source the circuit breaker library
