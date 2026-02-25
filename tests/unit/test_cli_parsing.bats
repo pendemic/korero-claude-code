@@ -661,3 +661,63 @@ EOF
     [[ "$output" == *"ALLOWED_TOOLS: @standard"* ]]
     [[ "$output" == *"MAX_LOOPS: continuous"* ]]
 }
+
+# =============================================================================
+# EXAMPLES GALLERY TESTS (3 tests)
+# =============================================================================
+
+@test "--examples flag shows gallery menu" {
+    run bash -c "echo 'q' | bash '$KORERO_SCRIPT' --examples"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"KORERO EXAMPLE WORKFLOWS"* ]]
+}
+
+@test "--examples shows all 7 options" {
+    run bash -c "echo 'q' | bash '$KORERO_SCRIPT' --examples"
+    [[ "$output" == *"TypeScript"* ]]
+    [[ "$output" == *"Python"* ]]
+    [[ "$output" == *"Idea-Only"* ]]
+    [[ "$output" == *"CI/CD"* ]]
+    [[ "$output" == *"Monitoring"* ]]
+}
+
+@test "--examples shows example content for selection 1" {
+    run bash -c "printf '1\nq\n' | bash '$KORERO_SCRIPT' --examples"
+    [[ "$output" == *"TypeScript Project Setup"* ]]
+    [[ "$output" == *".korerorc"* ]]
+}
+
+# =============================================================================
+# SHOW-DEBATE TESTS (3 tests)
+# =============================================================================
+
+@test "--show-debate with no transcripts shows message" {
+    run bash "$KORERO_SCRIPT" --show-debate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"No debate transcripts"* ]]
+}
+
+@test "--show-debate shows specific loop transcript" {
+    mkdir -p .korero/debates
+    cat > .korero/debates/loop_3.md << 'EOF'
+# Debate Transcript: Loop 3
+
+**Date:** 2026-02-24
+**Status:** Complete
+
+## Phase 1: Idea Generation
+
+Test content here
+EOF
+    run bash "$KORERO_SCRIPT" --show-debate 3
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Debate Transcript: Loop 3"* ]]
+    [[ "$output" == *"Test content here"* ]]
+}
+
+@test "--show-debate with missing loop shows error" {
+    mkdir -p .korero/debates
+    run bash "$KORERO_SCRIPT" --show-debate 99
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"No debate transcript found for loop 99"* ]]
+}

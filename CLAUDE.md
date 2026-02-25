@@ -112,6 +112,14 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - `list_presets()` - Displays available presets with usage examples
    - Mixed presets + custom tools: `@standard,Bash(docker *)`
 
+9. **lib/debate_transcript.sh** - Debate transcript generation for ideation loops
+   - `init_debate_transcript(loop_num)` - Creates timestamped transcript file in `.korero/debates/`
+   - `append_transcript_section(loop_num, section_name, content)` - Appends a named section (auto-creates if missing)
+   - `finalize_debate_transcript(loop_num, winner)` - Marks transcript complete and records winning idea
+   - `get_latest_debate_loop()` - Returns highest loop number from debates directory
+   - `show_debate_transcript(loop_num|"latest")` - Displays transcript content; resolves "latest" automatically
+   - `list_debate_transcripts()` - Lists all available transcripts with status indicators
+
 ## Key Commands
 
 ### Installation
@@ -199,6 +207,13 @@ korero --start-idea 5         # Create branch from loop 5's winning idea
 # Verbose config validation with per-field checkmarks
 korero --validate-config
 
+# Example workflow gallery (interactive menu)
+korero --examples
+
+# View debate transcripts from ideation loops
+korero --show-debate          # Show latest debate transcript
+korero --show-debate 5        # Show transcript from loop 5
+
 # Circuit breaker management
 korero --reset-circuit
 korero --circuit-status
@@ -228,7 +243,7 @@ When `MAX_LOOPS` is set to a number, the bar shows completion percentage. In con
 
 ### Running Tests
 ```bash
-# Run all tests (420 tests)
+# Run all tests (721 tests)
 npm test
 
 # Run specific test suites
@@ -288,6 +303,8 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--start-idea N` - Create a feature branch from winning idea N and start coding loop
 - `--quickstart` - Quick 3-question setup wizard for new users (mode, project description, permissions)
 - `--validate-config` - Verbose configuration validation with per-field success/error checkmarks
+- `--examples` - Interactive example workflow gallery with 7 project-type templates
+- `--show-debate [N]` - Display debate transcript from loop N (or latest if N omitted)
 
 **Loop Context:**
 Each loop iteration injects context via `build_loop_context()`:
@@ -546,13 +563,13 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (697 tests across 22 files)
+### Test Files (721 tests across 23 files)
 
-**Unit Tests (561 tests):**
+**Unit Tests (585 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
-| `test_cli_parsing.bats` | 57 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea, quickstart, validate-config |
+| `test_cli_parsing.bats` | 63 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea, quickstart, validate-config, examples, show-debate |
 | `test_cli_modern.bats` | 33 | Modern CLI commands (Phase 1.1) + build_claude_command fix |
 | `test_json_parsing.bats` | 64 | JSON output format parsing + Claude CLI format + session management + permission suggestions |
 | `test_session_continuity.bats` | 44 | Session lifecycle management + circuit breaker integration + issue #91 fix |
@@ -565,6 +582,7 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_ideation_mode.bats` | 66 | Multi-agent ideation: agent generation, context-aware templates, idea storage, integration |
 | `test_permission_presets.bats` | 16 | Permission presets: expansion, mixed tools, integration with CLI args |
 | `test_korero_ideas.bats` | 31 | Ideas browsing, search, get_idea_title, sanitize_branch_name |
+| `test_debate_transcript.bats` | 18 | Debate transcript: init, append, finalize, get_latest, show, list |
 | `test_agent_protocol.bats` | 21 | Agent protocol tests |
 | `test_duration_tracking.bats` | 16 | Loop duration tracking |
 | `test_korero_config.bats` | 9 | Configuration management |
@@ -591,6 +609,7 @@ npm run test:unit
 # Specific test file
 bats tests/unit/test_cli_parsing.bats
 bats tests/unit/test_ideation_mode.bats
+bats tests/unit/test_debate_transcript.bats
 ```
 
 ## Feature Development Quality Standards

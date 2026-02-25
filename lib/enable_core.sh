@@ -328,9 +328,10 @@ create_korero_structure() {
         ".korero/protocols"
     )
 
-    # Add ideas directory for ideation modes
+    # Add ideas and debates directories for ideation modes
     if [[ "$korero_mode" == "idea" || "$korero_mode" == "coding" ]]; then
         dirs+=(".korero/ideas")
+        dirs+=(".korero/debates")
     fi
 
     for dir in "${dirs[@]}"; do

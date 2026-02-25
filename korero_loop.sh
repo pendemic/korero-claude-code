@@ -1996,6 +1996,8 @@ Options:
     --validate              Validate .korerorc configuration and exit
     --validate-config       Verbose config validation with per-field checkmarks
     --quickstart            Quick 3-question setup for new users
+    --examples              Interactive gallery of curated workflow examples
+    --show-debate [N]       Show debate transcript (latest, or loop N)
     --start-idea N          Create branch from winning idea N and start coding loop
     --reset-circuit         Reset circuit breaker to CLOSED state
     --circuit-status        Show circuit breaker status and exit
@@ -2046,6 +2048,254 @@ Help Topics:
       config           .korerorc configuration reference
 
 HELPEOF
+}
+
+# Example Gallery — curated workflow examples for new users
+show_examples_gallery() {
+    local choice
+    while true; do
+        echo ""
+        echo "╔══════════════════════════════════════════════════════╗"
+        echo "║          KORERO EXAMPLE WORKFLOWS                    ║"
+        echo "╚══════════════════════════════════════════════════════╝"
+        echo ""
+        echo "Select an example to view:"
+        echo ""
+        echo "  [1] TypeScript Project Setup"
+        echo "  [2] Python Project Setup"
+        echo "  [3] Idea-Only Mode (no code changes)"
+        echo "  [4] CI/CD Integration"
+        echo "  [5] Custom Agent Configuration"
+        echo "  [6] Permission Presets Guide"
+        echo "  [7] Monitoring & Debugging"
+        echo ""
+        read -rp "Enter number (1-7) or 'q' to quit: " choice
+        case "$choice" in
+            1) _show_example_typescript ;;
+            2) _show_example_python ;;
+            3) _show_example_idea_mode ;;
+            4) _show_example_cicd ;;
+            5) _show_example_custom_agents ;;
+            6) _show_example_presets ;;
+            7) _show_example_monitoring ;;
+            q|Q) break ;;
+            *) echo "Invalid choice." ;;
+        esac
+    done
+}
+
+_show_example_typescript() {
+    cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+EXAMPLE: TypeScript Project Setup
+═══════════════════════════════════════════════════════════
+
+Description:
+  Set up Korero for a TypeScript project with standard
+  permissions for npm, git, and testing.
+
+Quick Start:
+  cd your-project
+  korero --quickstart           # or full wizard: korero-enable
+  korero --monitor              # start with live monitoring
+
+Configuration (.korerorc):
+  KORERO_MODE="coding"
+  ALLOWED_TOOLS="@standard"
+  PROJECT_SUBJECT="TypeScript web application"
+  MAX_LOOPS="continuous"
+
+Tips:
+  - @standard preset includes npm, git, and pytest access
+  - Add custom tools: ALLOWED_TOOLS="@standard,Bash(npx *)"
+  - Run 'korero --validate-config' before first loop
+EOF
+}
+
+_show_example_python() {
+    cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+EXAMPLE: Python Project Setup
+═══════════════════════════════════════════════════════════
+
+Description:
+  Set up Korero for a Python project with pytest and pip.
+
+Quick Start:
+  cd your-project
+  korero-enable --mode coding --subject "Python application"
+  korero --monitor
+
+Configuration (.korerorc):
+  KORERO_MODE="coding"
+  ALLOWED_TOOLS="@standard,Bash(pip *),Bash(python *)"
+  PROJECT_SUBJECT="Python data pipeline"
+  MAX_LOOPS="continuous"
+
+Tips:
+  - Add Bash(pip *) and Bash(python *) for Python workflows
+  - Use 'korero --validate' to verify config syntax
+  - pytest is included in @standard preset
+EOF
+}
+
+_show_example_idea_mode() {
+    cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+EXAMPLE: Idea-Only Mode (no code changes)
+═══════════════════════════════════════════════════════════
+
+Description:
+  Run Korero's multi-agent debate without modifying code.
+  Winning ideas are saved to .korero/ideas/.
+
+Quick Start:
+  korero-enable --mode idea --subject "e-commerce platform" --loops 10
+  korero
+
+Configuration (.korerorc):
+  KORERO_MODE="idea"
+  PROJECT_SUBJECT="e-commerce platform improvements"
+  DOMAIN_AGENT_COUNT=5
+  MAX_LOOPS=10
+  ALLOWED_TOOLS="@conservative"
+
+Tips:
+  - Use @conservative (Read/Write/Edit only) for safety
+  - Browse results: korero ideas list
+  - View details: korero ideas show 3
+  - Convert to code: korero --start-idea 3
+EOF
+}
+
+_show_example_cicd() {
+    cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+EXAMPLE: CI/CD Integration
+═══════════════════════════════════════════════════════════
+
+Description:
+  Enable Korero non-interactively in CI pipelines.
+
+Quick Start:
+  # In your CI script:
+  korero-enable-ci --mode coding --subject "web app" --loops 5
+  korero --validate
+  korero
+
+Configuration (.korerorc):
+  KORERO_MODE="coding"
+  MAX_LOOPS=5
+  ALLOWED_TOOLS="@standard"
+
+Tips:
+  - Use korero-enable-ci for non-interactive setup
+  - Add --json flag for machine-readable output
+  - Set MAX_LOOPS to limit API usage in CI
+  - Use 'korero --validate' as a CI gate
+EOF
+}
+
+_show_example_custom_agents() {
+    cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+EXAMPLE: Custom Agent Configuration
+═══════════════════════════════════════════════════════════
+
+Description:
+  Configure domain-specific expert agents for better ideas.
+
+Quick Start:
+  korero-enable --mode idea --subject "ML pipeline" --agents 5
+  # Or manually edit .korero/AGENT.md after setup
+
+Configuration (.korerorc):
+  KORERO_MODE="idea"
+  PROJECT_SUBJECT="machine learning pipeline"
+  DOMAIN_AGENT_COUNT=5
+  MAX_LOOPS="continuous"
+
+Agent Structure:
+  - 1-10 domain agents (auto-generated from subject)
+  - 3 mandatory evaluators (always present):
+    * Devil's Advocate
+    * Technical Feasibility Analyst
+    * Idea Orchestrator
+
+Tips:
+  - More agents = more diverse ideas (but longer loops)
+  - Edit .korero/AGENT.md to customize agent roles
+  - Use korero-enable for guided agent setup
+EOF
+}
+
+_show_example_presets() {
+    cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+EXAMPLE: Permission Presets Guide
+═══════════════════════════════════════════════════════════
+
+Description:
+  Choose the right permission level for your workflow.
+
+Presets:
+  @conservative    Write, Read, Edit
+                   Best for: idea mode, untrusted projects
+
+  @standard        Write, Read, Edit, Bash(git *),
+                   Bash(npm *), Bash(pytest)
+                   Best for: most projects (recommended)
+
+  @permissive      Write, Read, Edit, Bash(*)
+                   Best for: complex builds, Docker, custom tools
+
+Mixing presets with custom tools:
+  ALLOWED_TOOLS="@standard,Bash(docker *),Bash(cargo *)"
+
+Examples:
+  # See current preset details
+  korero --help presets
+
+  # Validate your tools config
+  korero --validate-config
+EOF
+}
+
+_show_example_monitoring() {
+    cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+EXAMPLE: Monitoring & Debugging
+═══════════════════════════════════════════════════════════
+
+Description:
+  Monitor Korero's progress and debug issues.
+
+Monitoring:
+  korero --monitor              # Integrated tmux dashboard
+  korero --status               # Quick status check
+  korero --circuit-status       # Circuit breaker state
+
+Debugging:
+  korero --dry-run              # Preview without executing
+  korero --validate-config      # Check config for errors
+  korero --live --verbose       # Real-time output + logging
+
+Recovery:
+  korero --reset-circuit        # Reset stuck circuit breaker
+  korero --reset-session        # Clear session state
+
+Tips:
+  - Check .korero/logs/ for execution history
+  - Use --verbose for detailed progress updates
+  - Circuit breaker halts after 3 stagnant loops
+EOF
 }
 
 # Show detailed help on a specific topic
@@ -2350,6 +2600,20 @@ while [[ $# -gt 0 ]]; do
             source "$SCRIPT_DIR/lib/enable_core.sh"
             source "$SCRIPT_DIR/lib/wizard_utils.sh" 2>/dev/null || true
             run_quickstart_wizard
+            exit $?
+            ;;
+        --examples)
+            show_examples_gallery
+            exit 0
+            ;;
+        --show-debate)
+            SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+            source "$SCRIPT_DIR/lib/debate_transcript.sh"
+            if [[ -n "${2:-}" && "$2" =~ ^[0-9]+$ ]]; then
+                show_debate_transcript "$2"
+            else
+                show_debate_transcript "latest"
+            fi
             exit $?
             ;;
         --circuit-status)
