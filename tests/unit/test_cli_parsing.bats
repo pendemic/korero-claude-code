@@ -464,3 +464,260 @@ build_korero_cmd_for_test() {
     # Should only be "korero" with no extra flags
     [[ "$result" == "korero" ]]
 }
+
+# =============================================================================
+# VISUAL LOOP PROGRESS INDICATOR TESTS (4 tests)
+# =============================================================================
+
+@test "print_progress outputs correct format with loop number" {
+    BLUE='' NC=''
+    source <(sed -n '/^print_progress()/,/^}/p' "$KORERO_SCRIPT")
+    result=$(print_progress 5 "Executing" 50)
+    [[ "$result" == *"Loop 5"* ]]
+    [[ "$result" == *"50%"* ]]
+    [[ "$result" == *"Phase: Executing"* ]]
+}
+
+@test "print_progress renders correct fill level at 80%" {
+    BLUE='' NC=''
+    source <(sed -n '/^print_progress()/,/^}/p' "$KORERO_SCRIPT")
+    result=$(print_progress 3 "Testing" 80)
+    [[ "$result" == *"████████░░"* ]]
+    [[ "$result" == *"80%"* ]]
+}
+
+@test "print_progress renders empty bar at 0%" {
+    BLUE='' NC=''
+    source <(sed -n '/^print_progress()/,/^}/p' "$KORERO_SCRIPT")
+    result=$(print_progress 1 "Starting" 0)
+    [[ "$result" == *"░░░░░░░░░░"* ]]
+    [[ "$result" == *"0%"* ]]
+}
+
+@test "print_progress renders full bar at 100%" {
+    BLUE='' NC=''
+    source <(sed -n '/^print_progress()/,/^}/p' "$KORERO_SCRIPT")
+    result=$(print_progress 10 "Complete" 100)
+    [[ "$result" == *"██████████"* ]]
+    [[ "$result" == *"100%"* ]]
+}
+
+# =============================================================================
+# DRY RUN MODE TESTS (3 tests)
+# =============================================================================
+
+@test "--dry-run flag is recognized and exits cleanly" {
+    run bash "$KORERO_SCRIPT" --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DRY RUN MODE"* ]]
+}
+
+@test "--dry-run shows prompt file info" {
+    run bash "$KORERO_SCRIPT" --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Prompt file:"* ]]
+}
+
+@test "--dry-run shows allowed tools and output format" {
+    run bash "$KORERO_SCRIPT" --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Allowed tools:"* ]]
+    [[ "$output" == *"Output format:"* ]]
+}
+
+# =============================================================================
+# INLINE HELP TOPICS TESTS (5 tests)
+# =============================================================================
+
+@test "--help with topic shows topic-specific content" {
+    run bash "$KORERO_SCRIPT" --help presets
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PERMISSION PRESETS"* ]]
+    [[ "$output" == *"@conservative"* ]]
+    [[ "$output" == *"@standard"* ]]
+    [[ "$output" == *"@permissive"* ]]
+}
+
+@test "--help circuit-breaker shows circuit breaker details" {
+    run bash "$KORERO_SCRIPT" --help circuit-breaker
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CIRCUIT BREAKER"* ]]
+    [[ "$output" == *"CLOSED"* ]]
+    [[ "$output" == *"HALF_OPEN"* ]]
+    [[ "$output" == *"OPEN"* ]]
+}
+
+@test "--help with unknown topic shows error and available topics" {
+    run bash "$KORERO_SCRIPT" --help nonexistent
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Unknown help topic"* ]]
+    [[ "$output" == *"Available topics"* ]]
+}
+
+@test "--help without topic shows general help with topics list" {
+    run bash "$KORERO_SCRIPT" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Available topics:"* ]]
+    [[ "$output" == *"presets"* ]]
+}
+
+@test "--help config shows .korerorc reference" {
+    run bash "$KORERO_SCRIPT" --help config
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"KORERORC CONFIGURATION"* ]]
+    [[ "$output" == *"KORERO_MODE"* ]]
+    [[ "$output" == *"ALLOWED_TOOLS"* ]]
+}
+
+# =============================================================================
+# IDEA-TO-BRANCH WORKFLOW TESTS (4 tests)
+# =============================================================================
+
+@test "--start-idea without number shows error" {
+    run bash "$KORERO_SCRIPT" --start-idea
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"requires a positive loop number"* ]]
+}
+
+@test "--start-idea with non-numeric arg shows error" {
+    run bash "$KORERO_SCRIPT" --start-idea abc
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"requires a positive loop number"* ]]
+}
+
+@test "--start-idea with zero shows error" {
+    run bash "$KORERO_SCRIPT" --start-idea 0
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"requires a positive loop number"* ]]
+}
+
+@test "--start-idea with valid number but no IDEAS.md shows error" {
+    run bash "$KORERO_SCRIPT" --start-idea 5
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"No IDEAS.md found"* ]] || [[ "$output" == *"not found"* ]]
+}
+
+# =============================================================================
+# QUICKSTART WIZARD TESTS (3 tests)
+# =============================================================================
+
+@test "--quickstart flag is recognized" {
+    # Provide input for the 3 questions, but expect it to run quickstart wizard
+    run bash -c "echo -e 'coding\ntest project\nstandard' | bash '$KORERO_SCRIPT' --quickstart"
+    # Should show the quickstart header
+    [[ "$output" == *"KORERO QUICK START"* ]]
+}
+
+@test "--quickstart shows mode question" {
+    run bash -c "echo -e 'coding\ntest\nstandard' | bash '$KORERO_SCRIPT' --quickstart"
+    [[ "$output" == *"Mode:"* ]]
+    [[ "$output" == *"coding"* ]]
+    [[ "$output" == *"idea"* ]]
+}
+
+@test "--quickstart shows permission level question" {
+    run bash -c "echo -e 'coding\ntest\nstandard' | bash '$KORERO_SCRIPT' --quickstart"
+    [[ "$output" == *"Permission level"* ]]
+    [[ "$output" == *"conservative"* ]]
+    [[ "$output" == *"standard"* ]]
+    [[ "$output" == *"permissive"* ]]
+}
+
+# =============================================================================
+# VALIDATE-CONFIG VERBOSE TESTS (3 tests)
+# =============================================================================
+
+@test "--validate-config shows checkmarks for valid config" {
+    cat > .korerorc << 'EOF'
+KORERO_MODE="coding"
+ALLOWED_TOOLS="@standard"
+MAX_LOOPS="20"
+EOF
+    run bash "$KORERO_SCRIPT" --validate-config
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"✓"* ]]
+    [[ "$output" == *"Configuration valid"* ]]
+}
+
+@test "--validate-config detects invalid preset with suggestion" {
+    cat > .korerorc << 'EOF'
+ALLOWED_TOOLS="@standrd"
+EOF
+    run bash "$KORERO_SCRIPT" --validate-config
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"✗"* ]] || [[ "$output" == *"Unknown preset"* ]]
+}
+
+@test "--validate-config shows per-field validation results" {
+    cat > .korerorc << 'EOF'
+KORERO_MODE="coding"
+ALLOWED_TOOLS="@standard"
+MAX_LOOPS="continuous"
+PROJECT_SUBJECT="test project"
+EOF
+    run bash "$KORERO_SCRIPT" --validate-config
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"KORERO_MODE: coding"* ]]
+    [[ "$output" == *"ALLOWED_TOOLS: @standard"* ]]
+    [[ "$output" == *"MAX_LOOPS: continuous"* ]]
+}
+
+# =============================================================================
+# EXAMPLES GALLERY TESTS (3 tests)
+# =============================================================================
+
+@test "--examples flag shows gallery menu" {
+    run bash -c "echo 'q' | bash '$KORERO_SCRIPT' --examples"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"KORERO EXAMPLE WORKFLOWS"* ]]
+}
+
+@test "--examples shows all 7 options" {
+    run bash -c "echo 'q' | bash '$KORERO_SCRIPT' --examples"
+    [[ "$output" == *"TypeScript"* ]]
+    [[ "$output" == *"Python"* ]]
+    [[ "$output" == *"Idea-Only"* ]]
+    [[ "$output" == *"CI/CD"* ]]
+    [[ "$output" == *"Monitoring"* ]]
+}
+
+@test "--examples shows example content for selection 1" {
+    run bash -c "printf '1\nq\n' | bash '$KORERO_SCRIPT' --examples"
+    [[ "$output" == *"TypeScript Project Setup"* ]]
+    [[ "$output" == *".korerorc"* ]]
+}
+
+# =============================================================================
+# SHOW-DEBATE TESTS (3 tests)
+# =============================================================================
+
+@test "--show-debate with no transcripts shows message" {
+    run bash "$KORERO_SCRIPT" --show-debate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"No debate transcripts"* ]]
+}
+
+@test "--show-debate shows specific loop transcript" {
+    mkdir -p .korero/debates
+    cat > .korero/debates/loop_3.md << 'EOF'
+# Debate Transcript: Loop 3
+
+**Date:** 2026-02-24
+**Status:** Complete
+
+## Phase 1: Idea Generation
+
+Test content here
+EOF
+    run bash "$KORERO_SCRIPT" --show-debate 3
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Debate Transcript: Loop 3"* ]]
+    [[ "$output" == *"Test content here"* ]]
+}
+
+@test "--show-debate with missing loop shows error" {
+    mkdir -p .korero/debates
+    run bash "$KORERO_SCRIPT" --show-debate 99
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"No debate transcript found for loop 99"* ]]
+}

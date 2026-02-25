@@ -744,23 +744,113 @@ korero --status
 tail -f .korero/logs/korero.log
 ```
 
-### Common Issues
+### Frequently Asked Questions
 
-- **Rate Limits** - Korero automatically waits and displays countdown
-- **5-Hour API Limit** - Korero detects and prompts for user action (wait or exit)
-- **Stuck Loops** - Check `fix_plan.md` for unclear or conflicting tasks
-- **Early Exit** - Review exit thresholds if Korero stops too soon
-- **Premature Exit** - Check if Claude is setting `EXIT_SIGNAL: false` (Korero now respects this)
-- **Execution Timeouts** - Increase `--timeout` value for complex operations
-- **Missing Dependencies** - Ensure Claude Code CLI and tmux are installed
-- **tmux Session Lost** - Use `tmux list-sessions` and `tmux attach` to reconnect
-- **Session Expired** - Sessions expire after 24 hours by default; use `--reset-session` to start fresh
-- **timeout: command not found (macOS)** - Install GNU coreutils: `brew install coreutils`
-- **Permission Denied** - Korero halts when Claude Code is denied permission and shows exact fix suggestions:
-  1. Korero auto-suggests the specific `ALLOWED_TOOLS` pattern needed (e.g., `Bash(npm *)`)
-  2. Use a preset: `ALLOWED_TOOLS="@standard"` (git, npm, pytest) or `@permissive` (all Bash)
-  3. Or mix presets with custom tools: `ALLOWED_TOOLS="@standard,Bash(docker *)"`
-  4. Run `korero --reset-session` after updating `.korerorc`, then restart with `korero --monitor`
+#### Setup & Installation
+
+**Q: Why do I get "command not found" after installation?**
+
+Your shell hasn't loaded the new PATH. Either:
+- Run `source ~/.bashrc` (or `~/.zshrc` for zsh)
+- Or restart your terminal
+
+**Q: Korero says "bad array subscript" or "declare: -A: invalid option" on macOS. What do I do?**
+
+macOS ships with Bash 3.2 which doesn't support associative arrays. Install a newer version:
+```bash
+brew install bash
+```
+
+**Q: How do I uninstall Korero?**
+
+```bash
+./install.sh uninstall
+```
+
+This removes all installed files from `~/.local/bin` and `~/.korero`.
+
+#### Loop Execution
+
+**Q: Why does my loop exit immediately?**
+
+Check `korero --status` for current state. Common causes:
+1. **Rate limit exhausted** — Wait for hourly reset (shown in status)
+2. **Circuit breaker OPEN** — Run `korero --circuit-status` to see why, fix the issue, then `korero --reset-circuit`
+3. **EXIT_SIGNAL=true** — Previous session set exit signal. Run `korero --reset-session` to clear
+
+**Q: What does "circuit breaker OPEN" mean?**
+
+The circuit breaker detected a stagnation pattern (no progress, repeated errors, or output decline) and halted the loop to prevent runaway API usage. Run `korero --circuit-status` for details and recovery suggestions. After fixing the underlying issue, run `korero --reset-circuit` to resume.
+
+**Q: How do I increase the rate limit?**
+
+Add to your `.korerorc`:
+```bash
+MAX_CALLS_PER_HOUR=200
+```
+
+Note: Higher limits mean faster API cost accumulation. The default (100) balances productivity with cost control.
+
+**Q: Why do I keep getting permission denied errors?**
+
+Claude Code needs permission for certain operations. The error message suggests the exact pattern to add. Update `.korerorc`:
+```bash
+ALLOWED_TOOLS="@standard"
+```
+
+Or mix presets with custom tools:
+```bash
+ALLOWED_TOOLS="@standard,Bash(docker *),Bash(cargo *)"
+```
+
+Available presets: `@conservative` (edit only), `@standard` (git, npm, pytest), `@permissive` (all Bash).
+
+#### Configuration
+
+**Q: What can I configure?**
+
+Run `korero --config show` to see all configuration options with their current values, defaults, and sources. Run `korero --config help` for descriptions.
+
+**Q: How do I run in idea-only mode (no code changes)?**
+
+Add to `.korerorc`:
+```bash
+KORERO_MODE="idea"
+```
+
+In this mode, Korero generates and debates ideas but doesn't implement them. Winning ideas are saved to `.korero/IDEAS.md`.
+
+**Q: Where are configuration files located?**
+
+- **Project config**: `.korerorc` in your project root
+- **Korero files**: `.korero/` directory in your project
+- **Global installation**: `~/.korero/` and `~/.local/bin/`
+
+#### Circuit Breaker
+
+**Q: How do I make the circuit breaker less sensitive?**
+
+Increase thresholds in `.korerorc`:
+```bash
+CB_NO_PROGRESS_THRESHOLD=5   # Default: 3
+CB_SAME_ERROR_THRESHOLD=8    # Default: 5
+```
+
+**Q: How do I see circuit breaker history?**
+
+```bash
+korero --circuit-status
+```
+
+Shows current state, threshold proximity, and reason for last state change.
+
+#### Other Common Issues
+
+- **Execution Timeouts** — Increase `--timeout` value for complex operations
+- **tmux Session Lost** — Use `tmux list-sessions` and `tmux attach` to reconnect
+- **Session Expired** — Sessions expire after 24 hours; use `--reset-session` to start fresh
+- **timeout: command not found (macOS)** — Install GNU coreutils: `brew install coreutils`
+- **Missing Dependencies** — Ensure Claude Code CLI, jq, and tmux are installed
 
 ## Contributing
 

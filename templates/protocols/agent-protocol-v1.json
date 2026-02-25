@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "korero-agent-protocol-v1",
+  "title": "Korero Agent Communication Protocol v1",
+  "description": "Schema for inter-agent messages during multi-agent ideation loops. This protocol defines the structure for proposals, challenges, defenses, evaluations, and selections exchanged between domain agents and evaluation agents.",
+
+  "definitions": {
+    "agentId": {
+      "type": "string",
+      "description": "Identifier for an agent participating in the ideation process. Domain agent IDs are project-specific; evaluation agent IDs are fixed."
+    },
+    "evaluationAgentId": {
+      "type": "string",
+      "enum": [
+        "devils-advocate",
+        "technical-feasibility-analyst",
+        "idea-orchestrator"
+      ],
+      "description": "The three mandatory evaluation agents present in every Korero project."
+    },
+    "messageType": {
+      "type": "string",
+      "enum": ["PROPOSAL", "CHALLENGE", "DEFENSE", "EVALUATION", "SELECTION"]
+    },
+    "ideaType": {
+      "type": "string",
+      "enum": ["Usability Improvement", "New Feature", "Bug Fix", "Refactoring", "Performance", "Documentation"]
+    },
+
+    "baseMessage": {
+      "type": "object",
+      "required": ["messageId", "type", "sender", "timestamp", "loop"],
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique identifier for this message."
+        },
+        "type": { "$ref": "#/definitions/messageType" },
+        "sender": { "$ref": "#/definitions/agentId" },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of when the message was created."
+        },
+        "loop": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The loop iteration number in which this message was produced."
+        }
+      }
+    },
+
+    "proposal": {
+      "description": "A domain agent's idea submission during Phase 1 (Idea Generation).",
+      "allOf": [
+        { "$ref": "#/definitions/baseMessage" },
+        {
+          "type": "object",
+          "required": ["title", "ideaType", "brief", "description"],
+          "properties": {
+            "type": { "const": "PROPOSAL" },
+            "title": {
+              "type": "string",
+              "maxLength": 100,
+              "description": "Short title for the proposed idea."
+            },
+            "category": {
+              "type": "string",
+              "description": "Project-specific category for this idea."
+            },
+            "ideaType": { "$ref": "#/definitions/ideaType" },
+            "brief": {
+              "type": "string",
+              "maxLength": 500,
+              "description": "One-paragraph summary of the idea."
+            },
+            "description": {
+              "type": "string",
+              "description": "Full description including rationale and implementation approach."
+            },
+            "filesAffected": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "List of file paths this idea would modify or create."
+            }
+          }
+        }
+      ]
+    },
+
+    "challenge": {
+      "description": "An evaluator's critique of a proposal during Phase 2 (Structured Debate).",
+      "allOf": [
+        { "$ref": "#/definitions/baseMessage" },
+        {
+          "type": "object",
+          "required": ["proposalRef", "concern", "question"],
+          "properties": {
+            "type": { "const": "CHALLENGE" },
+            "proposalRef": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The messageId of the proposal being challenged."
+            },
+            "concern": {
+              "type": "string",
+              "description": "The specific concern or weakness identified."
+            },
+            "question": {
+              "type": "string",
+              "description": "A question the proposal author must address."
+            }
+          }
+        }
+      ]
+    },
+
+    "defense": {
+      "description": "A proposal author's response to a challenge during Phase 2 (Rebuttal round).",
+      "allOf": [
+        { "$ref": "#/definitions/baseMessage" },
+        {
+          "type": "object",
+          "required": ["proposalRef", "challengeRef", "response"],
+          "properties": {
+            "type": { "const": "DEFENSE" },
+            "proposalRef": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The messageId of the original proposal."
+            },
+            "challengeRef": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The messageId of the challenge being responded to."
+            },
+            "response": {
+              "type": "string",
+              "description": "The author's rebuttal addressing the concern."
+            },
+            "scopeReduction": {
+              "type": "string",
+              "description": "Any scope narrowing proposed to address the concern."
+            },
+            "evidenceCited": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "References to code, docs, or patterns supporting the defense."
+            }
+          }
+        }
+      ]
+    },
+
+    "evaluation": {
+      "description": "Structured scoring from an evaluation agent during Phase 2 (Evaluation round).",
+      "allOf": [
+        { "$ref": "#/definitions/baseMessage" },
+        {
+          "type": "object",
+          "required": ["proposalRef", "scores", "verdict"],
+          "properties": {
+            "type": { "const": "EVALUATION" },
+            "proposalRef": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The messageId of the proposal being evaluated."
+            },
+            "scores": {
+              "type": "object",
+              "description": "Scoring criteria. Projects may define custom criteria via CONFIG_SCORING.",
+              "properties": {
+                "userDemand": { "type": "integer", "minimum": 1, "maximum": 5 },
+                "usabilityRisk": { "type": "integer", "minimum": 1, "maximum": 5 },
+                "complexityCreep": { "type": "integer", "minimum": 1, "maximum": 5 },
+                "implementationEffort": { "enum": ["S", "M", "L", "XL"] },
+                "architectureFit": { "type": "integer", "minimum": 1, "maximum": 5 },
+                "breakingChangeRisk": { "enum": ["Low", "Medium", "High"] }
+              },
+              "additionalProperties": true
+            },
+            "verdict": {
+              "enum": ["STRONG", "MODERATE", "WEAK", "FEASIBLE", "CHALLENGING", "IMPRACTICAL"],
+              "description": "Overall assessment of the proposal."
+            },
+            "rationale": {
+              "type": "string",
+              "description": "Explanation of the verdict."
+            }
+          }
+        }
+      ]
+    },
+
+    "selection": {
+      "description": "The Idea Orchestrator's final ranking and winner selection during Phase 2 (Final Selection).",
+      "allOf": [
+        { "$ref": "#/definitions/baseMessage" },
+        {
+          "type": "object",
+          "required": ["winnerId", "rankings", "rationale"],
+          "properties": {
+            "type": { "const": "SELECTION" },
+            "winnerId": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The messageId of the winning proposal."
+            },
+            "rankings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["rank", "proposalRef", "score"],
+                "properties": {
+                  "rank": { "type": "integer", "minimum": 1 },
+                  "proposalRef": { "type": "string", "format": "uuid" },
+                  "score": { "type": "number" }
+                }
+              },
+              "description": "All proposals ranked by final weighted score."
+            },
+            "rationale": {
+              "type": "string",
+              "description": "Explanation of why the winner was selected."
+            },
+            "runnerUp": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The messageId of the second-place proposal."
+            }
+          }
+        }
+      ]
+    }
+  }
+}

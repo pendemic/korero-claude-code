@@ -76,6 +76,8 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - Automatic detection with caching for performance
 
 5. **lib/enable_core.sh** - Shared logic for korero enable commands
+   - Configuration validation: `validate_korerorc()` - line-by-line validation, `validate_korerorc_verbose()` - rich per-field checkmark output
+   - Quick Start: `run_quickstart_wizard()` - streamlined 3-question setup for new users
    - Idempotency checks: `check_existing_korero()`, `is_korero_enabled()`
    - Safe file operations: `safe_create_file()`, `safe_create_dir()`
    - Project detection: `detect_project_context()`, `detect_git_info()`, `detect_task_sources()`
@@ -109,6 +111,23 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - `expand_allowed_tools()` - Splits by comma, expands `@`-prefixed items, passes through others
    - `list_presets()` - Displays available presets with usage examples
    - Mixed presets + custom tools: `@standard,Bash(docker *)`
+
+9. **lib/debate_transcript.sh** - Debate transcript generation for ideation loops
+   - `init_debate_transcript(loop_num)` - Creates timestamped transcript file in `.korero/debates/`
+   - `append_transcript_section(loop_num, section_name, content)` - Appends a named section (auto-creates if missing)
+   - `finalize_debate_transcript(loop_num, winner)` - Marks transcript complete and records winning idea
+   - `get_latest_debate_loop()` - Returns highest loop number from debates directory
+   - `show_debate_transcript(loop_num|"latest")` - Displays transcript content; resolves "latest" automatically
+   - `list_debate_transcripts()` - Lists all available transcripts with status indicators
+
+10. **lib/health_check.sh** - Environment prerequisite validation
+    - `run_health_check()` - Runs all checks and prints formatted report; exits 0 (all pass) or N (issues found)
+    - `check_tool(cmd, name, hint)` - Checks if a CLI tool is installed; shows version or install hint
+    - `check_timeout_tool()` - Checks for `timeout` or `gtimeout` (cross-platform)
+    - `check_git_config()` - Validates `git config user.name` and `user.email` are set
+    - `check_permissions()` - Checks `.korero/` directory write access
+    - `check_network()` - Tests connectivity to `api.anthropic.com` via curl (5s timeout)
+    - `check_config()` - Validates `.korerorc` bash syntax via `bash -n`
 
 ## Key Commands
 
@@ -177,6 +196,37 @@ korero --monitor --calls 50 --prompt my_custom_prompt.md
 # Check current status
 korero --status
 
+# Dry run - show what would happen without executing
+korero --dry-run
+
+# Configuration validation
+korero --validate
+
+# Inline help topics
+korero --help presets         # Permission preset details
+korero --help circuit-breaker # Circuit breaker states and thresholds
+korero --help config          # .korerorc configuration reference
+
+# Quick start for new users (3-question setup)
+korero --quickstart
+
+# Start coding from an ideation idea
+korero --start-idea 5         # Create branch from loop 5's winning idea
+
+# Verbose config validation with per-field checkmarks
+korero --validate-config
+
+# Example workflow gallery (interactive menu)
+korero --examples
+
+# View debate transcripts from ideation loops
+korero --show-debate          # Show latest debate transcript
+korero --show-debate 5        # Show transcript from loop 5
+
+# Environment health check
+korero --health-check            # Validate all prerequisites
+korero --health-check || exit 1  # Use in CI to fail fast
+
 # Circuit breaker management
 korero --reset-circuit
 korero --circuit-status
@@ -198,9 +248,15 @@ tmux list-sessions
 tmux attach -t <session-name>
 ```
 
+Each loop iteration displays a visual progress indicator:
+```
+[████████░░] 80% | Loop 8 | Phase: Executing (8/10)
+```
+When `MAX_LOOPS` is set to a number, the bar shows completion percentage. In continuous mode, it shows 0% with the current loop number.
+
 ### Running Tests
 ```bash
-# Run all tests (420 tests)
+# Run all tests (744 tests)
 npm test
 
 # Run specific test suites
@@ -256,11 +312,19 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--output-format json|text` - Set Claude output format (default: json)
 - `--allowed-tools "Write,Read,Bash(git *)"` - Restrict allowed tools
 - `--no-continue` - Disable session continuity, start fresh each loop
+- `--help <topic>` - Show detailed help on a specific topic (presets, circuit-breaker, session, tools, modes, exit-detection, rate-limiting, config)
+- `--start-idea N` - Create a feature branch from winning idea N and start coding loop
+- `--quickstart` - Quick 3-question setup wizard for new users (mode, project description, permissions)
+- `--validate-config` - Verbose configuration validation with per-field success/error checkmarks
+- `--examples` - Interactive example workflow gallery with 7 project-type templates
+- `--show-debate [N]` - Display debate transcript from loop N (or latest if N omitted)
+- `--health-check` - Validate all prerequisites (Claude CLI, jq, git, permissions, network, config)
 
 **Loop Context:**
 Each loop iteration injects context via `build_loop_context()`:
 - Current loop number
 - Remaining tasks from fix_plan.md
+- Idea context (when started via `--start-idea`)
 - Circuit breaker state (if not CLOSED)
 - Previous loop work summary
 
@@ -470,7 +534,10 @@ When Claude Code is denied permission to execute commands (e.g., `npm install`),
    - `permission_denial_count` (integer)
    - `denied_commands` (array of command strings)
 3. **Exit behavior**: When `has_permission_denials=true`, Korero exits with reason "permission_denied"
-4. **Automatic fix suggestions**: `format_permission_denial_message()` shows per-command fixes with exact ALLOWED_TOOLS patterns
+4. **Progressive fix suggestions**: `format_permission_denial_message()` presents three numbered options:
+   - **Option 1: Quick fix** - Adds only the specific patterns needed for the denied commands
+   - **Option 2: @standard preset** (recommended) - Covers git, npm, pytest for most projects
+   - **Option 3: @permissive** - All Bash commands for maximum flexibility
 5. **Command mapping**: `suggest_permission_fix()` maps common commands to wildcard patterns (e.g., `npm install` → `Bash(npm *)`)
 
 **Example `.korerorc` tool patterns:**
@@ -510,24 +577,31 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (555 tests across 17 files)
+### Test Files (744 tests across 24 files)
 
-**Unit Tests (419 tests):**
+**Unit Tests (608 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
-| `test_cli_parsing.bats` | 35 | CLI argument parsing for all flags |
+| `test_cli_parsing.bats` | 63 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea, quickstart, validate-config, examples, show-debate |
 | `test_cli_modern.bats` | 33 | Modern CLI commands (Phase 1.1) + build_claude_command fix |
-| `test_json_parsing.bats` | 60 | JSON output format parsing + Claude CLI format + session management + permission suggestions |
+| `test_json_parsing.bats` | 64 | JSON output format parsing + Claude CLI format + session management + permission suggestions |
 | `test_session_continuity.bats` | 44 | Session lifecycle management + circuit breaker integration + issue #91 fix |
-| `test_exit_detection.bats` | 53 | Exit signal detection + EXIT_SIGNAL-based completion indicators + progress detection |
-| `test_rate_limiting.bats` | 15 | Rate limiting behavior |
-| `test_enable_core.bats` | 32 | Enable core library (idempotency, project detection, template generation) |
+| `test_exit_detection.bats` | 58 | Exit signal detection + EXIT_SIGNAL-based completion indicators + progress detection |
+| `test_rate_limiting.bats` | 25 | Rate limiting behavior |
+| `test_enable_core.bats` | 45 | Enable core library (idempotency, project detection, template generation, config validation, quickstart, verbose validation) |
 | `test_task_sources.bats` | 23 | Task sources (beads, GitHub, PRD extraction, normalization) |
 | `test_korero_enable.bats` | 22 | Korero enable integration tests (wizard, CI version, JSON output) |
 | `test_wizard_utils.bats` | 20 | Wizard utility functions (stdout/stderr separation, prompt functions) |
 | `test_ideation_mode.bats` | 66 | Multi-agent ideation: agent generation, context-aware templates, idea storage, integration |
 | `test_permission_presets.bats` | 16 | Permission presets: expansion, mixed tools, integration with CLI args |
+| `test_korero_ideas.bats` | 31 | Ideas browsing, search, get_idea_title, sanitize_branch_name |
+| `test_debate_transcript.bats` | 18 | Debate transcript: init, append, finalize, get_latest, show, list |
+| `test_health_check.bats` | 23 | Health check: tool detection, git config, permissions, network, config, CLI flag |
+| `test_agent_protocol.bats` | 21 | Agent protocol tests |
+| `test_duration_tracking.bats` | 16 | Loop duration tracking |
+| `test_korero_config.bats` | 9 | Configuration management |
+| `test_korero_status.bats` | 11 | Status reporting |
 
 **Integration Tests (136 tests):**
 
@@ -550,6 +624,8 @@ npm run test:unit
 # Specific test file
 bats tests/unit/test_cli_parsing.bats
 bats tests/unit/test_ideation_mode.bats
+bats tests/unit/test_debate_transcript.bats
+bats tests/unit/test_health_check.bats
 ```
 
 ## Feature Development Quality Standards

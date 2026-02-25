@@ -898,7 +898,8 @@ suggest_permission_fix() {
     esac
 }
 
-# Format permission denial message with fix suggestions
+# Format permission denial message with progressive disclosure fix suggestions
+# Presents three numbered options: quick fix, standard preset, permissive preset
 # Usage: format_permission_denial_message "npm install" "git push"
 # Outputs actionable fix with per-command suggestions and composite ALLOWED_TOOLS
 format_permission_denial_message() {
@@ -906,15 +907,16 @@ format_permission_denial_message() {
     local current_tools="${CLAUDE_ALLOWED_TOOLS:-Write,Read,Edit}"
 
     echo "========================================="
-    echo "Permission denied for the following commands:"
+    echo "PERMISSION DENIED - Choose a fix:"
+    echo "========================================="
     echo ""
+    echo "Commands denied:"
 
     local new_tools="$current_tools"
     for cmd in "${denied_commands[@]}"; do
         local suggestion
         suggestion=$(suggest_permission_fix "$cmd")
         echo "  - $cmd"
-        echo "    Suggested fix: Add '$suggestion' to ALLOWED_TOOLS"
         # Build composite tools string
         if [[ "$new_tools" != *"$suggestion"* ]]; then
             new_tools="$new_tools,$suggestion"
@@ -922,14 +924,21 @@ format_permission_denial_message() {
     done
 
     echo ""
-    echo "To fix, update ALLOWED_TOOLS in .korerorc:"
+    echo "-----------------------------------------"
+    echo "Option 1: Quick fix (minimal permissions)"
+    echo "  Add only what's needed for these commands:"
     echo "  ALLOWED_TOOLS=\"$new_tools\""
     echo ""
-    echo "Or use a preset for broader permissions:"
-    echo "  ALLOWED_TOOLS=\"@standard\"              # Read, Write, Edit, git, npm, pytest"
-    echo "  ALLOWED_TOOLS=\"@permissive\"             # All Bash commands"
+    echo "Option 2: Use @standard preset (recommended)"
+    echo "  Covers git, npm, pytest - good for most projects:"
+    echo "  ALLOWED_TOOLS=\"@standard\""
     echo ""
-    echo "Then restart the loop: korero"
+    echo "Option 3: Go permissive (all Bash commands)"
+    echo "  Maximum flexibility, less restrictive:"
+    echo "  ALLOWED_TOOLS=\"@permissive\""
+    echo "-----------------------------------------"
+    echo ""
+    echo "Edit .korerorc with your choice, then restart: korero"
     echo "========================================="
 }
 

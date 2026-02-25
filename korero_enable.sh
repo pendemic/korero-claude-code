@@ -350,6 +350,9 @@ phase_mode_selection() {
 phase_subject_and_agents() {
     print_header "Project Subject & Agents" "Phase 3 of 7"
 
+    # Gather project context early for context-aware agent generation
+    PROJECT_CONTEXT=$(gather_project_context "$(pwd)")
+
     # --- Subject ---
     if [[ -z "$PROJECT_SUBJECT" ]]; then
         if [[ "$NON_INTERACTIVE" == "true" ]]; then
@@ -424,7 +427,7 @@ phase_subject_and_agents() {
         # Auto-generate
         echo "Generating domain expert agents..."
         if [[ -n "$PROJECT_SUBJECT" ]]; then
-            GENERATED_AGENTS=$(generate_domain_agents "$PROJECT_SUBJECT" "$DETECTED_PROJECT_TYPE" "$AGENT_COUNT")
+            GENERATED_AGENTS=$(generate_domain_agents "$PROJECT_SUBJECT" "$DETECTED_PROJECT_TYPE" "$AGENT_COUNT" "$PROJECT_CONTEXT")
             if [[ $? -eq 0 ]]; then
                 print_success "Auto-generated $AGENT_COUNT domain expert agents"
             else
@@ -675,6 +678,7 @@ phase_file_generation() {
     export ENABLE_AGENT_COUNT="$AGENT_COUNT"
     export ENABLE_MAX_LOOPS="$MAX_LOOPS"
     export ENABLE_FOCUS_CONSTRAINT="${FOCUS_CONSTRAINT:-}"
+    export ENABLE_PROJECT_CONTEXT="${PROJECT_CONTEXT:-}"
 
     # Run core enable logic
     echo "Creating Korero configuration..."

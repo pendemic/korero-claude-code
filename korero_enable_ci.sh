@@ -430,11 +430,15 @@ main() {
             ;;
     esac
 
+    # Gather project context for context-aware agent generation
+    local project_context=""
+    project_context=$(gather_project_context "$(pwd)")
+
     # Generate domain agents for ideation modes
     local generated_agents=""
     if [[ -n "$PROJECT_SUBJECT" ]]; then
         output_message "Generating domain agents..."
-        generated_agents=$(generate_domain_agents "$PROJECT_SUBJECT" "$DETECTED_PROJECT_TYPE" "$AGENT_COUNT" 2>/dev/null)
+        generated_agents=$(generate_domain_agents "$PROJECT_SUBJECT" "$DETECTED_PROJECT_TYPE" "$AGENT_COUNT" "$project_context" 2>/dev/null)
     else
         generated_agents=$(_generate_generic_agents "$AGENT_COUNT")
     fi
@@ -451,6 +455,7 @@ main() {
     export ENABLE_AGENT_COUNT="$AGENT_COUNT"
     export ENABLE_MAX_LOOPS="$MAX_LOOPS"
     export ENABLE_FOCUS_CONSTRAINT="${FOCUS_CONSTRAINT:-}"
+    export ENABLE_PROJECT_CONTEXT="$project_context"
 
     # Run core enable logic
     output_message ""
