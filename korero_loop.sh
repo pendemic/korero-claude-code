@@ -17,6 +17,7 @@ source "$SCRIPT_DIR/lib/timeout_utils.sh"
 source "$SCRIPT_DIR/lib/response_analyzer.sh"
 source "$SCRIPT_DIR/lib/circuit_breaker.sh"
 source "$SCRIPT_DIR/lib/permission_presets.sh"
+source "$SCRIPT_DIR/lib/health_check.sh"
 
 # Configuration
 # Korero-specific files live in .korero/ subfolder
@@ -1998,6 +1999,7 @@ Options:
     --quickstart            Quick 3-question setup for new users
     --examples              Interactive gallery of curated workflow examples
     --show-debate [N]       Show debate transcript (latest, or loop N)
+    --health-check          Validate environment prerequisites (Claude CLI, jq, git, network)
     --start-idea N          Create branch from winning idea N and start coding loop
     --reset-circuit         Reset circuit breaker to CLOSED state
     --circuit-status        Show circuit breaker status and exit
@@ -2605,6 +2607,10 @@ while [[ $# -gt 0 ]]; do
         --examples)
             show_examples_gallery
             exit 0
+            ;;
+        --health-check)
+            run_health_check
+            exit $?
             ;;
         --show-debate)
             SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"

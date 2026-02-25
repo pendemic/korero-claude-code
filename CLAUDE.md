@@ -120,6 +120,15 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - `show_debate_transcript(loop_num|"latest")` - Displays transcript content; resolves "latest" automatically
    - `list_debate_transcripts()` - Lists all available transcripts with status indicators
 
+10. **lib/health_check.sh** - Environment prerequisite validation
+    - `run_health_check()` - Runs all checks and prints formatted report; exits 0 (all pass) or N (issues found)
+    - `check_tool(cmd, name, hint)` - Checks if a CLI tool is installed; shows version or install hint
+    - `check_timeout_tool()` - Checks for `timeout` or `gtimeout` (cross-platform)
+    - `check_git_config()` - Validates `git config user.name` and `user.email` are set
+    - `check_permissions()` - Checks `.korero/` directory write access
+    - `check_network()` - Tests connectivity to `api.anthropic.com` via curl (5s timeout)
+    - `check_config()` - Validates `.korerorc` bash syntax via `bash -n`
+
 ## Key Commands
 
 ### Installation
@@ -214,6 +223,10 @@ korero --examples
 korero --show-debate          # Show latest debate transcript
 korero --show-debate 5        # Show transcript from loop 5
 
+# Environment health check
+korero --health-check            # Validate all prerequisites
+korero --health-check || exit 1  # Use in CI to fail fast
+
 # Circuit breaker management
 korero --reset-circuit
 korero --circuit-status
@@ -243,7 +256,7 @@ When `MAX_LOOPS` is set to a number, the bar shows completion percentage. In con
 
 ### Running Tests
 ```bash
-# Run all tests (721 tests)
+# Run all tests (744 tests)
 npm test
 
 # Run specific test suites
@@ -305,6 +318,7 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--validate-config` - Verbose configuration validation with per-field success/error checkmarks
 - `--examples` - Interactive example workflow gallery with 7 project-type templates
 - `--show-debate [N]` - Display debate transcript from loop N (or latest if N omitted)
+- `--health-check` - Validate all prerequisites (Claude CLI, jq, git, permissions, network, config)
 
 **Loop Context:**
 Each loop iteration injects context via `build_loop_context()`:
@@ -563,9 +577,9 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (721 tests across 23 files)
+### Test Files (744 tests across 24 files)
 
-**Unit Tests (585 tests):**
+**Unit Tests (608 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
@@ -583,6 +597,7 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_permission_presets.bats` | 16 | Permission presets: expansion, mixed tools, integration with CLI args |
 | `test_korero_ideas.bats` | 31 | Ideas browsing, search, get_idea_title, sanitize_branch_name |
 | `test_debate_transcript.bats` | 18 | Debate transcript: init, append, finalize, get_latest, show, list |
+| `test_health_check.bats` | 23 | Health check: tool detection, git config, permissions, network, config, CLI flag |
 | `test_agent_protocol.bats` | 21 | Agent protocol tests |
 | `test_duration_tracking.bats` | 16 | Loop duration tracking |
 | `test_korero_config.bats` | 9 | Configuration management |
@@ -610,6 +625,7 @@ npm run test:unit
 bats tests/unit/test_cli_parsing.bats
 bats tests/unit/test_ideation_mode.bats
 bats tests/unit/test_debate_transcript.bats
+bats tests/unit/test_health_check.bats
 ```
 
 ## Feature Development Quality Standards
