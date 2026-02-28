@@ -183,11 +183,29 @@ validate_korerorc() {
         fi
 
         # Check KORERO_MODE validity
-        if [[ "$line" =~ KORERO_MODE=[\"\']*([a-zA-Z]+) ]]; then
+        if [[ "$line" =~ KORERO_MODE=[\"\']*([a-zA-Z-]+) ]]; then
             local mode="${BASH_REMATCH[1]}"
-            if [[ ! "$mode" =~ ^(coding|idea)$ ]]; then
+            if [[ ! "$mode" =~ ^(coding|idea|heavy-coding|heavy-idea)$ ]]; then
                 echo "$config_file:$line_num - Invalid KORERO_MODE '$mode'" >&2
-                echo "  Valid modes: coding, idea" >&2
+                echo "  Valid modes: coding, idea, heavy-coding, heavy-idea" >&2
+                ((errors++))
+            fi
+        fi
+
+        # Check CODEX_TIMEOUT validity (heavy modes)
+        if [[ "$line" =~ CODEX_TIMEOUT=[\"\']*([0-9]+) ]]; then
+            local codex_timeout="${BASH_REMATCH[1]}"
+            if [[ "$codex_timeout" -lt 1 || "$codex_timeout" -gt 120 ]]; then
+                echo "$config_file:$line_num - CODEX_TIMEOUT must be between 1 and 120" >&2
+                ((errors++))
+            fi
+        fi
+
+        # Check DEBATE_ROUNDS validity (heavy modes)
+        if [[ "$line" =~ DEBATE_ROUNDS=[\"\']*([0-9]+) ]]; then
+            local debate_rounds="${BASH_REMATCH[1]}"
+            if [[ "$debate_rounds" -lt 1 || "$debate_rounds" -gt 3 ]]; then
+                echo "$config_file:$line_num - DEBATE_ROUNDS must be between 1 and 3" >&2
                 ((errors++))
             fi
         fi
@@ -328,8 +346,8 @@ create_korero_structure() {
         ".korero/protocols"
     )
 
-    # Add ideas and debates directories for ideation modes
-    if [[ "$korero_mode" == "idea" || "$korero_mode" == "coding" ]]; then
+    # Add ideas and debates directories for ideation modes (including heavy modes)
+    if [[ "$korero_mode" == "idea" || "$korero_mode" == "coding" || "$korero_mode" == "heavy-idea" || "$korero_mode" == "heavy-coding" ]]; then
         dirs+=(".korero/ideas")
         dirs+=(".korero/debates")
     fi
@@ -775,7 +793,7 @@ generate_korerorc() {
     local mode_section=""
     if [[ -n "$korero_mode" ]]; then
         mode_section="
-# Korero mode: idea (ideation only) or coding (ideation + implementation)
+# Korero mode: coding, idea, heavy-coding, or heavy-idea
 KORERO_MODE=\"${korero_mode}\"
 
 # Project subject (used for agent generation)
@@ -787,6 +805,15 @@ DOMAIN_AGENT_COUNT=${agent_count}
 # Maximum loops to run (number or \"continuous\" for unlimited)
 MAX_LOOPS=\"${max_loops}\"
 "
+        # Add heavy mode section
+        if [[ "$korero_mode" == "heavy-coding" || "$korero_mode" == "heavy-idea" ]]; then
+            mode_section+="
+# Heavy mode settings (Claude + Codex dual-AI)
+CODEX_TIMEOUT=15
+CODEX_APPROVAL=\"never\"
+DEBATE_ROUNDS=2
+"
+        fi
     fi
 
     cat << KORERORCEOF
@@ -2288,7 +2315,7 @@ enable_korero_in_directory() {
     # Generate and create files based on mode
     local prompt_content agent_content fix_plan_content
 
-    if [[ "$korero_mode" == "idea" || "$korero_mode" == "coding" ]]; then
+    if [[ "$korero_mode" == "idea" || "$korero_mode" == "coding" || "$korero_mode" == "heavy-idea" || "$korero_mode" == "heavy-coding" ]]; then
         # Gather project context and generate context-aware config
         # (sets CONFIG_* globals: CONFIG_AGENTS, CONFIG_CATEGORIES, CONFIG_SCORING,
         #  CONFIG_KEY_FILES, CONFIG_PROJECT_SUMMARY, CONFIG_FOCUS_CONSTRAINT, CONFIG_NOTES)
@@ -2466,12 +2493,34 @@ validate_korerorc_verbose() {
 
         # Validate KORERO_MODE
         if [[ -n "${KORERO_MODE:-}" ]]; then
-            if [[ "$KORERO_MODE" == "coding" || "$KORERO_MODE" == "idea" ]]; then
+            if [[ "$KORERO_MODE" == "coding" || "$KORERO_MODE" == "idea" || "$KORERO_MODE" == "heavy-coding" || "$KORERO_MODE" == "heavy-idea" ]]; then
                 echo "✓ KORERO_MODE: $KORERO_MODE (valid)"
             else
                 echo "✗ KORERO_MODE: $KORERO_MODE"
-                echo "  Error: Must be 'coding' or 'idea'"
+                echo "  Error: Must be 'coding', 'idea', 'heavy-coding', or 'heavy-idea'"
                 ((field_errors++))
+            fi
+        fi
+
+        # Validate heavy mode fields
+        if [[ "${KORERO_MODE:-}" == "heavy-coding" || "${KORERO_MODE:-}" == "heavy-idea" ]]; then
+            if [[ -n "${CODEX_TIMEOUT:-}" ]]; then
+                if [[ "$CODEX_TIMEOUT" =~ ^[0-9]+$ && "$CODEX_TIMEOUT" -ge 1 && "$CODEX_TIMEOUT" -le 120 ]]; then
+                    echo "✓ CODEX_TIMEOUT: ${CODEX_TIMEOUT}m (valid)"
+                else
+                    echo "✗ CODEX_TIMEOUT: $CODEX_TIMEOUT"
+                    echo "  Error: Must be between 1 and 120"
+                    ((field_errors++))
+                fi
+            fi
+            if [[ -n "${DEBATE_ROUNDS:-}" ]]; then
+                if [[ "$DEBATE_ROUNDS" =~ ^[1-3]$ ]]; then
+                    echo "✓ DEBATE_ROUNDS: $DEBATE_ROUNDS (valid)"
+                else
+                    echo "✗ DEBATE_ROUNDS: $DEBATE_ROUNDS"
+                    echo "  Error: Must be 1, 2, or 3"
+                    ((field_errors++))
+                fi
             fi
         fi
 

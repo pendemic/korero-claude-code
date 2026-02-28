@@ -874,6 +874,200 @@ should_resume_session() {
 # PERMISSION DENIAL SUGGESTION FUNCTIONS
 # =============================================================================
 
+# Merge new tool permissions with existing ones, avoiding duplicates
+# Usage: merge_tool_permissions "Write,Read,Edit" "Bash(npm *)"
+# Returns: "Write,Read,Edit,Bash(npm *)"
+merge_tool_permissions() {
+    local current="$1"
+    local new="$2"
+
+    # Handle empty current
+    if [[ -z "$current" ]]; then
+        echo "$new"
+        return
+    fi
+
+    # Handle preset - presets can be mixed with custom tools
+    # e.g., "@standard" + "Bash(docker *)" = "@standard,Bash(docker *)"
+    if [[ "$current" == @* && ! "$current" == *","* ]]; then
+        echo "$current,$new"
+        return
+    fi
+
+    # Split current into array and check for duplicates
+    local -a current_arr
+    IFS=',' read -ra current_arr <<< "$current"
+
+    # Check each new tool
+    local -a new_arr
+    IFS=',' read -ra new_arr <<< "$new"
+
+    local merged="$current"
+    for tool in "${new_arr[@]}"; do
+        local found=false
+        for existing in "${current_arr[@]}"; do
+            if [[ "$tool" == "$existing" ]]; then
+                found=true
+                break
+            fi
+        done
+        if [[ "$found" == false ]]; then
+            merged="$merged,$tool"
+        fi
+    done
+
+    echo "$merged"
+}
+
+# Apply permission fix by updating .korerorc ALLOWED_TOOLS
+# Usage: apply_permission_fix "Bash(npm *),Bash(git *)"
+# Returns: 0 on success, 1 on failure
+apply_permission_fix() {
+    local new_tools="$1"
+    local korerorc="${KORERO_PROJECT_ROOT:-.}/.korerorc"
+
+    if [[ ! -f "$korerorc" ]]; then
+        echo "Error: .korerorc not found at $korerorc" >&2
+        return 1
+    fi
+
+    # Get current ALLOWED_TOOLS value
+    local current_tools
+    current_tools=$(grep -E '^ALLOWED_TOOLS=' "$korerorc" 2>/dev/null | head -1 | sed 's/^ALLOWED_TOOLS="\(.*\)"$/\1/' | sed "s/^ALLOWED_TOOLS='\(.*\)'$/\1/")
+
+    # If no ALLOWED_TOOLS line exists, use the default
+    if [[ -z "$current_tools" ]]; then
+        current_tools="Write,Read,Edit"
+    fi
+
+    # Merge new tools with existing
+    local merged_tools
+    merged_tools=$(merge_tool_permissions "$current_tools" "$new_tools")
+
+    # Create backup
+    cp "$korerorc" "${korerorc}.bak"
+
+    # Update .korerorc using sed
+    # Handle both quoted and unquoted ALLOWED_TOOLS
+    if grep -qE '^ALLOWED_TOOLS=' "$korerorc"; then
+        # Replace existing line
+        sed -i.tmp "s|^ALLOWED_TOOLS=.*|ALLOWED_TOOLS=\"$merged_tools\"|" "$korerorc"
+        rm -f "${korerorc}.tmp"
+    else
+        # Append new line
+        echo "ALLOWED_TOOLS=\"$merged_tools\"" >> "$korerorc"
+    fi
+
+    echo -e "${GREEN}Updated ALLOWED_TOOLS in $korerorc${NC}"
+    echo -e "  Old: ${YELLOW}${current_tools}${NC}"
+    echo -e "  New: ${GREEN}${merged_tools}${NC}"
+
+    return 0
+}
+
+# Interactive prompt for permission fix
+# Displays suggestions and offers to auto-apply them
+# Usage: prompt_permission_fix "npm install" "git status"
+# Returns: 0 if fixed (continue loop), 1 if declined (exit)
+prompt_permission_fix() {
+    local denied_commands=("$@")
+
+    # Source wizard_utils.sh for confirm() if not already available
+    if ! type confirm &>/dev/null; then
+        local lib_dir
+        lib_dir="$(dirname "${BASH_SOURCE[0]}")"
+        if [[ -f "$lib_dir/wizard_utils.sh" ]]; then
+            source "$lib_dir/wizard_utils.sh"
+        elif [[ -f "${KORERO_LIB_DIR:-$HOME/.korero/lib}/wizard_utils.sh" ]]; then
+            source "${KORERO_LIB_DIR:-$HOME/.korero/lib}/wizard_utils.sh"
+        fi
+    fi
+
+    # Build new tools string from denied commands
+    local new_tools=""
+    for cmd in "${denied_commands[@]}"; do
+        local suggestion
+        suggestion=$(suggest_permission_fix "$cmd")
+        if [[ -z "$new_tools" ]]; then
+            new_tools="$suggestion"
+        elif [[ "$new_tools" != *"$suggestion"* ]]; then
+            new_tools="$new_tools,$suggestion"
+        fi
+    done
+
+    # Display the fix options (using existing format_permission_denial_message)
+    format_permission_denial_message "${denied_commands[@]}"
+
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+
+    # Offer interactive fix options
+    echo -e "${YELLOW}Quick Actions:${NC}"
+    echo ""
+    echo -e "  ${CYAN}1)${NC} Apply quick fix (add only needed tools): ${GREEN}${new_tools}${NC}"
+    echo -e "  ${CYAN}2)${NC} Apply @standard preset (recommended for most projects)"
+    echo -e "  ${CYAN}3)${NC} Apply @permissive preset (all Bash commands)"
+    echo -e "  ${CYAN}n)${NC} Exit and fix manually"
+    echo ""
+    echo -en "Select option [1/2/3/n] (default: n): "
+    read -r response
+
+    case "${response,,}" in
+        1)
+            if apply_permission_fix "$new_tools"; then
+                echo ""
+                echo -e "${GREEN}Permission fix applied. Resuming loop...${NC}"
+                echo ""
+                # Re-source .korerorc to load new permissions
+                local korerorc="${KORERO_PROJECT_ROOT:-.}/.korerorc"
+                if [[ -f "$korerorc" ]]; then
+                    source "$korerorc"
+                fi
+                return 0
+            else
+                echo -e "${RED}Failed to apply fix. Please fix manually.${NC}"
+                return 1
+            fi
+            ;;
+        2)
+            if apply_permission_fix "@standard"; then
+                echo ""
+                echo -e "${GREEN}@standard preset applied. Resuming loop...${NC}"
+                echo ""
+                local korerorc="${KORERO_PROJECT_ROOT:-.}/.korerorc"
+                if [[ -f "$korerorc" ]]; then
+                    source "$korerorc"
+                fi
+                return 0
+            else
+                echo -e "${RED}Failed to apply fix. Please fix manually.${NC}"
+                return 1
+            fi
+            ;;
+        3)
+            if apply_permission_fix "@permissive"; then
+                echo ""
+                echo -e "${GREEN}@permissive preset applied. Resuming loop...${NC}"
+                echo ""
+                local korerorc="${KORERO_PROJECT_ROOT:-.}/.korerorc"
+                if [[ -f "$korerorc" ]]; then
+                    source "$korerorc"
+                fi
+                return 0
+            else
+                echo -e "${RED}Failed to apply fix. Please fix manually.${NC}"
+                return 1
+            fi
+            ;;
+        *)
+            echo ""
+            echo -e "${YELLOW}Manual fix required. Edit .korerorc and restart: korero${NC}"
+            return 1
+            ;;
+    esac
+}
+
 # Suggest ALLOWED_TOOLS pattern for a denied command
 # Maps common commands to wildcard patterns, unknown commands to exact match
 # Usage: suggest_permission_fix "npm install lodash"
@@ -954,3 +1148,6 @@ export -f get_last_session_id
 export -f should_resume_session
 export -f suggest_permission_fix
 export -f format_permission_denial_message
+export -f merge_tool_permissions
+export -f apply_permission_fix
+export -f prompt_permission_fix

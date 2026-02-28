@@ -77,7 +77,7 @@ Korero Enable CI - Non-Interactive Version for Automation
 Usage: korero-enable-ci [OPTIONS]
 
 Options:
-    --mode <mode>         Loop mode: coding or idea (default: coding)
+    --mode <mode>         Loop mode: coding, idea, heavy-coding, heavy-idea (default: coding)
     --subject <text>      Project subject for agent generation
     --agents <N>          Number of domain agents (default: 3, max: 10)
     --loops <N>           Max loops: number or "continuous" (default: continuous)
@@ -140,13 +140,13 @@ parse_arguments() {
             --mode)
                 if [[ -n "$2" && ! "$2" =~ ^-- ]]; then
                     KORERO_MODE="$2"
-                    if [[ "$KORERO_MODE" != "coding" && "$KORERO_MODE" != "idea" ]]; then
-                        output_error "--mode must be 'coding' or 'idea'"
+                    if [[ "$KORERO_MODE" != "coding" && "$KORERO_MODE" != "idea" && "$KORERO_MODE" != "heavy-coding" && "$KORERO_MODE" != "heavy-idea" ]]; then
+                        output_error "--mode must be 'coding', 'idea', 'heavy-coding', or 'heavy-idea'"
                         exit $ENABLE_INVALID_ARGS
                     fi
                     shift 2
                 else
-                    output_error "--mode requires a value (coding or idea)"
+                    output_error "--mode requires a value (coding, idea, heavy-coding, or heavy-idea)"
                     exit $ENABLE_INVALID_ARGS
                 fi
                 ;;
@@ -358,6 +358,22 @@ main() {
     if [[ "$KORERO_STATE" == "complete" && "$FORCE_OVERWRITE" != "true" ]]; then
         output_already_enabled
         exit $ENABLE_ALREADY_ENABLED
+    fi
+
+    # Heavy mode: verify Codex CLI is ready
+    if [[ "$KORERO_MODE" == "heavy-coding" || "$KORERO_MODE" == "heavy-idea" ]]; then
+        if ! command -v codex &>/dev/null; then
+            output_error "Codex CLI not installed. Install with: npm install -g @openai/codex"
+            exit 3
+        fi
+        local codex_home="${CODEX_HOME:-$HOME/.codex}"
+        if [[ ! -f "$codex_home/auth.json" ]]; then
+            if ! codex login status &>/dev/null 2>&1; then
+                output_error "Codex CLI not authenticated. Run: codex login --device-auth"
+                exit 3
+            fi
+        fi
+        output_message "Codex CLI: ready"
     fi
 
     # Detect project context
