@@ -122,13 +122,13 @@ parse_arguments() {
             --mode)
                 if [[ -n "$2" && ! "$2" =~ ^-- ]]; then
                     KORERO_MODE="$2"
-                    if [[ "$KORERO_MODE" != "coding" && "$KORERO_MODE" != "idea" ]]; then
-                        echo "Error: --mode must be 'coding' or 'idea'" >&2
+                    if [[ "$KORERO_MODE" != "coding" && "$KORERO_MODE" != "idea" && "$KORERO_MODE" != "heavy-coding" && "$KORERO_MODE" != "heavy-idea" ]]; then
+                        echo "Error: --mode must be 'coding', 'idea', 'heavy-coding', or 'heavy-idea'" >&2
                         exit $ENABLE_INVALID_ARGS
                     fi
                     shift 2
                 else
-                    echo "Error: --mode requires a value (coding or idea)" >&2
+                    echo "Error: --mode requires a value (coding, idea, heavy-coding, or heavy-idea)" >&2
                     exit $ENABLE_INVALID_ARGS
                 fi
                 ;;
@@ -325,22 +325,88 @@ phase_mode_selection() {
         return 0
     fi
 
-    echo "Korero supports two modes of operation:"
+    echo "Korero supports four modes of operation:"
     echo ""
 
     local mode_choice
     mode_choice=$(select_with_default "Select Korero mode" 0 \
         "Continuous Coding Loop - ideation + debate + implementation + git commits" \
-        "Continuous Idea Loop - ideation + debate only, no code changes")
+        "Continuous Idea Loop - ideation + debate only, no code changes" \
+        "Heavy Coding Loop - Claude + Codex parallel, cross-AI debate, implement" \
+        "Heavy Idea Loop - Claude + Codex parallel, cross-AI debate, save idea")
 
     case "$mode_choice" in
-        *"Coding"*)  KORERO_MODE="coding" ;;
-        *"Idea"*)    KORERO_MODE="idea" ;;
+        *"Heavy Coding"*)  KORERO_MODE="heavy-coding" ;;
+        *"Heavy Idea"*)    KORERO_MODE="heavy-idea" ;;
+        *"Coding"*)        KORERO_MODE="coding" ;;
+        *"Idea"*)          KORERO_MODE="idea" ;;
     esac
 
     echo ""
     print_info "Selected mode: $KORERO_MODE"
     echo ""
+
+    # Phase 2b: Codex OAuth (heavy modes only)
+    if [[ "$KORERO_MODE" == "heavy-coding" || "$KORERO_MODE" == "heavy-idea" ]]; then
+        phase_codex_auth
+    fi
+}
+
+# Phase 2b: Codex authentication (heavy modes only)
+phase_codex_auth() {
+    echo ""
+    print_header "Codex Authentication" "Phase 2b"
+
+    # Check if Codex CLI is installed
+    if ! command -v codex &>/dev/null; then
+        print_error "Codex CLI is not installed."
+        echo "Heavy modes require the OpenAI Codex CLI."
+        echo ""
+        echo "Install with: npm install -g @openai/codex"
+        echo ""
+        if confirm "Would you like to install Codex CLI now?"; then
+            npm install -g @openai/codex
+            if ! command -v codex &>/dev/null; then
+                print_error "Installation failed. Please install manually."
+                return 1
+            fi
+            print_success "Codex CLI installed successfully."
+        else
+            print_warning "Skipping Codex installation. Heavy mode may not work."
+            return 0
+        fi
+    else
+        print_success "Codex CLI is installed."
+    fi
+
+    # Check authentication
+    local codex_home="${CODEX_HOME:-$HOME/.codex}"
+    if [[ -f "$codex_home/auth.json" ]] || codex login status &>/dev/null 2>&1; then
+        print_success "Codex CLI is authenticated."
+        return 0
+    fi
+
+    echo ""
+    echo "Heavy modes require Codex authentication via OAuth."
+    echo ""
+
+    local auth_method
+    auth_method=$(select_with_default "Select authentication method" 0 \
+        "Device Code (recommended for terminals)" \
+        "Browser OAuth (opens browser window)" \
+        "API Key (enter OpenAI API key)")
+
+    case "$auth_method" in
+        *"Device"*)  codex login --device-auth ;;
+        *"Browser"*) codex login ;;
+        *"API"*)     codex login --with-api-key ;;
+    esac
+
+    if [[ $? -eq 0 ]]; then
+        print_success "Codex authentication successful."
+    else
+        print_warning "Codex authentication failed. You can retry later with: codex login"
+    fi
 }
 
 # =============================================================================

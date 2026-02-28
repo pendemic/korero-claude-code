@@ -51,6 +51,16 @@ run_health_check() {
     check_network || issues=$((issues + 1))
     echo ""
 
+    # Codex CLI (heavy modes only)
+    local current_mode="${KORERO_MODE:-coding}"
+    if [[ "$current_mode" == "heavy-coding" || "$current_mode" == "heavy-idea" ]]; then
+        echo "Codex CLI (Heavy Mode):"
+        check_codex_tool || issues=$((issues + 1))
+        check_codex_auth_health || issues=$((issues + 1))
+        check_codex_network || issues=$((issues + 1))
+        echo ""
+    fi
+
     # Configuration file (only if present)
     if [[ -f ".korerorc" ]]; then
         echo "Configuration:"
@@ -189,6 +199,64 @@ check_config() {
     fi
 }
 
+# Check if Codex CLI is installed (heavy modes)
+check_codex_tool() {
+    if command -v codex &>/dev/null; then
+        local version
+        version=$(codex --version 2>/dev/null | head -1 || echo "available")
+        echo "  ✓ Codex CLI: $version"
+        return 0
+    else
+        echo "  ✗ Codex CLI: not found"
+        echo "    → Install: npm install -g @openai/codex"
+        return 1
+    fi
+}
+
+# Check Codex authentication status (heavy modes)
+check_codex_auth_health() {
+    local codex_home="${CODEX_HOME:-$HOME/.codex}"
+
+    if [[ -f "$codex_home/auth.json" ]]; then
+        echo "  ✓ Codex auth: configured (file)"
+        return 0
+    fi
+
+    # Fallback: try codex login status
+    if command -v codex &>/dev/null; then
+        if codex login status &>/dev/null 2>&1; then
+            echo "  ✓ Codex auth: configured (keyring)"
+            return 0
+        fi
+    fi
+
+    echo "  ✗ Codex auth: not configured"
+    echo "    → Run: codex login --device-auth"
+    return 1
+}
+
+# Check network connectivity to api.openai.com (heavy modes)
+check_codex_network() {
+    if ! command -v curl &>/dev/null; then
+        echo "  ○ api.openai.com: skipped (curl not available)"
+        return 0
+    fi
+
+    local start_ms end_ms latency
+    start_ms=$(date +%s%3N 2>/dev/null || date +%s)
+
+    if curl -s --max-time 5 "https://api.openai.com" >/dev/null 2>&1; then
+        end_ms=$(date +%s%3N 2>/dev/null || date +%s)
+        latency=$((end_ms - start_ms))
+        echo "  ✓ api.openai.com: reachable (${latency}ms)"
+        return 0
+    else
+        echo "  ✗ api.openai.com: unreachable"
+        echo "    → Check internet connection or proxy settings"
+        return 1
+    fi
+}
+
 export -f run_health_check
 export -f check_tool
 export -f check_timeout_tool
@@ -196,3 +264,6 @@ export -f check_git_config
 export -f check_permissions
 export -f check_network
 export -f check_config
+export -f check_codex_tool
+export -f check_codex_auth_health
+export -f check_codex_network

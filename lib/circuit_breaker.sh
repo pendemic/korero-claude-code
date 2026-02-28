@@ -22,6 +22,7 @@ CB_NO_PROGRESS_THRESHOLD=${CB_NO_PROGRESS_THRESHOLD:-3}        # Open circuit af
 CB_SAME_ERROR_THRESHOLD=${CB_SAME_ERROR_THRESHOLD:-5}          # Open circuit after N loops with same error
 CB_OUTPUT_DECLINE_THRESHOLD=${CB_OUTPUT_DECLINE_THRESHOLD:-70} # Open circuit if output declines by >70%
 CB_PERMISSION_DENIAL_THRESHOLD=${CB_PERMISSION_DENIAL_THRESHOLD:-2}  # Open circuit after N loops with permission denials (Issue #101)
+CB_CODEX_FAILURE_THRESHOLD=${CB_CODEX_FAILURE_THRESHOLD:-3}        # Open circuit after N consecutive Codex failures (heavy modes)
 
 # Colors
 RED='\033[0;31m'
@@ -441,6 +442,34 @@ should_halt_execution() {
     fi
 }
 
+# Track Codex failures for heavy mode circuit breaker
+# Arguments:
+#   $1 (codex_exit_code) - Codex CLI exit code (0 = success)
+# Returns: 0 if can continue, 1 if circuit should open
+track_codex_failure() {
+    local codex_exit="$1"
+    local codex_failures_file="$KORERO_DIR/.codex_consecutive_failures"
+
+    if [[ "$codex_exit" -eq 0 ]]; then
+        # Reset counter on success
+        echo "0" > "$codex_failures_file"
+        return 0
+    fi
+
+    # Increment failure counter
+    local failures
+    failures=$(cat "$codex_failures_file" 2>/dev/null || echo "0")
+    failures=$((failures + 1))
+    echo "$failures" > "$codex_failures_file"
+
+    if [[ $failures -ge $CB_CODEX_FAILURE_THRESHOLD ]]; then
+        echo "Codex has failed $failures consecutive times (threshold: $CB_CODEX_FAILURE_THRESHOLD)" >&2
+        return 1
+    fi
+
+    return 0
+}
+
 # Export functions
 export -f init_circuit_breaker
 export -f get_circuit_state
@@ -450,3 +479,4 @@ export -f show_circuit_status
 export -f reset_circuit_breaker
 export -f should_halt_execution
 export -f format_recovery_suggestion
+export -f track_codex_failure

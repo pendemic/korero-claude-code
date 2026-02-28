@@ -10,7 +10,7 @@
 >
 > *Forked from [frankbria/ralph-claude-code](https://github.com/frankbria/ralph-claude-code)*
 
-Korero is a multi-agent ideation and development system for Claude Code with two modes: a **Continuous Coding Loop** (domain experts propose ideas, mandatory agents debate them, winning idea gets implemented and committed) and a **Continuous Idea Loop** (same debate process, but only the best idea is saved to disk). Built-in safeguards prevent infinite loops and API overuse.
+Korero is a multi-agent ideation and development system for Claude Code with four modes: a **Continuous Coding Loop** (domain experts propose ideas, mandatory agents debate them, winning idea gets implemented and committed), a **Continuous Idea Loop** (same debate process, but only the best idea is saved to disk), a **Heavy Coding Loop** (Claude + Codex parallel execution with cross-AI debate, winner gets implemented), and a **Heavy Idea Loop** (same cross-AI competition, best idea saved to disk). Built-in safeguards prevent infinite loops and API overuse.
 
 **Install once, use everywhere** - Korero becomes a global command available in any directory.
 
@@ -22,7 +22,7 @@ Korero is a multi-agent ideation and development system for Claude Code with two
 
 ### What's Working Now
 - **Multi-agent ideation system** with domain expert agents and structured debate protocol
-- **Two loop modes**: Continuous Coding Loop (ideation + implementation) and Continuous Idea Loop (ideation only)
+- **Four loop modes**: Coding, Idea, Heavy Coding (Claude + Codex), and Heavy Idea (Claude + Codex)
 - **Auto-generated domain agents** via Claude Code CLI based on project subject
 - **3 mandatory evaluation agents**: Devil's Advocate, Technical Feasibility Analyst, Idea Orchestrator
 - **Configurable agent count** (1-10 domain agents) and loop limits
@@ -143,7 +143,7 @@ Korero is a multi-agent ideation and development system for Claude Code with two
 ## Features
 
 - **Multi-Agent Ideation** - Domain expert agents propose improvements, mandatory agents debate them in structured rounds
-- **Two Loop Modes** - Continuous Coding Loop (ideation + implementation) or Continuous Idea Loop (ideation only)
+- **Four Loop Modes** - Coding Loop, Idea Loop, Heavy Coding Loop (Claude + Codex), Heavy Idea Loop (Claude + Codex)
 - **Auto-Generated Agents** - Domain experts generated via Claude Code CLI based on project subject
 - **Structured Debate Protocol** - 3-round evaluation: Evaluation → Rebuttal → Final Selection
 - **Idea Accumulation** - Winning ideas saved per-loop and indexed in `.korero/ideas/IDEAS.md`
@@ -159,6 +159,7 @@ Korero is a multi-agent ideation and development system for Claude Code with two
 - **Circuit Breaker** - Advanced error detection with two-stage filtering and automatic recovery
 - **CI/CD Integration** - GitHub Actions workflow with automated testing
 - **Live Streaming Output** - Real-time visibility into Claude Code execution with `--live` flag
+- **Heavy Modes (Cross-AI Debate)** - Run Claude Code and OpenAI Codex CLI in parallel, then orchestrate a 3-round cross-AI debate (mutual critique, defense, judgment) to select the best proposal
 
 ## Quick Start
 
@@ -202,6 +203,10 @@ korero-enable --mode idea --subject "data analysis tool" --agents 4
 
 # Coding loop with auto-generated agents and limited iterations
 korero-enable --mode coding --subject "web app" --loops 20
+
+# Heavy mode — dual-AI parallel execution with cross-AI debate
+korero-enable --mode heavy-coding --subject "web app"
+korero-enable --mode heavy-idea --subject "ML pipeline" --agents 5
 
 # Or with specific task source (coding mode)
 korero-enable --from beads
@@ -308,6 +313,18 @@ Korero operates on a multi-agent ideation cycle:
 3. **Phase 2: Structured Debate** - Devil's Advocate, Technical Feasibility Analyst, and Idea Orchestrator evaluate proposals in 3 rounds (Evaluation → Rebuttal → Final Selection)
 4. **Phase 3: Implementation** (coding mode only) - Winning idea gets implemented and committed
 5. **Save & Repeat** - Winning idea saved to `.korero/ideas/`, loop continues until complete or limit reached
+
+### Heavy Modes (Cross-AI Debate)
+
+Heavy modes (`heavy-coding` and `heavy-idea`) add a cross-AI competition layer by running both Claude Code and OpenAI's Codex CLI in parallel:
+
+1. **Parallel Proposals** - Both Claude and Codex receive the same prompt and generate proposals simultaneously
+2. **Mutual Critique** - Each AI critiques the other's proposal (parallel)
+3. **Defense** - Each AI defends its proposal against the critique (parallel)
+4. **Judgment** - Claude evaluates all 6 artifacts using a weighted rubric and selects a winner
+5. **Execution** - `heavy-coding`: Claude implements the winning idea; `heavy-idea`: winning idea saved to disk
+
+**Prerequisites:** Codex CLI (`npm install -g @openai/codex`) with OAuth authentication (`codex login`).
 
 ### Intelligent Exit Detection
 

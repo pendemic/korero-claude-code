@@ -1188,3 +1188,113 @@ EOF
     [[ "$result" == *"Use @standard preset (recommended)"* ]]
     [[ "$result" == *'ALLOWED_TOOLS="@standard"'* ]]
 }
+
+# =============================================================================
+# INTERACTIVE PERMISSION FIX TESTS
+# =============================================================================
+# Tests for merge_tool_permissions(), apply_permission_fix(), and prompt_permission_fix()
+# These functions enable interactive permission recovery when commands are denied.
+
+@test "merge_tool_permissions adds new tool to existing list" {
+    result=$(merge_tool_permissions "Write,Read,Edit" "Bash(npm *)")
+    [[ "$result" == "Write,Read,Edit,Bash(npm *)" ]]
+}
+
+@test "merge_tool_permissions avoids duplicates" {
+    result=$(merge_tool_permissions "Write,Read,Edit,Bash(npm *)" "Bash(npm *)")
+    # Should not have duplicate Bash(npm *)
+    local count=$(echo "$result" | grep -o "Bash(npm \*)" | wc -l)
+    [[ "$count" -eq 1 ]]
+}
+
+@test "merge_tool_permissions handles empty current tools" {
+    result=$(merge_tool_permissions "" "Bash(git *)")
+    [[ "$result" == "Bash(git *)" ]]
+}
+
+@test "merge_tool_permissions handles preset as current" {
+    result=$(merge_tool_permissions "@standard" "Bash(docker *)")
+    [[ "$result" == "@standard,Bash(docker *)" ]]
+}
+
+@test "merge_tool_permissions handles multiple new tools" {
+    result=$(merge_tool_permissions "Write,Read,Edit" "Bash(npm *),Bash(git *)")
+    [[ "$result" == "Write,Read,Edit,Bash(npm *),Bash(git *)" ]]
+}
+
+@test "merge_tool_permissions preserves order of existing tools" {
+    result=$(merge_tool_permissions "Edit,Write,Read" "Bash(npm *)")
+    [[ "$result" == "Edit,Write,Read,Bash(npm *)" ]]
+}
+
+@test "apply_permission_fix creates backup file" {
+    # Create test .korerorc
+    echo 'ALLOWED_TOOLS="Write,Read,Edit"' > "$TEST_DIR/.korerorc"
+    export KORERO_PROJECT_ROOT="$TEST_DIR"
+
+    apply_permission_fix "Bash(npm *)" > /dev/null 2>&1
+
+    # Backup should exist
+    [[ -f "$TEST_DIR/.korerorc.bak" ]]
+}
+
+@test "apply_permission_fix updates ALLOWED_TOOLS in korerorc" {
+    # Create test .korerorc
+    echo 'ALLOWED_TOOLS="Write,Read,Edit"' > "$TEST_DIR/.korerorc"
+    export KORERO_PROJECT_ROOT="$TEST_DIR"
+
+    apply_permission_fix "Bash(npm *)" > /dev/null 2>&1
+
+    # Check updated content
+    grep -q 'ALLOWED_TOOLS="Write,Read,Edit,Bash(npm \*)"' "$TEST_DIR/.korerorc"
+}
+
+@test "apply_permission_fix handles @standard preset replacement" {
+    # Create test .korerorc with existing tools
+    echo 'ALLOWED_TOOLS="Write,Read,Edit"' > "$TEST_DIR/.korerorc"
+    export KORERO_PROJECT_ROOT="$TEST_DIR"
+
+    apply_permission_fix "@standard" > /dev/null 2>&1
+
+    # Should now contain @standard merged with existing
+    grep -q 'ALLOWED_TOOLS="Write,Read,Edit,@standard"' "$TEST_DIR/.korerorc"
+}
+
+@test "apply_permission_fix fails gracefully when korerorc missing" {
+    export KORERO_PROJECT_ROOT="$TEST_DIR/nonexistent"
+
+    run apply_permission_fix "Bash(npm *)"
+    [[ "$status" -eq 1 ]]
+}
+
+@test "apply_permission_fix preserves other korerorc content" {
+    # Create test .korerorc with multiple settings
+    cat > "$TEST_DIR/.korerorc" << 'EOF'
+# Korero Configuration
+KORERO_MODE="coding"
+ALLOWED_TOOLS="Write,Read,Edit"
+MAX_LOOPS=50
+EOF
+    export KORERO_PROJECT_ROOT="$TEST_DIR"
+
+    apply_permission_fix "Bash(npm *)" > /dev/null 2>&1
+
+    # Other settings should be preserved
+    grep -q 'KORERO_MODE="coding"' "$TEST_DIR/.korerorc"
+    grep -q 'MAX_LOOPS=50' "$TEST_DIR/.korerorc"
+}
+
+@test "apply_permission_fix adds ALLOWED_TOOLS when missing" {
+    # Create test .korerorc without ALLOWED_TOOLS
+    cat > "$TEST_DIR/.korerorc" << 'EOF'
+# Korero Configuration
+KORERO_MODE="coding"
+MAX_LOOPS=50
+EOF
+    export KORERO_PROJECT_ROOT="$TEST_DIR"
+
+    apply_permission_fix "Bash(npm *)" > /dev/null 2>&1
+
+    # ALLOWED_TOOLS should be added
+    grep -q 'ALLOWED_TOOLS="Write,Read,Edit,Bash(npm \*)"' "$TEST_DIR/.korerorc"
+}

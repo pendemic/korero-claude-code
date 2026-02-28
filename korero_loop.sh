@@ -18,6 +18,9 @@ source "$SCRIPT_DIR/lib/response_analyzer.sh"
 source "$SCRIPT_DIR/lib/circuit_breaker.sh"
 source "$SCRIPT_DIR/lib/permission_presets.sh"
 source "$SCRIPT_DIR/lib/health_check.sh"
+source "$SCRIPT_DIR/lib/codex_adapter.sh"
+source "$SCRIPT_DIR/lib/cross_ai_debate.sh"
+source "$SCRIPT_DIR/lib/debate_transcript.sh"
 
 # Configuration
 # Korero-specific files live in .korero/ subfolder
@@ -74,6 +77,12 @@ KORERO_SESSION_HISTORY_FILE="$KORERO_DIR/.korero_session_history"  # Session tra
 # Session expiration: 24 hours default balances project continuity with fresh context
 # Too short = frequent context loss; Too long = stale context causes unpredictable behavior
 CLAUDE_SESSION_EXPIRY_HOURS=${CLAUDE_SESSION_EXPIRY_HOURS:-24}
+
+# Codex CLI configuration (heavy modes: heavy-coding, heavy-idea)
+CODEX_TIMEOUT_MINUTES="${CODEX_TIMEOUT_MINUTES:-15}"
+CODEX_APPROVAL_MODE="${CODEX_APPROVAL_MODE:-never}"
+DEBATE_TIMEOUT_SECONDS="${DEBATE_TIMEOUT_SECONDS:-300}"
+DEBATE_ROUNDS="${DEBATE_ROUNDS:-2}"
 
 # Valid tool patterns for --allowed-tools validation
 # Tools can be exact matches or pattern matches with wildcards in parentheses
@@ -146,6 +155,16 @@ load_korerorc() {
     fi
     if [[ -n "${KORERO_VERBOSE:-}" ]]; then
         VERBOSE_PROGRESS="$KORERO_VERBOSE"
+    fi
+    # Map Codex-specific .korerorc variables (heavy modes)
+    if [[ -n "${CODEX_TIMEOUT:-}" ]]; then
+        CODEX_TIMEOUT_MINUTES="$CODEX_TIMEOUT"
+    fi
+    if [[ -n "${CODEX_APPROVAL:-}" ]]; then
+        CODEX_APPROVAL_MODE="$CODEX_APPROVAL"
+    fi
+    if [[ -n "${CODEX_MODEL_OVERRIDE:-}" ]]; then
+        CODEX_MODEL="$CODEX_MODEL_OVERRIDE"
     fi
 
     # Restore ONLY values that were explicitly set via environment variables
@@ -519,6 +538,25 @@ show_dry_run_info() {
     echo "Loop limit: $max_loops"
     echo ""
 
+    # Heavy mode info
+    local korero_mode="${KORERO_MODE:-coding}"
+    if [[ "$korero_mode" == "heavy-coding" || "$korero_mode" == "heavy-idea" ]]; then
+        echo -e "${PURPLE}Heavy Mode: $korero_mode${NC}"
+        echo "Codex model:        $CODEX_MODEL"
+        echo "Codex timeout:      ${CODEX_TIMEOUT_MINUTES}m"
+        echo "Codex approval:     $CODEX_APPROVAL_MODE"
+        echo "Debate rounds:      $DEBATE_ROUNDS"
+        echo ""
+        local codex_ready_code=0
+        check_codex_ready || codex_ready_code=$?
+        case $codex_ready_code in
+            0) echo "Codex CLI:          ready" ;;
+            1) echo -e "Codex CLI:          ${RED}not installed${NC}" ;;
+            2) echo -e "Codex CLI:          ${YELLOW}not authenticated${NC}" ;;
+        esac
+        echo ""
+    fi
+
     # Command preview
     echo "Command that would run:"
     echo "  claude --print --output-format $CLAUDE_OUTPUT_FORMAT \\"
@@ -526,6 +564,13 @@ show_dry_run_info() {
         echo "    --allowedTools \"$CLAUDE_ALLOWED_TOOLS\" \\"
     fi
     echo "    -p <prompt content>"
+
+    if [[ "$korero_mode" == "heavy-coding" || "$korero_mode" == "heavy-idea" ]]; then
+        echo ""
+        echo "  codex exec --model $CODEX_MODEL --json \\"
+        echo "    --sandbox read-only \\"
+        echo "    \"<prompt content>\""
+    fi
     echo ""
     echo "Run without --dry-run to execute."
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -726,7 +771,7 @@ store_loop_idea() {
     # Get the content (handle JSON output format)
     local content=""
     if command -v jq &>/dev/null; then
-        content=$(jq -r '.result // .' "$output_file" 2>/dev/null)
+        content=$(jq -r '.result // .' "$output_file" 2>/dev/null || true)
         if [[ -z "$content" || "$content" == "null" ]]; then
             content=$(cat "$output_file")
         fi
@@ -952,6 +997,16 @@ build_loop_context() {
         local prev_summary=$(jq -r '.analysis.work_summary // ""' "$RESPONSE_ANALYSIS_FILE" 2>/dev/null | head -c 200)
         if [[ -n "$prev_summary" && "$prev_summary" != "null" ]]; then
             context+="Previous: ${prev_summary}. "
+        fi
+    fi
+
+    # Add previous debate winner context (heavy modes)
+    if [[ -f "$KORERO_DIR/.debate_result" ]]; then
+        local prev_winner prev_title
+        prev_winner=$(jq -r '.winner // ""' "$KORERO_DIR/.debate_result" 2>/dev/null)
+        prev_title=$(jq -r '.title // ""' "$KORERO_DIR/.debate_result" 2>/dev/null)
+        if [[ -n "$prev_title" && "$prev_title" != "null" ]]; then
+            context+="Previous debate winner ($prev_winner): ${prev_title}. "
         fi
     fi
 
@@ -1721,6 +1776,296 @@ EOF
     fi
 }
 
+# =============================================================================
+# HEAVY MODE EXECUTION (Dual-AI: Claude + Codex)
+# =============================================================================
+
+# execute_heavy_loop - Run Claude and Codex in parallel, then cross-AI debate
+#
+# Parameters:
+#   $1 (loop_count) - Current loop number
+#
+# Returns: 0 (success), 1 (failure), 2 (API limit), 3 (circuit breaker)
+execute_heavy_loop() {
+    local loop_count=$1
+    local timestamp=$(date '+%Y-%m-%d_%H-%M-%S')
+    local claude_output="$LOG_DIR/claude_proposal_${timestamp}.log"
+    local codex_output="$LOG_DIR/codex_proposal_${timestamp}.log"
+    local codex_last_msg="$LOG_DIR/codex_lastmsg_${timestamp}.log"
+    local korero_mode="${KORERO_MODE:-heavy-coding}"
+    local calls_made=$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")
+    calls_made=$((calls_made + 1))
+
+    check_rate_limit_warnings "$calls_made"
+
+    # Capture git HEAD SHA for progress detection
+    local loop_start_sha=""
+    if command -v git &>/dev/null && git rev-parse --git-dir &>/dev/null 2>&1; then
+        loop_start_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
+    fi
+    echo "$loop_start_sha" > "$KORERO_DIR/.loop_start_sha"
+
+    log_status "LOOP" "Heavy mode: Dual-AI parallel execution (Claude + Codex)"
+    local timeout_seconds=$((CLAUDE_TIMEOUT_MINUTES * 60))
+    local codex_timeout=$((CODEX_TIMEOUT_MINUTES * 60))
+
+    # Build loop context
+    local loop_context=""
+    if [[ "$CLAUDE_USE_CONTINUE" == "true" ]]; then
+        loop_context=$(build_loop_context "$loop_count")
+    fi
+
+    # Add cross-AI competition context
+    local heavy_context="You are in a DUAL-AI competition. Another AI (Codex) also receives this prompt. Your proposals will be debated head-to-head. Focus on producing your single BEST idea."
+
+    # Initialize session
+    local session_id=""
+    if [[ "$CLAUDE_USE_CONTINUE" == "true" ]]; then
+        session_id=$(init_claude_session)
+    fi
+
+    # === PHASE 1: PARALLEL PROPOSAL GENERATION ===
+    log_status "LOOP" "Phase 1: Parallel proposal generation (Claude + Codex)"
+    init_debate_transcript "$loop_count" > /dev/null
+
+    # Read prompt content
+    local prompt_content
+    prompt_content=$(cat "$PROMPT_FILE")
+
+    # Build and execute Claude in background
+    local combined_context="$loop_context $heavy_context"
+    build_claude_command "$PROMPT_FILE" "$combined_context" "$session_id"
+    portable_timeout "${timeout_seconds}s" "${CLAUDE_CMD_ARGS[@]}" > "$claude_output" 2>&1 &
+    local claude_pid=$!
+
+    # Build and execute Codex in background
+    local codex_prompt="$prompt_content
+
+$heavy_context"
+    build_codex_command "$codex_prompt" "$korero_mode"
+    portable_timeout "${codex_timeout}s" "${CODEX_CMD_ARGS[@]}" > "$codex_output" 2>&1 &
+    local codex_pid=$!
+
+    # Wait for both to complete
+    local claude_exit=0 codex_exit=0
+    wait $claude_pid || claude_exit=$?
+    wait $codex_pid || codex_exit=$?
+
+    log_status "INFO" "Claude exit: $claude_exit, Codex exit: $codex_exit"
+
+    # Log Codex error details when it fails
+    if [[ $codex_exit -ne 0 && -f "$codex_output" ]]; then
+        local codex_err
+        codex_err=$(tail -5 "$codex_output" 2>/dev/null || echo "(no output)")
+        log_status "WARN" "Codex stderr/output: $codex_err"
+    fi
+
+    # Handle failures — fallback to surviving AI
+    if [[ $claude_exit -ne 0 && $codex_exit -ne 0 ]]; then
+        log_status "ERROR" "Both AIs failed. Claude=$claude_exit, Codex=$codex_exit"
+        echo '{"status": "failed", "timestamp": "'$(date '+%Y-%m-%d %H:%M:%S')'"}' > "$PROGRESS_FILE"
+        return 1
+    fi
+
+    # Update call counter
+    echo "$calls_made" > "$CALL_COUNT_FILE"
+
+    # Save Claude session if available
+    if [[ $claude_exit -eq 0 && -f "$claude_output" ]]; then
+        save_claude_session "$claude_output"
+    fi
+
+    # Record proposals in transcript
+    local claude_proposal_text="" codex_proposal_text=""
+    if [[ $claude_exit -eq 0 && -f "$claude_output" ]]; then
+        claude_proposal_text=$(cat "$claude_output" 2>/dev/null)
+        # Extract .result from JSON if present
+        if command -v jq &>/dev/null; then
+            local json_result
+            json_result=$(echo "$claude_proposal_text" | jq -r '.result // empty' 2>/dev/null || true)
+            if [[ -n "$json_result" ]]; then
+                claude_proposal_text="$json_result"
+            fi
+        fi
+    fi
+
+    if [[ $codex_exit -eq 0 ]]; then
+        codex_proposal_text=$(extract_codex_proposal "$codex_output" "$codex_last_msg")
+    fi
+
+    append_transcript_section "$loop_count" "Claude Proposal" "${claude_proposal_text:0:5000}"
+    append_transcript_section "$loop_count" "Codex Proposal" "${codex_proposal_text:0:5000}"
+
+    # === PHASE 2: CROSS-AI DEBATE ===
+    # If only one AI produced output, skip debate and use its proposal
+    if [[ $claude_exit -ne 0 || -z "$claude_proposal_text" ]]; then
+        log_status "WARN" "Claude failed — using Codex proposal directly"
+        # Write codex proposal to a temp file for store_loop_idea
+        echo "$codex_proposal_text" > "$KORERO_DIR/.winning_proposal"
+        cat > "$DEBATE_RESULT_FILE" << CODEX_FALLBACK
+{
+  "winner": "codex",
+  "title": "Codex proposal (Claude unavailable)",
+  "confidence": 100,
+  "rationale": "Claude execution failed. Using Codex proposal directly."
+}
+CODEX_FALLBACK
+        append_transcript_section "$loop_count" "Outcome" "Codex wins by default (Claude failed)."
+    elif [[ $codex_exit -ne 0 || -z "$codex_proposal_text" ]]; then
+        log_status "WARN" "Codex failed — using Claude proposal directly"
+        echo "$claude_proposal_text" > "$KORERO_DIR/.winning_proposal"
+        cat > "$DEBATE_RESULT_FILE" << CLAUDE_FALLBACK
+{
+  "winner": "claude",
+  "title": "Claude proposal (Codex unavailable)",
+  "confidence": 100,
+  "rationale": "Codex execution failed. Using Claude proposal directly."
+}
+CLAUDE_FALLBACK
+        append_transcript_section "$loop_count" "Outcome" "Claude wins by default (Codex failed)."
+    else
+        # Both AIs produced proposals — run the debate
+        log_status "LOOP" "Phase 2: Cross-AI debate ($DEBATE_ROUNDS rounds)"
+
+        # Write proposals to temp files for the debate orchestrator
+        local claude_prop_file="$KORERO_DIR/.claude_proposal"
+        local codex_prop_file="$KORERO_DIR/.codex_proposal"
+        echo "$claude_proposal_text" > "$claude_prop_file"
+        echo "$codex_proposal_text" > "$codex_prop_file"
+
+        # Determine project name from .korerorc or directory
+        local project_name="${PROJECT_SUBJECT:-$(basename "$(pwd)")}"
+
+        run_cross_ai_debate "$claude_prop_file" "$codex_prop_file" "$loop_count" "$korero_mode" "$project_name" "$DEBATE_ROUNDS" || true
+
+        # Copy winning proposal for downstream processing
+        local winner
+        winner=$(get_debate_winner || echo "claude")
+        if [[ "$winner" == "codex" ]]; then
+            cp "$codex_prop_file" "$KORERO_DIR/.winning_proposal"
+        else
+            cp "$claude_prop_file" "$KORERO_DIR/.winning_proposal"
+        fi
+    fi
+
+    # === PHASE 3: WINNER PROCESSING ===
+    local winner_title
+    if command -v jq &>/dev/null && [[ -f "$DEBATE_RESULT_FILE" ]]; then
+        winner_title=$(jq -r '.title // "unknown"' "$DEBATE_RESULT_FILE" 2>/dev/null || echo "unknown")
+    else
+        winner_title="(unknown)"
+    fi
+    local winner
+    winner=$(get_debate_winner || echo "claude")
+
+    finalize_debate_transcript "$loop_count" "$winner_title (by $winner)" || true
+    log_status "SUCCESS" "Debate winner: $winner — $winner_title"
+
+    if [[ "$korero_mode" == "heavy-coding" ]]; then
+        # Implementation phase: Claude implements the winning idea
+        log_status "LOOP" "Phase 3: Claude implementing winning idea"
+
+        local winning_proposal
+        winning_proposal=$(cat "$KORERO_DIR/.winning_proposal" 2>/dev/null || echo "")
+
+        local impl_prompt="Implement the following winning idea from a cross-AI debate. This idea was selected as the best proposal after structured evaluation.
+
+## Winning Idea
+$winner_title
+
+## Full Proposal
+$winning_proposal
+
+## Instructions
+1. Plan the implementation approach
+2. Implement the changes
+3. Write tests for the new code
+4. Create a git commit with a descriptive message
+5. Update .korero/fix_plan.md to reflect completed work"
+
+        local impl_output="$LOG_DIR/claude_impl_${timestamp}.log"
+        declare -a IMPL_CMD_ARGS=("$CLAUDE_CODE_CMD" "--output-format" "$CLAUDE_OUTPUT_FORMAT")
+
+        if [[ -n "$CLAUDE_ALLOWED_TOOLS" ]]; then
+            IMPL_CMD_ARGS+=("--allowedTools")
+            local IFS=','
+            read -ra tools_array <<< "$CLAUDE_ALLOWED_TOOLS"
+            for tool in "${tools_array[@]}"; do
+                tool=$(echo "$tool" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                if [[ -n "$tool" ]]; then
+                    IMPL_CMD_ARGS+=("$tool")
+                fi
+            done
+        fi
+
+        if [[ "$CLAUDE_USE_CONTINUE" == "true" && -n "$session_id" ]]; then
+            IMPL_CMD_ARGS+=("--resume" "$session_id")
+        fi
+        IMPL_CMD_ARGS+=("-p" "$impl_prompt")
+
+        portable_timeout "${timeout_seconds}s" "${IMPL_CMD_ARGS[@]}" > "$impl_output" 2>&1
+        local impl_exit=$?
+
+        if [[ $impl_exit -eq 0 ]]; then
+            log_status "SUCCESS" "Implementation completed"
+            save_claude_session "$impl_output"
+            analyze_response "$impl_output" "$loop_count"
+            update_exit_signals "$impl_output" "$loop_count"
+        else
+            log_status "WARN" "Implementation phase failed (exit: $impl_exit)"
+        fi
+
+        # Also store idea for tracking
+        store_loop_idea "$impl_output" "$loop_count"
+    else
+        # heavy-idea: save winning idea to disk
+        log_status "LOOP" "Phase 3: Saving winning idea to disk"
+
+        # Create a synthetic output file with KORERO_IDEA block for store_loop_idea
+        local idea_output="$LOG_DIR/idea_output_${timestamp}.log"
+        local winning_text
+        winning_text=$(cat "$KORERO_DIR/.winning_proposal" 2>/dev/null || echo "")
+
+        cat > "$idea_output" << IDEA_EOF
+---KORERO_IDEA---
+## $winner_title
+
+Source: Cross-AI Debate (Winner: $winner)
+
+$winning_text
+---END_KORERO_IDEA---
+IDEA_EOF
+
+        store_loop_idea "$idea_output" "$loop_count"
+    fi
+
+    # Detect file changes for circuit breaker
+    local files_changed=0
+    if [[ -n "$loop_start_sha" ]] && command -v git &>/dev/null; then
+        local current_sha
+        current_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
+        if [[ -n "$current_sha" && "$current_sha" != "$loop_start_sha" ]]; then
+            files_changed=$(git diff --name-only "$loop_start_sha" "$current_sha" 2>/dev/null | wc -l | tr -d ' ')
+        fi
+        # Also check uncommitted changes
+        local uncommitted
+        uncommitted=$(git diff --name-only 2>/dev/null | wc -l | tr -d ' ')
+        files_changed=$((files_changed + uncommitted))
+    fi
+
+    # Record loop result for circuit breaker
+    local has_errors=false
+    record_loop_result "$loop_count" "$files_changed" "$has_errors" "0"
+    local cb_result=$?
+
+    if [[ $cb_result -ne 0 ]]; then
+        log_status "WARN" "Circuit breaker opened — halting execution"
+        return 3
+    fi
+
+    return 0
+}
+
 # Cleanup function
 cleanup() {
     log_status "INFO" "Korero loop interrupted. Cleaning up..."
@@ -1744,7 +2089,22 @@ main() {
         fi
     fi
 
-    log_status "SUCCESS" "🚀 Korero loop starting with Claude Code"
+    local korero_mode_startup="${KORERO_MODE:-coding}"
+    if [[ "$korero_mode_startup" == "heavy-coding" || "$korero_mode_startup" == "heavy-idea" ]]; then
+        log_status "SUCCESS" "🚀 Korero loop starting in HEAVY MODE ($korero_mode_startup): Claude + Codex"
+        # Verify Codex is ready
+        local codex_status=0
+        check_codex_ready || codex_status=$?
+        if [[ $codex_status -eq 1 ]]; then
+            log_status "ERROR" "Codex CLI not installed. Install with: npm install -g @openai/codex"
+            exit 1
+        elif [[ $codex_status -eq 2 ]]; then
+            log_status "ERROR" "Codex CLI not authenticated. Run: codex login"
+            exit 1
+        fi
+    else
+        log_status "SUCCESS" "🚀 Korero loop starting with Claude Code"
+    fi
     log_status "INFO" "Max calls per hour: $MAX_CALLS_PER_HOUR"
     log_status "INFO" "Logs: $LOG_DIR/ | Docs: $DOCS_DIR/ | Status: $STATUS_FILE"
 
@@ -1844,20 +2204,9 @@ main() {
         if [[ "$exit_reason" != "" ]]; then
             # Handle permission_denied specially (Issue #101)
             if [[ "$exit_reason" == "permission_denied" ]]; then
-                log_status "ERROR" "🚫 Permission denied - halting loop"
-                reset_session "permission_denied"
-                update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "permission_denied" "halted" "permission_denied"
+                log_status "WARN" "🚫 Permission denied - offering interactive fix"
 
-                # Extract denied commands and show actionable fix suggestions
-                echo ""
-                echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
-                echo -e "${RED}║  PERMISSION DENIED - Loop Halted                          ║${NC}"
-                echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
-                echo ""
-                echo -e "${YELLOW}Claude Code was denied permission to execute commands.${NC}"
-                echo ""
-
-                # Try to extract denied commands from response analysis
+                # Extract denied commands from response analysis
                 local denied_cmds=()
                 if [[ -f "$RESPONSE_ANALYSIS_FILE" ]]; then
                     local denied_json
@@ -1869,11 +2218,37 @@ main() {
                     fi
                 fi
 
+                echo ""
+                echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
+                echo -e "${RED}║  PERMISSION DENIED                                         ║${NC}"
+                echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
+                echo ""
+                echo -e "${YELLOW}Claude Code was denied permission to execute commands.${NC}"
+                echo ""
+
+                # Try interactive fix first
                 if [[ ${#denied_cmds[@]} -gt 0 ]]; then
-                    # Use actionable suggestion message with specific fixes
-                    format_permission_denial_message "${denied_cmds[@]}"
+                    # Export project root for apply_permission_fix
+                    export KORERO_PROJECT_ROOT="$PROJECT_ROOT"
+
+                    if prompt_permission_fix "${denied_cmds[@]}"; then
+                        # User accepted fix - continue the loop instead of breaking
+                        log_status "SUCCESS" "Permission fix applied - continuing loop"
+                        update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "permission_fixed" "running"
+
+                        # Reload ALLOWED_TOOLS from updated .korerorc
+                        if [[ -f "$PROJECT_ROOT/.korerorc" ]]; then
+                            source "$PROJECT_ROOT/.korerorc"
+                            # Rebuild Claude command with new permissions
+                            CLAUDE_ALLOWED_TOOLS="${ALLOWED_TOOLS:-}"
+                        fi
+
+                        # Continue to next iteration instead of breaking
+                        continue
+                    fi
+                    # User declined - fall through to halt
                 else
-                    # Fallback to generic guidance when commands aren't available
+                    # No specific commands available - show generic guidance and halt
                     echo "  Update ALLOWED_TOOLS in .korerorc to include the required tools."
                     echo ""
                     echo "  Or use a preset for broader permissions:"
@@ -1882,8 +2257,12 @@ main() {
                     echo ""
                     echo "  Then restart: korero --reset-session && korero --monitor"
                 fi
-                echo ""
 
+                # If we get here, user declined or fix failed - halt the loop
+                log_status "ERROR" "🚫 Permission denied - halting loop"
+                reset_session "permission_denied"
+                update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "permission_denied" "halted" "permission_denied"
+                echo ""
                 break
             fi
 
@@ -1903,8 +2282,13 @@ main() {
         local calls_made=$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")
         update_status "$loop_count" "$calls_made" "executing" "running"
         
-        # Execute Claude Code
-        execute_claude_code "$loop_count"
+        # Execute appropriate loop based on mode
+        local korero_mode="${KORERO_MODE:-coding}"
+        if [[ "$korero_mode" == "heavy-coding" || "$korero_mode" == "heavy-idea" ]]; then
+            execute_heavy_loop "$loop_count"
+        else
+            execute_claude_code "$loop_count"
+        fi
         local exec_result=$?
 
         # Record loop duration
@@ -2410,15 +2794,29 @@ TOPICEOF
 KORERO MODES
 ==============
 
-Korero supports two loop modes:
+Korero supports four loop modes:
 
-  coding   Ideation → Debate → Implementation → Git Commit
-           Full development cycle. Claude writes and commits code.
-           Set: KORERO_MODE="coding" in .korerorc
+  coding        Ideation → Debate → Implementation → Git Commit
+                Full development cycle. Claude writes and commits code.
+                Set: KORERO_MODE="coding" in .korerorc
 
-  idea     Ideation → Debate → Save Best Idea
-           No code changes. Winning ideas saved to .korero/ideas/.
-           Set: KORERO_MODE="idea" in .korerorc
+  idea          Ideation → Debate → Save Best Idea
+                No code changes. Winning ideas saved to .korero/ideas/.
+                Set: KORERO_MODE="idea" in .korerorc
+
+  heavy-coding  Claude + Codex parallel → Cross-AI Debate → Implement
+                Both AIs propose ideas simultaneously. Mutual critique
+                and defense rounds, then Claude judges and implements
+                the winning idea with a git commit.
+                Set: KORERO_MODE="heavy-coding" in .korerorc
+
+  heavy-idea    Claude + Codex parallel → Cross-AI Debate → Save Idea
+                Same dual-AI competition but no code changes.
+                Winning idea saved to .korero/ideas/.
+                Set: KORERO_MODE="heavy-idea" in .korerorc
+
+Heavy modes require the Codex CLI (npm install -g @openai/codex)
+and OAuth authentication (codex login).
 
 Configure via korero-enable wizard or .korerorc directly.
 Browse saved ideas: korero ideas list
@@ -2478,12 +2876,17 @@ TOPICEOF
 Project-level configuration file. Loaded automatically on loop start.
 
 Key variables:
-  KORERO_MODE="coding"           Loop mode: coding or idea
+  KORERO_MODE="coding"           Loop mode: coding, idea, heavy-coding, heavy-idea
   PROJECT_SUBJECT="my project"   Subject for agent generation
   DOMAIN_AGENT_COUNT=3           Number of domain expert agents (1-10)
   MAX_LOOPS="continuous"         Loop limit: number or "continuous"
   ALLOWED_TOOLS="@standard"      Permission preset or explicit tools
   MAX_CALLS_PER_HOUR=100         API call rate limit
+
+Heavy mode variables (heavy-coding / heavy-idea only):
+  CODEX_TIMEOUT=15               Codex CLI timeout in minutes (1-120)
+  CODEX_APPROVAL="never"         Codex approval mode: never or on-request
+  DEBATE_ROUNDS=2                Cross-AI debate rounds (1-3)
 
 Validation:
   korero --validate              Check .korerorc for errors
@@ -2655,6 +3058,24 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             CLAUDE_SESSION_EXPIRY_HOURS="$2"
+            shift 2
+            ;;
+        --codex-timeout)
+            if [[ "$2" =~ ^[1-9][0-9]*$ ]] && [[ "$2" -le 120 ]]; then
+                CODEX_TIMEOUT_MINUTES="$2"
+            else
+                echo "Error: --codex-timeout must be a positive integer between 1 and 120 minutes"
+                exit 1
+            fi
+            shift 2
+            ;;
+        --debate-rounds)
+            if [[ "$2" =~ ^[1-3]$ ]]; then
+                DEBATE_ROUNDS="$2"
+            else
+                echo "Error: --debate-rounds must be 1, 2, or 3"
+                exit 1
+            fi
             shift 2
             ;;
         --start-idea)

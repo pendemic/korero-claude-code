@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-This is the Korero for Claude Code repository - a multi-agent ideation and development system that enables continuous development cycles with intelligent exit detection and rate limiting. Korero supports two modes: a **Continuous Coding Loop** (ideation + implementation + git commits) and a **Continuous Idea Loop** (ideation + debate only, saves best idea to disk).
+This is the Korero for Claude Code repository - a multi-agent ideation and development system that enables continuous development cycles with intelligent exit detection and rate limiting. Korero supports four modes: a **Continuous Coding Loop** (ideation + implementation + git commits), a **Continuous Idea Loop** (ideation + debate only, saves best idea to disk), a **Heavy Coding Loop** (Claude + Codex parallel execution + cross-AI debate + implementation), and a **Heavy Idea Loop** (Claude + Codex parallel execution + cross-AI debate, saves best idea).
 
 See [README.md](README.md) for version info, changelog, and user documentation.
 
@@ -60,9 +60,12 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - Two-stage error filtering to eliminate false positives
    - Multi-line error matching for accurate stuck loop detection
    - Confidence scoring for exit decisions
-   - **Permission denial suggestions**: `suggest_permission_fix()`, `format_permission_denial_message()`
-   - Maps denied commands to ALLOWED_TOOLS patterns (e.g., `npm install` → `Bash(npm *)`)
-   - Formats actionable fix messages with per-command suggestions and preset alternatives
+   - **Permission denial handling**: Interactive recovery with auto-apply capability
+   - `prompt_permission_fix()` - Interactive prompt for permission recovery (auto-updates .korerorc)
+   - `apply_permission_fix()` - Updates ALLOWED_TOOLS in .korerorc (creates backup)
+   - `merge_tool_permissions()` - Merges tool permissions avoiding duplicates
+   - `suggest_permission_fix()` - Maps commands to ALLOWED_TOOLS patterns (e.g., `npm install` → `Bash(npm *)`)
+   - `format_permission_denial_message()` - Formats actionable fix messages with preset alternatives
 
 3. **lib/date_utils.sh** - Cross-platform date utilities
    - ISO timestamp generation for logging
@@ -128,6 +131,25 @@ The system uses a modular architecture with reusable components in the `lib/` di
     - `check_permissions()` - Checks `.korero/` directory write access
     - `check_network()` - Tests connectivity to `api.anthropic.com` via curl (5s timeout)
     - `check_config()` - Validates `.korerorc` bash syntax via `bash -n`
+    - `check_codex_tool()` - Checks if Codex CLI is installed; shows version (heavy modes only)
+    - `check_codex_auth_health()` - Verifies `~/.codex/auth.json` or `codex login status` (heavy modes only)
+    - `check_codex_network()` - Tests connectivity to `api.openai.com` via curl (heavy modes only)
+
+11. **lib/codex_adapter.sh** - Codex CLI integration for heavy modes
+    - `check_codex_ready()` - Returns 0 (ready), 1 (not installed), 2 (not authenticated)
+    - `check_codex_auth()` - Checks `~/.codex/auth.json` exists or `codex login status` passes
+    - `run_codex_login(method)` - Runs OAuth login via `device` (device-auth), `browser`, or `api-key` method
+    - `build_codex_command(prompt, mode, output_path)` - Populates `CODEX_CMD_ARGS` array with `codex exec --json --sandbox read-only`
+    - `parse_codex_response(ndjson_file, last_message_file, result_file)` - Creates normalized JSON at `.korero/.codex_parse_result`
+    - `extract_codex_proposal(last_message_file)` - Returns final proposal text on stdout
+
+12. **lib/cross_ai_debate.sh** - Cross-AI debate orchestrator for heavy modes
+    - `run_cross_ai_debate(claude_file, codex_file, loop_num, mode, project, rounds)` - Orchestrates 3-round debate, writes `.korero/.debate_result`
+    - `build_critique_prompt(own, other, ai_name, other_name, project)` - Generates critique prompt from template
+    - `build_defense_prompt(own, critique, ai_name, other_name, project)` - Generates defense prompt from template
+    - `build_judge_prompt(6 artifacts, mode, project)` - Generates judgment prompt with scoring criteria (truncates artifacts to 2000 chars)
+    - `parse_debate_verdict(judge_output, result_file)` - Extracts winner from `---DEBATE_VERDICT---` block, defaults to claude on failure
+    - `get_debate_winner()` - Returns winner from `.korero/.debate_result`
 
 ## Key Commands
 
@@ -171,12 +193,17 @@ korero-enable --from beads
 korero-enable --from github --label "sprint-1"
 korero-enable --from prd ./docs/requirements.md
 
+# Heavy mode with dual-AI parallel execution
+korero-enable --mode heavy-coding --subject "web app"
+korero-enable --mode heavy-idea --subject "ML pipeline" --agents 5
+
 # Force overwrite existing .korero/
 korero-enable --force
 
 # Non-interactive for CI/scripts
 korero-enable-ci                              # Sensible defaults
 korero-enable-ci --mode idea --subject "ML pipeline" --agents 5 --loops 10
+korero-enable-ci --mode heavy-coding          # Heavy mode (requires Codex auth)
 korero-enable-ci --from github               # With task source
 korero-enable-ci --project-type typescript   # Override detection
 korero-enable-ci --json                      # Machine-readable output
@@ -319,6 +346,8 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--examples` - Interactive example workflow gallery with 7 project-type templates
 - `--show-debate [N]` - Display debate transcript from loop N (or latest if N omitted)
 - `--health-check` - Validate all prerequisites (Claude CLI, jq, git, permissions, network, config)
+- `--codex-timeout NUM` - Set Codex execution timeout in minutes (1-120, heavy modes only)
+- `--debate-rounds NUM` - Set number of cross-AI debate rounds (1-3, heavy modes only)
 
 **Loop Context:**
 Each loop iteration injects context via `build_loop_context()`:
@@ -327,6 +356,7 @@ Each loop iteration injects context via `build_loop_context()`:
 - Idea context (when started via `--start-idea`)
 - Circuit breaker state (if not CLOSED)
 - Previous loop work summary
+- Previous debate winner info (heavy modes only)
 
 **Session Continuity:**
 - Sessions are preserved in `.korero/.claude_session_id`
@@ -335,11 +365,13 @@ Each loop iteration injects context via `build_loop_context()`:
 
 ### Multi-Agent Ideation System
 
-Korero supports two loop modes configured via `korero-enable` or `.korerorc`:
+Korero supports four loop modes configured via `korero-enable` or `.korerorc`:
 
 **Modes:**
 - **`coding`** - Ideation → Debate → Implementation → Git Commit (default)
 - **`idea`** - Ideation → Debate → Save Best Idea (no code changes)
+- **`heavy-coding`** - Claude + Codex parallel execution → Cross-AI debate → Claude implements winner + git commit
+- **`heavy-idea`** - Claude + Codex parallel execution → Cross-AI debate → Save winning idea (no code changes)
 
 **Agent Architecture:**
 - **Domain Agents** (1-10, user-configurable): Auto-generated experts based on project subject, or manually specified roles
@@ -361,11 +393,39 @@ Korero supports two loop modes configured via `korero-enable` or `.korerorc`:
 
 **`.korerorc` Ideation Fields:**
 ```bash
-KORERO_MODE="idea"               # Loop mode: coding or idea
+KORERO_MODE="idea"               # Loop mode: coding, idea, heavy-coding, or heavy-idea
 PROJECT_SUBJECT="data analysis"  # Subject for agent generation
 DOMAIN_AGENT_COUNT=3             # Number of domain agents
 MAX_LOOPS="continuous"           # Loop limit: number or continuous
 ```
+
+**`.korerorc` Heavy Mode Fields** (only used for `heavy-coding` / `heavy-idea`):
+```bash
+CODEX_TIMEOUT=15                 # Codex execution timeout in minutes (1-120)
+CODEX_APPROVAL="never"          # Codex approval mode: never | on-request
+DEBATE_ROUNDS=2                  # Cross-AI debate rounds (1-3)
+```
+
+### Heavy Mode Architecture
+
+Heavy modes run Claude Code and OpenAI Codex CLI in parallel each loop, then orchestrate a cross-AI debate:
+
+**Debate Flow (3 rounds, 5 extra API calls per loop):**
+1. **Round 1: Mutual Critique** (parallel) — Each AI critiques the other's proposal
+2. **Round 2: Defense** (parallel) — Each AI defends its proposal against the critique
+3. **Round 3: Judgment** (Claude only) — Claude evaluates all 6 artifacts and selects a winner
+
+**Scoring Rubric:** User Impact (30%), Technical Feasibility (25%), Debate Performance (20%), Implementation Clarity (15%), Risk Management (10%)
+
+**Fallback Behavior:**
+- If one AI fails, the surviving AI's proposal is used directly (debate skipped)
+- If both AIs fail, the loop exits with an error
+- Codex always runs in `--sandbox read-only`; only Claude implements the winner
+
+**Key Files:**
+- `.korero/.debate_result` — JSON with winner, title, confidence, rationale
+- `.korero/debates/loop_N.md` — Full debate transcript per loop
+- `templates/heavy_debate_prompts/` — Critique, defense, and judge prompt templates
 
 ### Intelligent Exit Detection
 The loop uses a dual-condition check to prevent premature exits during productive iterations:
@@ -460,7 +520,7 @@ Korero installs to:
 - **Commands**: `~/.local/bin/` (korero, korero-monitor, korero-setup, korero-import, korero-migrate, korero-enable, korero-enable-ci)
 - **Templates**: `~/.korero/templates/`
 - **Scripts**: `~/.korero/` (korero_loop.sh, korero_monitor.sh, setup.sh, korero_import.sh, migrate_to_korero_folder.sh, korero_enable.sh, korero_enable_ci.sh)
-- **Libraries**: `~/.korero/lib/` (circuit_breaker.sh, response_analyzer.sh, date_utils.sh, timeout_utils.sh, enable_core.sh, wizard_utils.sh, task_sources.sh, permission_presets.sh)
+- **Libraries**: `~/.korero/lib/` (circuit_breaker.sh, response_analyzer.sh, date_utils.sh, timeout_utils.sh, enable_core.sh, wizard_utils.sh, task_sources.sh, permission_presets.sh, codex_adapter.sh, cross_ai_debate.sh, debate_transcript.sh)
 
 After installation, the following global commands are available:
 - `korero` - Start the autonomous development loop
@@ -475,6 +535,7 @@ After installation, the following global commands are available:
 
 Korero integrates with:
 - **Claude Code CLI**: Uses `npx @anthropic/claude-code` as the execution engine
+- **OpenAI Codex CLI**: Used as second AI in heavy modes (`codex exec --json --sandbox read-only`)
 - **tmux**: Terminal multiplexer for integrated monitoring sessions
 - **Git**: Expects projects to be git repositories
 - **jq**: For JSON processing of status and exit signals
@@ -523,22 +584,41 @@ fi
 - `CB_SAME_ERROR_THRESHOLD=5` - Open circuit after 5 loops with repeated errors
 - `CB_OUTPUT_DECLINE_THRESHOLD=70%` - Open circuit if output declines by >70%
 - `CB_PERMISSION_DENIAL_THRESHOLD=2` - Open circuit after 2 loops with permission denials (Issue #101)
+- `CB_CODEX_FAILURE_THRESHOLD=3` - Open circuit after 3 consecutive Codex failures (heavy modes only)
 
 ### Permission Denial Detection (Issue #101)
 
-When Claude Code is denied permission to execute commands (e.g., `npm install`), Korero detects this from the `permission_denials` array in the JSON output and halts the loop immediately:
+When Claude Code is denied permission to execute commands (e.g., `npm install`), Korero detects this from the `permission_denials` array in the JSON output and offers interactive recovery:
 
 1. **Detection**: The `parse_json_response()` function extracts `permission_denials` from Claude Code output
 2. **Fields tracked**:
    - `has_permission_denials` (boolean)
    - `permission_denial_count` (integer)
    - `denied_commands` (array of command strings)
-3. **Exit behavior**: When `has_permission_denials=true`, Korero exits with reason "permission_denied"
-4. **Progressive fix suggestions**: `format_permission_denial_message()` presents three numbered options:
-   - **Option 1: Quick fix** - Adds only the specific patterns needed for the denied commands
-   - **Option 2: @standard preset** (recommended) - Covers git, npm, pytest for most projects
-   - **Option 3: @permissive** - All Bash commands for maximum flexibility
+3. **Interactive recovery**: When permissions are denied, Korero presents an interactive prompt:
+   ```
+   ╔════════════════════════════════════════════════════════════╗
+   ║  PERMISSION DENIED                                         ║
+   ╚════════════════════════════════════════════════════════════╝
+
+   Quick Actions:
+     1) Apply quick fix (add only needed tools): Bash(npm *)
+     2) Apply @standard preset (recommended for most projects)
+     3) Apply @permissive preset (all Bash commands)
+     n) Exit and fix manually
+
+   Select option [1/2/3/n]:
+   ```
+4. **Auto-apply**: Selecting options 1-3 automatically updates `.korerorc` and resumes the loop without restart
 5. **Command mapping**: `suggest_permission_fix()` maps common commands to wildcard patterns (e.g., `npm install` → `Bash(npm *)`)
+6. **Tool merging**: `merge_tool_permissions()` combines new tools with existing ones, avoiding duplicates
+
+**Key Functions:**
+- `prompt_permission_fix()` - Interactive prompt for permission recovery
+- `apply_permission_fix()` - Updates `.korerorc` with new tools (creates backup)
+- `merge_tool_permissions()` - Merges tool permissions avoiding duplicates
+- `suggest_permission_fix()` - Maps commands to ALLOWED_TOOLS patterns
+- `format_permission_denial_message()` - Formats actionable fix suggestions
 
 **Example `.korerorc` tool patterns:**
 ```bash
@@ -577,9 +657,9 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (744 tests across 24 files)
+### Test Files (824 tests across 27 files)
 
-**Unit Tests (608 tests):**
+**Unit Tests (688 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
@@ -598,6 +678,9 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_korero_ideas.bats` | 31 | Ideas browsing, search, get_idea_title, sanitize_branch_name |
 | `test_debate_transcript.bats` | 18 | Debate transcript: init, append, finalize, get_latest, show, list |
 | `test_health_check.bats` | 23 | Health check: tool detection, git config, permissions, network, config, CLI flag |
+| `test_codex_adapter.bats` | 25 | Codex CLI adapter: command building, auth checks, response parsing, proposal extraction |
+| `test_cross_ai_debate.bats` | 28 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling |
+| `test_heavy_mode.bats` | 27 | Heavy mode integration: .korerorc validation, CLI flags, health checks, circuit breaker, enable |
 | `test_agent_protocol.bats` | 21 | Agent protocol tests |
 | `test_duration_tracking.bats` | 16 | Loop duration tracking |
 | `test_korero_config.bats` | 9 | Configuration management |
@@ -626,6 +709,9 @@ bats tests/unit/test_cli_parsing.bats
 bats tests/unit/test_ideation_mode.bats
 bats tests/unit/test_debate_transcript.bats
 bats tests/unit/test_health_check.bats
+bats tests/unit/test_codex_adapter.bats
+bats tests/unit/test_cross_ai_debate.bats
+bats tests/unit/test_heavy_mode.bats
 ```
 
 ## Feature Development Quality Standards
