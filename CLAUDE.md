@@ -128,7 +128,8 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - `list_debate_transcripts()` - Lists all available transcripts with status indicators
 
 10. **lib/health_check.sh** - Environment prerequisite validation
-    - `run_health_check()` - Runs all checks and prints formatted report; exits 0 (all pass) or N (issues found)
+    - `check_bash_version()` - Validates Bash 4.0+ requirement; shows platform-specific upgrade instructions; returns 3 on failure
+    - `run_health_check()` - Runs all checks (including bash version) and prints formatted report; exits 0 (all pass) or N (issues found)
     - `check_tool(cmd, name, hint)` - Checks if a CLI tool is installed; shows version or install hint
     - `check_timeout_tool()` - Checks for `timeout` or `gtimeout` (cross-platform)
     - `check_git_config()` - Validates `git config user.name` and `user.email` are set
@@ -270,6 +271,9 @@ korero --health-check || exit 1  # Use in CI to fail fast
 # API cost estimation
 korero --cost-estimate           # Show estimated API costs from logs
 
+# Troubleshooting
+korero --troubleshoot            # Quick reference for common issues and fixes
+
 # Circuit breaker management
 korero --reset-circuit
 korero --circuit-status
@@ -363,6 +367,7 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--show-debate [N]` - Display debate transcript from loop N (or latest if N omitted)
 - `--health-check` - Validate all prerequisites (Claude CLI, jq, git, permissions, network, config)
 - `--cost-estimate` - Estimate API costs from loop log files and display formatted report
+- `--troubleshoot` / `--troubleshooting` - Show categorized troubleshooting quick reference with common issues and fix commands
 - `--codex-timeout NUM` - Set Codex execution timeout in minutes (1-120, heavy modes only)
 - `--debate-rounds NUM` - Set number of cross-AI debate rounds (1-3, heavy modes only)
 
@@ -699,13 +704,13 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (878 tests across 28 files)
+### Test Files (889 tests across 28 files)
 
-**Unit Tests (742 tests):**
+**Unit Tests (753 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
-| `test_cli_parsing.bats` | 63 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea, quickstart, validate-config, examples, show-debate |
+| `test_cli_parsing.bats` | 69 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea, quickstart, validate-config, examples, show-debate, troubleshoot |
 | `test_cli_modern.bats` | 33 | Modern CLI commands (Phase 1.1) + build_claude_command fix |
 | `test_json_parsing.bats` | 74 | JSON output format parsing + Claude CLI format + session management + permission suggestions + visual config diff |
 | `test_session_continuity.bats` | 44 | Session lifecycle management + circuit breaker integration + issue #91 fix |
@@ -719,7 +724,7 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_permission_presets.bats` | 16 | Permission presets: expansion, mixed tools, integration with CLI args |
 | `test_korero_ideas.bats` | 31 | Ideas browsing, search, get_idea_title, sanitize_branch_name |
 | `test_debate_transcript.bats` | 18 | Debate transcript: init, append, finalize, get_latest, show, list |
-| `test_health_check.bats` | 23 | Health check: tool detection, git config, permissions, network, config, CLI flag |
+| `test_health_check.bats` | 28 | Health check: tool detection, git config, permissions, network, config, CLI flag, bash version guard |
 | `test_codex_adapter.bats` | 25 | Codex CLI adapter: command building, auth checks, response parsing, proposal extraction |
 | `test_cross_ai_debate.bats` | 44 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling, progress indicators |
 | `test_heavy_mode.bats` | 27 | Heavy mode integration: .korerorc validation, CLI flags, health checks, circuit breaker, enable |

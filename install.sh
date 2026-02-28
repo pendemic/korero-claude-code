@@ -3,6 +3,13 @@
 # Korero for Claude Code - Global Installation Script
 set -e
 
+# Bash version check — Korero requires 4.0+
+if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]]; then
+    echo "Error: Korero requires Bash 4.0+. You have Bash ${BASH_VERSION:-unknown}"
+    echo "On macOS: brew install bash"
+    exit 1
+fi
+
 # Configuration
 INSTALL_DIR="$HOME/.local/bin"
 KORERO_HOME="$HOME/.korero"

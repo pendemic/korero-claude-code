@@ -721,3 +721,52 @@ EOF
     [ "$status" -eq 1 ]
     [[ "$output" == *"No debate transcript found for loop 99"* ]]
 }
+
+# ===== --troubleshoot =====
+
+@test "--troubleshoot displays quick reference" {
+    run bash "$KORERO_SCRIPT" --troubleshoot
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"TROUBLESHOOTING QUICK REFERENCE"* ]]
+    [[ "$output" == *"PERMISSION ISSUES"* ]]
+    [[ "$output" == *"RATE LIMITING"* ]]
+    [[ "$output" == *"SESSION ISSUES"* ]]
+    [[ "$output" == *"CIRCUIT BREAKER"* ]]
+}
+
+@test "--troubleshooting alias works" {
+    run bash "$KORERO_SCRIPT" --troubleshooting
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"TROUBLESHOOTING QUICK REFERENCE"* ]]
+}
+
+@test "--troubleshoot includes help topic references" {
+    run bash "$KORERO_SCRIPT" --troubleshoot
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"korero --help presets"* ]]
+    [[ "$output" == *"korero --help tools"* ]]
+    [[ "$output" == *"korero --help rate-limiting"* ]]
+    [[ "$output" == *"korero --help session"* ]]
+    [[ "$output" == *"korero --help circuit-breaker"* ]]
+    [[ "$output" == *"korero --help config"* ]]
+}
+
+@test "--troubleshoot includes heavy mode section" {
+    run bash "$KORERO_SCRIPT" --troubleshoot
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"HEAVY MODE"* ]]
+    [[ "$output" == *"Codex"* ]]
+}
+
+@test "--troubleshoot includes configuration section" {
+    run bash "$KORERO_SCRIPT" --troubleshoot
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CONFIGURATION"* ]]
+    [[ "$output" == *"@standard"* ]]
+}
+
+@test "--help shows --troubleshoot option" {
+    run bash "$KORERO_SCRIPT" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--troubleshoot"* ]]
+}

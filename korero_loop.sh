@@ -23,6 +23,11 @@ source "$SCRIPT_DIR/lib/cross_ai_debate.sh"
 source "$SCRIPT_DIR/lib/debate_transcript.sh"
 source "$SCRIPT_DIR/lib/cost_estimator.sh"
 
+# Validate bash version before anything else
+if ! check_bash_version; then
+    exit 3
+fi
+
 # Configuration
 # Korero-specific files live in .korero/ subfolder
 KORERO_DIR=".korero"
@@ -2386,6 +2391,7 @@ Options:
     --show-debate [N]       Show debate transcript (latest, or loop N)
     --health-check          Validate environment prerequisites (Claude CLI, jq, git, network)
     --cost-estimate         Estimate API costs from loop logs and display report
+    --troubleshoot          Show troubleshooting quick reference for common issues
     --start-idea N          Create branch from winning idea N and start coding loop
     --reset-circuit         Reset circuit breaker to CLOSED state
     --circuit-status        Show circuit breaker status and exit
@@ -2436,6 +2442,91 @@ Help Topics:
       config           .korerorc configuration reference
 
 HELPEOF
+}
+
+# Troubleshooting Quick Reference — common issues and fixes
+show_troubleshoot_reference() {
+    cat << 'TROUBLESHOOT_EOF'
+
+═══════════════════════════════════════════════════════════
+           KORERO TROUBLESHOOTING QUICK REFERENCE
+═══════════════════════════════════════════════════════════
+
+PERMISSION ISSUES
+  "Permission denied" during loop execution
+    → Check ALLOWED_TOOLS in .korerorc
+    → Quick fix: korero --help presets
+    → Auto-fix: Interactive recovery prompts you on denial
+
+  "Bash(npm *) not allowed"
+    → Add to ALLOWED_TOOLS or use @standard preset
+    → See: korero --help tools
+
+RATE LIMITING
+  "Rate limit approaching" warnings
+    → Check current usage: korero --status
+    → Adjust limit: korero --calls 50
+    → See: korero --help rate-limiting
+
+  "Rate limit exceeded"
+    → Wait for hourly reset (shown in --status)
+    → Or increase limit in .korerorc: MAX_CALLS_PER_HOUR=150
+
+SESSION ISSUES
+  "Session context seems stale"
+    → Reset session: korero --reset-session
+    → See: korero --help session
+
+  "Session won't continue across loops"
+    → Check .korero/.claude_session_id exists
+    → Verify CLAUDE_USE_CONTINUE=true in .korerorc
+
+CIRCUIT BREAKER
+  "Circuit breaker OPEN" message
+    → Check state: korero --circuit-status
+    → Reset after fixing issue: korero --reset-circuit
+    → See: korero --help circuit-breaker
+
+  "No progress detected" warnings
+    → Check if loops are making file changes
+    → Review .korero/logs/ for recent loop output
+
+HEAVY MODE (Claude + Codex)
+  "Codex authentication failed"
+    → Run: codex login
+    → Or check ~/.codex/auth.json
+    → See: korero --help modes
+
+  "Debate timeout"
+    → Increase CODEX_TIMEOUT in .korerorc (default: 15 min)
+    → Or use --codex-timeout flag
+
+CONFIGURATION
+  "Invalid .korerorc" errors
+    → Validate: korero --validate
+    → Verbose check: korero --validate-config
+    → See: korero --help config
+
+  "Unknown preset" errors
+    → Valid presets: @conservative, @standard, @permissive
+    → See: korero --help presets
+
+STARTUP
+  "Bash syntax errors" on macOS
+    → Korero requires Bash 4.0+. macOS ships with 3.2
+    → Upgrade: brew install bash
+    → Check: korero --health-check
+
+  "Command not found: korero"
+    → Run install.sh first: ./install.sh
+    → Ensure ~/.local/bin is in PATH
+
+═══════════════════════════════════════════════════════════
+Tip: Run 'korero --help <topic>' for detailed documentation
+     on any topic mentioned above.
+═══════════════════════════════════════════════════════════
+
+TROUBLESHOOT_EOF
 }
 
 # Example Gallery — curated workflow examples for new users
@@ -3020,6 +3111,10 @@ while [[ $# -gt 0 ]]; do
         --cost-estimate)
             display_cost_report
             exit $?
+            ;;
+        --troubleshoot|--troubleshooting)
+            show_troubleshoot_reference
+            exit 0
             ;;
         --show-debate)
             SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
