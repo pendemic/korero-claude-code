@@ -21,6 +21,7 @@ source "$SCRIPT_DIR/lib/health_check.sh"
 source "$SCRIPT_DIR/lib/codex_adapter.sh"
 source "$SCRIPT_DIR/lib/cross_ai_debate.sh"
 source "$SCRIPT_DIR/lib/debate_transcript.sh"
+source "$SCRIPT_DIR/lib/cost_estimator.sh"
 
 # Configuration
 # Korero-specific files live in .korero/ subfolder
@@ -2384,6 +2385,7 @@ Options:
     --examples              Interactive gallery of curated workflow examples
     --show-debate [N]       Show debate transcript (latest, or loop N)
     --health-check          Validate environment prerequisites (Claude CLI, jq, git, network)
+    --cost-estimate         Estimate API costs from loop logs and display report
     --start-idea N          Create branch from winning idea N and start coding loop
     --reset-circuit         Reset circuit breaker to CLOSED state
     --circuit-status        Show circuit breaker status and exit
@@ -3013,6 +3015,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --health-check)
             run_health_check
+            exit $?
+            ;;
+        --cost-estimate)
+            display_cost_report
             exit $?
             ;;
         --show-debate)

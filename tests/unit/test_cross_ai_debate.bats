@@ -250,3 +250,101 @@ EOF
     run_cross_ai_debate "$TEST_DIR/claude_prop.log" "$TEST_DIR/codex_prop.log" 1 "heavy-idea" "proj" 2
     grep -q "default" "$DEBATES_DIR/loop_1.md"
 }
+
+# ===== get_phase_icon =====
+
+@test "get_phase_icon returns correct icon for proposal" {
+    result=$(get_phase_icon "proposal")
+    [ "$result" = "[>]" ]
+}
+
+@test "get_phase_icon returns correct icon for critique" {
+    result=$(get_phase_icon "critique")
+    [ "$result" = "[*]" ]
+}
+
+@test "get_phase_icon returns correct icon for defense" {
+    result=$(get_phase_icon "defense")
+    [ "$result" = "[#]" ]
+}
+
+@test "get_phase_icon returns correct icon for judgment" {
+    result=$(get_phase_icon "judgment")
+    [ "$result" = "[=]" ]
+}
+
+@test "get_phase_icon returns correct icon for complete" {
+    result=$(get_phase_icon "complete")
+    [ "$result" = "[+]" ]
+}
+
+@test "get_phase_icon returns correct icon for error" {
+    result=$(get_phase_icon "error")
+    [ "$result" = "[!]" ]
+}
+
+@test "get_phase_icon returns default icon for unknown phase" {
+    result=$(get_phase_icon "unknown")
+    [ "$result" = "[-]" ]
+}
+
+# ===== show_debate_progress =====
+
+@test "show_debate_progress outputs to stderr" {
+    run show_debate_progress "critique" "start" "testing"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Critique"* ]]
+    [[ "$output" == *"IN PROGRESS"* ]]
+}
+
+@test "show_debate_progress shows DONE for end status" {
+    run show_debate_progress "defense" "end" "complete"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DONE"* ]]
+}
+
+@test "show_debate_progress shows FAILED for error status" {
+    run show_debate_progress "judgment" "error" "exit code 1"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"FAILED"* ]]
+}
+
+@test "show_debate_progress includes elapsed time" {
+    run show_debate_progress "critique" "end" "done" "42"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"42s"* ]]
+}
+
+@test "show_debate_progress includes detail message" {
+    run show_debate_progress "defense" "start" "Claude + Codex in parallel"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Claude + Codex in parallel"* ]]
+}
+
+# ===== show_debate_summary =====
+
+@test "show_debate_summary displays winner" {
+    run show_debate_summary "claude" "Test Idea" "85" "120"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DEBATE COMPLETE"* ]]
+    [[ "$output" == *"Claude"* ]]
+}
+
+@test "show_debate_summary displays codex winner" {
+    run show_debate_summary "codex" "Codex Idea" "90" "60"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Codex"* ]]
+}
+
+@test "show_debate_summary shows confidence and duration" {
+    run show_debate_summary "claude" "Test" "75" "45"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"75%"* ]]
+    [[ "$output" == *"45s"* ]]
+}
+
+@test "show_debate_summary shows idea title" {
+    run show_debate_summary "claude" "Add streaming support" "80" "30"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Add streaming support"* ]]
+}

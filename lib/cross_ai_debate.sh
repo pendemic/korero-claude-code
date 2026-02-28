@@ -14,6 +14,121 @@
 KORERO_DIR="${KORERO_DIR:-.korero}"
 DEBATE_RESULT_FILE="$KORERO_DIR/.debate_result"
 
+# ANSI color codes for progress indicators
+DEBATE_BLUE='\033[0;34m'
+DEBATE_GREEN='\033[0;32m'
+DEBATE_YELLOW='\033[1;33m'
+DEBATE_CYAN='\033[0;36m'
+DEBATE_RED='\033[0;31m'
+DEBATE_NC='\033[0m'
+DEBATE_BOLD='\033[1m'
+
+# Get icon for a debate phase
+# Arguments:
+#   $1 (phase) - Phase name: "proposal", "critique", "defense", "judgment", "complete", "error"
+# Returns: phase icon character on stdout
+get_phase_icon() {
+    local phase="$1"
+    case "$phase" in
+        proposal)  echo "[>]" ;;
+        critique)  echo "[*]" ;;
+        defense)   echo "[#]" ;;
+        judgment)  echo "[=]" ;;
+        complete)  echo "[+]" ;;
+        error)     echo "[!]" ;;
+        waiting)   echo "[.]" ;;
+        *)         echo "[-]" ;;
+    esac
+}
+
+# Show streaming progress indicator for debate phases
+# Arguments:
+#   $1 (phase)   - Phase name (proposal, critique, defense, judgment)
+#   $2 (status)  - Status: "start", "end", "error"
+#   $3 (detail)  - Optional detail message
+#   $4 (elapsed) - Optional elapsed time in seconds
+# Output: Colorized progress line to stderr
+show_debate_progress() {
+    local phase="$1"
+    local status="$2"
+    local detail="${3:-}"
+    local elapsed="${4:-}"
+
+    local icon
+    icon=$(get_phase_icon "$phase")
+
+    local color="$DEBATE_CYAN"
+    local status_text=""
+
+    case "$status" in
+        start)
+            color="$DEBATE_YELLOW"
+            status_text="IN PROGRESS"
+            ;;
+        end)
+            color="$DEBATE_GREEN"
+            icon=$(get_phase_icon "complete")
+            status_text="DONE"
+            ;;
+        error)
+            color="$DEBATE_RED"
+            icon=$(get_phase_icon "error")
+            status_text="FAILED"
+            ;;
+    esac
+
+    local time_str=""
+    if [[ -n "$elapsed" ]]; then
+        time_str=" (${elapsed}s)"
+    fi
+
+    local detail_str=""
+    if [[ -n "$detail" ]]; then
+        detail_str=" — $detail"
+    fi
+
+    echo -e "${color}${icon} ${DEBATE_BOLD}${phase^}${DEBATE_NC}${color} [${status_text}]${time_str}${detail_str}${DEBATE_NC}" >&2
+}
+
+# Show debate completion summary with winner information
+# Arguments:
+#   $1 (winner)     - "claude" or "codex"
+#   $2 (title)      - Winning idea title
+#   $3 (confidence) - Confidence score (0-100)
+#   $4 (total_time) - Total debate time in seconds
+# Output: Formatted summary to stderr
+show_debate_summary() {
+    local winner="$1"
+    local title="${2:-}"
+    local confidence="${3:-}"
+    local total_time="${4:-}"
+
+    echo -e "" >&2
+    echo -e "${DEBATE_CYAN}╔══════════════════════════════════════════════════╗${DEBATE_NC}" >&2
+    echo -e "${DEBATE_CYAN}║  ${DEBATE_BOLD}DEBATE COMPLETE${DEBATE_NC}${DEBATE_CYAN}                                 ║${DEBATE_NC}" >&2
+    echo -e "${DEBATE_CYAN}╠══════════════════════════════════════════════════╣${DEBATE_NC}" >&2
+
+    local winner_display
+    if [[ "$winner" == "claude" ]]; then
+        winner_display="${DEBATE_BLUE}Claude${DEBATE_NC}"
+    else
+        winner_display="${DEBATE_GREEN}Codex${DEBATE_NC}"
+    fi
+
+    echo -e "${DEBATE_CYAN}║${DEBATE_NC}  Winner:     ${winner_display}" >&2
+    if [[ -n "$title" ]]; then
+        echo -e "${DEBATE_CYAN}║${DEBATE_NC}  Idea:       ${title}" >&2
+    fi
+    if [[ -n "$confidence" ]]; then
+        echo -e "${DEBATE_CYAN}║${DEBATE_NC}  Confidence: ${confidence}%" >&2
+    fi
+    if [[ -n "$total_time" ]]; then
+        echo -e "${DEBATE_CYAN}║${DEBATE_NC}  Duration:   ${total_time}s" >&2
+    fi
+
+    echo -e "${DEBATE_CYAN}╚══════════════════════════════════════════════════╝${DEBATE_NC}" >&2
+}
+
 # Locate the templates directory (installed or local)
 _get_template_dir() {
     local script_dir
@@ -371,8 +486,15 @@ CLAUDE_WIN_EOF
         return 0
     fi
 
+    # Track overall debate timing
+    local debate_start_time
+    debate_start_time=$(date +%s)
+
     # === ROUND 1: MUTUAL CRITIQUE (parallel) ===
+    show_debate_progress "critique" "start" "Claude + Codex critiquing in parallel"
     log_status "INFO" "  Debate Round 1/3: Mutual critique (Claude + Codex in parallel)..."
+    local round1_start
+    round1_start=$(date +%s)
     local claude_critique_file="$debate_dir/claude_critique_${timestamp}.log"
     local codex_critique_file="$debate_dir/codex_critique_${timestamp}.log"
 
@@ -398,7 +520,14 @@ CLAUDE_WIN_EOF
     local claude_crit_exit=0 codex_crit_exit=0
     wait $claude_crit_pid || claude_crit_exit=$?
     wait $codex_crit_pid || codex_crit_exit=$?
+    local round1_elapsed=$(( $(date +%s) - round1_start ))
     log_status "INFO" "  Round 1 complete — Claude critique: exit $claude_crit_exit, Codex critique: exit $codex_crit_exit"
+
+    if [[ $claude_crit_exit -ne 0 || $codex_crit_exit -ne 0 ]]; then
+        show_debate_progress "critique" "error" "Claude: exit $claude_crit_exit, Codex: exit $codex_crit_exit" "$round1_elapsed"
+    else
+        show_debate_progress "critique" "end" "Both critiques received" "$round1_elapsed"
+    fi
 
     # Extract critique text
     local claude_critique_text codex_critique_text
@@ -432,7 +561,10 @@ CLAUDE_WIN_EOF
     local claude_defense_text="" codex_defense_text=""
 
     if [[ "$debate_rounds" -ge 2 ]]; then
+        show_debate_progress "defense" "start" "Claude + Codex defending in parallel"
         log_status "INFO" "  Debate Round 2/3: Defense (Claude + Codex in parallel)..."
+        local round2_start
+        round2_start=$(date +%s)
         local claude_defense_file="$debate_dir/claude_defense_${timestamp}.log"
         local codex_defense_file="$debate_dir/codex_defense_${timestamp}.log"
 
@@ -455,6 +587,7 @@ CLAUDE_WIN_EOF
         local claude_def_exit=0 codex_def_exit=0
         wait $claude_def_pid || claude_def_exit=$?
         wait $codex_def_pid || codex_def_exit=$?
+        local round2_elapsed=$(( $(date +%s) - round2_start ))
         log_status "INFO" "  Round 2 complete — Claude defense: exit $claude_def_exit, Codex defense: exit $codex_def_exit"
 
         # Extract defense text
@@ -480,13 +613,22 @@ CLAUDE_WIN_EOF
             codex_defense_text="[Codex defense unavailable — execution failed]"
         fi
 
+        if [[ $claude_def_exit -ne 0 || $codex_def_exit -ne 0 ]]; then
+            show_debate_progress "defense" "error" "Claude: exit $claude_def_exit, Codex: exit $codex_def_exit" "$round2_elapsed"
+        else
+            show_debate_progress "defense" "end" "Both defenses received" "$round2_elapsed"
+        fi
+
         # Record defenses in transcript
         append_transcript_section "$loop_num" "Round 2: Claude's Defense" "$claude_defense_text"
         append_transcript_section "$loop_num" "Round 2: Codex's Defense" "$codex_defense_text"
     fi
 
     # === ROUND 3: FINAL JUDGMENT (Claude only) ===
+    show_debate_progress "judgment" "start" "Claude evaluating all artifacts"
     log_status "INFO" "  Debate Round 3/3: Final judgment (Claude evaluating all artifacts)..."
+    local round3_start
+    round3_start=$(date +%s)
     local judge_file="$debate_dir/judge_verdict_${timestamp}.log"
 
     local judge_prompt
@@ -503,9 +645,11 @@ CLAUDE_WIN_EOF
     declare -a CLAUDE_JUDGE_ARGS=("${CLAUDE_CODE_CMD:-claude}" "--output-format" "json" "-p" "$judge_prompt")
     portable_timeout "${timeout_seconds}s" "${CLAUDE_JUDGE_ARGS[@]}" > "$judge_file" 2>&1
     local judge_exit=$?
+    local round3_elapsed=$(( $(date +%s) - round3_start ))
     log_status "INFO" "  Round 3 complete — Judge exit: $judge_exit"
 
     if [[ $judge_exit -ne 0 ]]; then
+        show_debate_progress "judgment" "error" "Judge failed with exit code $judge_exit" "$round3_elapsed"
         # Judge failed — default to Claude
         cat > "$DEBATE_RESULT_FILE" << JUDGE_FAIL_EOF
 {
@@ -517,8 +661,12 @@ CLAUDE_WIN_EOF
 }
 JUDGE_FAIL_EOF
         append_transcript_section "$loop_num" "Final Judgment" "Judge execution failed. Claude wins by default."
+        local total_elapsed=$(( $(date +%s) - debate_start_time ))
+        show_debate_summary "claude" "Default selection (judge failed)" "50" "$total_elapsed"
         return 0
     fi
+
+    show_debate_progress "judgment" "end" "Verdict received" "$round3_elapsed"
 
     # Parse verdict (|| true prevents set -e exit on parse failure — default verdict written)
     parse_debate_verdict "$judge_file" "$DEBATE_RESULT_FILE" || true
@@ -542,9 +690,16 @@ JUDGE_FAIL_EOF
 **Confidence:** $confidence
 **Rationale:** $rationale"
 
+    # Show completion summary
+    local total_elapsed=$(( $(date +%s) - debate_start_time ))
+    show_debate_summary "$winner" "$title" "$confidence" "$total_elapsed"
+
     return 0
 }
 
+export -f get_phase_icon
+export -f show_debate_progress
+export -f show_debate_summary
 export -f build_critique_prompt
 export -f build_defense_prompt
 export -f build_judge_prompt

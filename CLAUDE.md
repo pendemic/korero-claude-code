@@ -154,6 +154,15 @@ The system uses a modular architecture with reusable components in the `lib/` di
     - `build_judge_prompt(6 artifacts, mode, project)` - Generates judgment prompt with scoring criteria (truncates artifacts to 2000 chars)
     - `parse_debate_verdict(judge_output, result_file)` - Extracts winner from `---DEBATE_VERDICT---` block, defaults to claude on failure
     - `get_debate_winner()` - Returns winner from `.korero/.debate_result`
+    - `get_phase_icon(phase)` - Returns ASCII icon for debate phase (proposal, critique, defense, judgment, complete, error)
+    - `show_debate_progress(phase, status, detail, elapsed)` - Streams colorized progress indicator to stderr with phase name, status, timing
+    - `show_debate_summary(winner, title, confidence, total_time)` - Displays formatted debate completion box with winner info
+
+13. **lib/cost_estimator.sh** - API cost estimation from loop logs
+    - `estimate_tokens_from_file(file_path)` - Estimates token count from file size (4 chars/token)
+    - `calculate_cost(tokens, rate)` - Calculates USD cost for given tokens at per-1M rate
+    - `estimate_api_costs(log_dir)` - Scans log directory and returns JSON cost breakdown (input/output tokens, costs, files analyzed)
+    - `display_cost_report(log_dir)` - Displays formatted cost dashboard with token usage, cost breakdown, and pricing info
 
 ## Key Commands
 
@@ -258,6 +267,9 @@ korero --show-debate 5        # Show transcript from loop 5
 korero --health-check            # Validate all prerequisites
 korero --health-check || exit 1  # Use in CI to fail fast
 
+# API cost estimation
+korero --cost-estimate           # Show estimated API costs from logs
+
 # Circuit breaker management
 korero --reset-circuit
 korero --circuit-status
@@ -350,6 +362,7 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--examples` - Interactive example workflow gallery with 7 project-type templates
 - `--show-debate [N]` - Display debate transcript from loop N (or latest if N omitted)
 - `--health-check` - Validate all prerequisites (Claude CLI, jq, git, permissions, network, config)
+- `--cost-estimate` - Estimate API costs from loop log files and display formatted report
 - `--codex-timeout NUM` - Set Codex execution timeout in minutes (1-120, heavy modes only)
 - `--debate-rounds NUM` - Set number of cross-AI debate rounds (1-3, heavy modes only)
 
@@ -425,6 +438,25 @@ Heavy modes run Claude Code and OpenAI Codex CLI in parallel each loop, then orc
 - If one AI fails, the surviving AI's proposal is used directly (debate skipped)
 - If both AIs fail, the loop exits with an error
 - Codex always runs in `--sandbox read-only`; only Claude implements the winner
+
+**Streaming Progress Indicators:**
+Each debate phase outputs real-time progress to stderr with colorized status, phase icons, and elapsed time:
+```
+[*] Critique [IN PROGRESS] — Claude + Codex critiquing in parallel
+[+] Critique [DONE] (42s) — Both critiques received
+[#] Defense [IN PROGRESS] — Claude + Codex defending in parallel
+[+] Defense [DONE] (38s) — Both defenses received
+[=] Judgment [IN PROGRESS] — Claude evaluating all artifacts
+[+] Judgment [DONE] (15s) — Verdict received
+╔══════════════════════════════════════════════════╗
+║  DEBATE COMPLETE                                 ║
+╠══════════════════════════════════════════════════╣
+║  Winner:     Claude
+║  Idea:       Add streaming support
+║  Confidence: 85%
+║  Duration:   95s
+╚══════════════════════════════════════════════════╝
+```
 
 **Key Files:**
 - `.korero/.debate_result` — JSON with winner, title, confidence, rationale
@@ -524,7 +556,7 @@ Korero installs to:
 - **Commands**: `~/.local/bin/` (korero, korero-monitor, korero-setup, korero-import, korero-migrate, korero-enable, korero-enable-ci)
 - **Templates**: `~/.korero/templates/`
 - **Scripts**: `~/.korero/` (korero_loop.sh, korero_monitor.sh, setup.sh, korero_import.sh, migrate_to_korero_folder.sh, korero_enable.sh, korero_enable_ci.sh)
-- **Libraries**: `~/.korero/lib/` (circuit_breaker.sh, response_analyzer.sh, date_utils.sh, timeout_utils.sh, enable_core.sh, wizard_utils.sh, task_sources.sh, permission_presets.sh, codex_adapter.sh, cross_ai_debate.sh, debate_transcript.sh)
+- **Libraries**: `~/.korero/lib/` (circuit_breaker.sh, response_analyzer.sh, date_utils.sh, timeout_utils.sh, enable_core.sh, wizard_utils.sh, task_sources.sh, permission_presets.sh, codex_adapter.sh, cross_ai_debate.sh, debate_transcript.sh, cost_estimator.sh)
 
 After installation, the following global commands are available:
 - `korero` - Start the autonomous development loop
@@ -667,9 +699,9 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (838 tests across 27 files)
+### Test Files (878 tests across 28 files)
 
-**Unit Tests (702 tests):**
+**Unit Tests (742 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
@@ -689,12 +721,13 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_debate_transcript.bats` | 18 | Debate transcript: init, append, finalize, get_latest, show, list |
 | `test_health_check.bats` | 23 | Health check: tool detection, git config, permissions, network, config, CLI flag |
 | `test_codex_adapter.bats` | 25 | Codex CLI adapter: command building, auth checks, response parsing, proposal extraction |
-| `test_cross_ai_debate.bats` | 28 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling |
+| `test_cross_ai_debate.bats` | 44 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling, progress indicators |
 | `test_heavy_mode.bats` | 27 | Heavy mode integration: .korerorc validation, CLI flags, health checks, circuit breaker, enable |
 | `test_agent_protocol.bats` | 21 | Agent protocol tests |
 | `test_duration_tracking.bats` | 16 | Loop duration tracking |
 | `test_korero_config.bats` | 9 | Configuration management |
 | `test_korero_status.bats` | 11 | Status reporting |
+| `test_cost_estimator.bats` | 24 | API cost estimation: token estimation, cost calculation, log scanning, report display |
 
 **Integration Tests (136 tests):**
 
@@ -722,6 +755,7 @@ bats tests/unit/test_health_check.bats
 bats tests/unit/test_codex_adapter.bats
 bats tests/unit/test_cross_ai_debate.bats
 bats tests/unit/test_heavy_mode.bats
+bats tests/unit/test_cost_estimator.bats
 ```
 
 ## Feature Development Quality Standards
