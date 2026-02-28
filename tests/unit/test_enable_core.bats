@@ -528,3 +528,51 @@ EOF
     run bash -c "echo -e 'coding\ntest\nstandard' | run_quickstart_wizard"
     [[ "$output" == *"KORERO QUICK START"* ]] || [[ "$output" == *"already enabled"* ]]
 }
+
+# =============================================================================
+# CONFIGURATION PREVIEW TESTS (4 tests)
+# =============================================================================
+# Tests for preview_korerorc_changes()
+# Shows field-by-field diff when overwriting existing .korerorc
+
+@test "preview_korerorc_changes returns 0 when no existing .korerorc" {
+    cd "$TEST_DIR"
+    # No .korerorc exists
+    run preview_korerorc_changes 'ALLOWED_TOOLS="@standard"' "false"
+    [ "$status" -eq 0 ]
+}
+
+@test "preview_korerorc_changes shows changed fields" {
+    cd "$TEST_DIR"
+    cat > "$TEST_DIR/.korerorc" << 'EOF'
+PROJECT_NAME="old-project"
+ALLOWED_TOOLS="Write,Read,Edit"
+MAX_CALLS_PER_HOUR=100
+EOF
+    local new_content='PROJECT_NAME="new-project"
+ALLOWED_TOOLS="@standard"
+MAX_CALLS_PER_HOUR=100'
+
+    result=$(preview_korerorc_changes "$new_content" "false" 2>&1)
+    [[ "$result" == *"PROJECT_NAME"* ]]
+    [[ "$result" == *"old-project"* ]]
+    [[ "$result" == *"new-project"* ]]
+}
+
+@test "preview_korerorc_changes shows no changes for identical config" {
+    cd "$TEST_DIR"
+    echo 'ALLOWED_TOOLS="@standard"' > "$TEST_DIR/.korerorc"
+    local new_content='ALLOWED_TOOLS="@standard"'
+
+    result=$(preview_korerorc_changes "$new_content" "false" 2>&1)
+    [[ "$result" == *"No changes detected"* ]]
+}
+
+@test "preview_korerorc_changes returns 0 in non-interactive mode" {
+    cd "$TEST_DIR"
+    echo 'ALLOWED_TOOLS="Write,Read,Edit"' > "$TEST_DIR/.korerorc"
+    local new_content='ALLOWED_TOOLS="@standard"'
+
+    run preview_korerorc_changes "$new_content" "false"
+    [ "$status" -eq 0 ]
+}

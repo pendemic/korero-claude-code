@@ -461,6 +461,7 @@ main() {
 
     # Set up enable environment
     export ENABLE_FORCE="$FORCE_OVERWRITE"
+    export ENABLE_INTERACTIVE="false"
     export ENABLE_SKIP_TASKS="false"
     export ENABLE_PROJECT_NAME="$DETECTED_PROJECT_NAME"
     export ENABLE_PROJECT_TYPE="$DETECTED_PROJECT_TYPE"

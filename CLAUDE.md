@@ -66,6 +66,9 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - `merge_tool_permissions()` - Merges tool permissions avoiding duplicates
    - `suggest_permission_fix()` - Maps commands to ALLOWED_TOOLS patterns (e.g., `npm install` → `Bash(npm *)`)
    - `format_permission_denial_message()` - Formats actionable fix messages with preset alternatives
+   - **Visual configuration diff**: Colorized before/after display for `.korerorc` changes
+   - `show_config_diff()` - Pure display: RED for removed, GREEN for added, YELLOW for no-change; shows preset expansion
+   - `confirm_config_change()` - Wraps `show_config_diff()` with y/N confirmation prompt (for contexts without prior menu)
 
 3. **lib/date_utils.sh** - Cross-platform date utilities
    - ISO timestamp generation for logging
@@ -96,6 +99,7 @@ The system uses a modular architecture with reusable components in the `lib/` di
      - `generate_ideation_agent_md()` - Agent table, debate rules, scoring criteria, output location instructions
      - `generate_ideation_fix_plan_md()` - Pre-built tracker tables, category coverage, type balance, per-loop checklists with checkpoints
      - `generate_ideation_ideas_md()` - Project-specific IDEAS.md header
+   - **Configuration preview**: `preview_korerorc_changes(new_content, interactive)` - Field-by-field diff when overwriting existing `.korerorc`; prompts for confirmation in interactive mode
 
 6. **lib/wizard_utils.sh** - Interactive prompt utilities for enable wizard
    - User prompts: `confirm()`, `prompt_text()`, `prompt_number()`
@@ -283,7 +287,7 @@ When `MAX_LOOPS` is set to a number, the bar shows completion percentage. In con
 
 ### Running Tests
 ```bash
-# Run all tests (744 tests)
+# Run all tests (758 tests)
 npm test
 
 # Run specific test suites
@@ -613,12 +617,18 @@ When Claude Code is denied permission to execute commands (e.g., `npm install`),
 5. **Command mapping**: `suggest_permission_fix()` maps common commands to wildcard patterns (e.g., `npm install` → `Bash(npm *)`)
 6. **Tool merging**: `merge_tool_permissions()` combines new tools with existing ones, avoiding duplicates
 
+**Visual Configuration Diff:**
+Before any `.korerorc` modification, Korero displays a colorized diff showing exactly what will change. Users see the before/after state with RED for removed values and GREEN for added values. When a preset like `@standard` is applied, the expansion is shown. This provides transparency and prevents accidental misconfigurations.
+
 **Key Functions:**
 - `prompt_permission_fix()` - Interactive prompt for permission recovery
-- `apply_permission_fix()` - Updates `.korerorc` with new tools (creates backup)
+- `apply_permission_fix()` - Updates `.korerorc` with new tools (creates backup, shows diff before applying)
 - `merge_tool_permissions()` - Merges tool permissions avoiding duplicates
 - `suggest_permission_fix()` - Maps commands to ALLOWED_TOOLS patterns
 - `format_permission_denial_message()` - Formats actionable fix suggestions
+- `show_config_diff()` - Colorized before/after diff of config field changes
+- `confirm_config_change()` - Show diff + y/N confirmation (for contexts without prior menu)
+- `preview_korerorc_changes()` - Field-by-field diff when `korero-enable --force` overwrites existing config
 
 **Example `.korerorc` tool patterns:**
 ```bash
@@ -657,19 +667,19 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (824 tests across 27 files)
+### Test Files (838 tests across 27 files)
 
-**Unit Tests (688 tests):**
+**Unit Tests (702 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
 | `test_cli_parsing.bats` | 63 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea, quickstart, validate-config, examples, show-debate |
 | `test_cli_modern.bats` | 33 | Modern CLI commands (Phase 1.1) + build_claude_command fix |
-| `test_json_parsing.bats` | 64 | JSON output format parsing + Claude CLI format + session management + permission suggestions |
+| `test_json_parsing.bats` | 74 | JSON output format parsing + Claude CLI format + session management + permission suggestions + visual config diff |
 | `test_session_continuity.bats` | 44 | Session lifecycle management + circuit breaker integration + issue #91 fix |
 | `test_exit_detection.bats` | 58 | Exit signal detection + EXIT_SIGNAL-based completion indicators + progress detection |
 | `test_rate_limiting.bats` | 25 | Rate limiting behavior |
-| `test_enable_core.bats` | 45 | Enable core library (idempotency, project detection, template generation, config validation, quickstart, verbose validation) |
+| `test_enable_core.bats` | 49 | Enable core library (idempotency, project detection, template generation, config validation, quickstart, verbose validation, config preview) |
 | `test_task_sources.bats` | 23 | Task sources (beads, GitHub, PRD extraction, normalization) |
 | `test_korero_enable.bats` | 22 | Korero enable integration tests (wizard, CI version, JSON output) |
 | `test_wizard_utils.bats` | 20 | Wizard utility functions (stdout/stderr separation, prompt functions) |

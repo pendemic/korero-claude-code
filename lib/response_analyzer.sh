@@ -13,6 +13,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Use KORERO_DIR if set by main script, otherwise default to .korero
@@ -944,6 +945,10 @@ apply_permission_fix() {
     local merged_tools
     merged_tools=$(merge_tool_permissions "$current_tools" "$new_tools")
 
+    # Display diff preview before applying
+    show_config_diff "ALLOWED_TOOLS" "$current_tools" "$merged_tools"
+    echo ""
+
     # Create backup
     cp "$korerorc" "${korerorc}.bak"
 
@@ -959,10 +964,95 @@ apply_permission_fix() {
     fi
 
     echo -e "${GREEN}Updated ALLOWED_TOOLS in $korerorc${NC}"
-    echo -e "  Old: ${YELLOW}${current_tools}${NC}"
-    echo -e "  New: ${GREEN}${merged_tools}${NC}"
 
     return 0
+}
+
+# =============================================================================
+# VISUAL CONFIGURATION DIFF FUNCTIONS
+# =============================================================================
+
+# Display colorized before/after diff of a configuration field change
+# Pure display function — no side effects, no confirmation prompt
+# Usage: show_config_diff "field_name" "old_value" "new_value"
+# Output: Colorized diff to stdout (RED for removed, GREEN for added)
+# Returns: 0 always
+show_config_diff() {
+    local field_name="$1"
+    local old_value="$2"
+    local new_value="$3"
+
+    echo -e "  ${BLUE}${field_name}:${NC}"
+
+    if [[ "$old_value" == "$new_value" ]]; then
+        echo -e "    ${YELLOW}(no change)${NC}"
+        return 0
+    fi
+
+    # Show old value (red, with - prefix)
+    if [[ -n "$old_value" ]]; then
+        echo -e "    ${RED}- ${old_value}${NC}"
+    else
+        echo -e "    ${RED}- (not set)${NC}"
+    fi
+
+    # Show new value (green, with + prefix)
+    if [[ -n "$new_value" ]]; then
+        echo -e "    ${GREEN}+ ${new_value}${NC}"
+    else
+        echo -e "    ${GREEN}+ (not set)${NC}"
+    fi
+
+    # If new value is a preset, show what it expands to
+    if [[ "$new_value" == @* ]]; then
+        if ! type expand_allowed_tools &>/dev/null; then
+            local lib_dir
+            lib_dir="$(dirname "${BASH_SOURCE[0]}")"
+            if [[ -f "$lib_dir/permission_presets.sh" ]]; then
+                source "$lib_dir/permission_presets.sh"
+            fi
+        fi
+        if type expand_allowed_tools &>/dev/null; then
+            local expanded
+            expanded=$(expand_allowed_tools "$new_value" 2>/dev/null)
+            if [[ -n "$expanded" ]]; then
+                echo -e "    ${YELLOW}(expands to: ${expanded})${NC}"
+            fi
+        fi
+    fi
+
+    return 0
+}
+
+# Show config diff and prompt for user confirmation before applying
+# Used in contexts where there is NO prior menu selection (e.g., korero-enable --force)
+# NOT used by prompt_permission_fix (which has its own 1/2/3/n menu)
+# Usage: confirm_config_change "field_name" "old_value" "new_value"
+# Returns: 0 if user confirms or values identical, 1 if user declines
+confirm_config_change() {
+    local field_name="$1"
+    local old_value="$2"
+    local new_value="$3"
+
+    # No change needed — return success without prompting
+    if [[ "$old_value" == "$new_value" ]]; then
+        return 0
+    fi
+
+    show_config_diff "$field_name" "$old_value" "$new_value"
+
+    echo ""
+    echo -en "  Apply this change? [y/N]: "
+    read -r response
+
+    case "${response,,}" in
+        y|yes)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 # Interactive prompt for permission fix
@@ -1150,4 +1240,6 @@ export -f suggest_permission_fix
 export -f format_permission_denial_message
 export -f merge_tool_permissions
 export -f apply_permission_fix
+export -f show_config_diff
+export -f confirm_config_change
 export -f prompt_permission_fix

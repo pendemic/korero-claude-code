@@ -852,6 +852,100 @@ KORERORCEOF
 }
 
 # =============================================================================
+# CONFIGURATION PREVIEW
+# =============================================================================
+
+# Preview changes that will be made to .korerorc when overwriting an existing config
+# Shows field-by-field diff between current and new configuration
+#
+# Parameters:
+#   $1 (new_content) - The new .korerorc content that would be written
+#   $2 (interactive) - "true" to prompt for confirmation, "false" to display only (default: true)
+#
+# Returns: 0 if confirmed/non-interactive/no existing config, 1 if user declines
+preview_korerorc_changes() {
+    local new_content="$1"
+    local interactive="${2:-true}"
+    local korerorc=".korerorc"
+
+    # Nothing to diff against if no existing config
+    if [[ ! -f "$korerorc" ]]; then
+        return 0
+    fi
+
+    # Source show_config_diff if not already available
+    if ! type show_config_diff &>/dev/null; then
+        local lib_dir
+        lib_dir="$(dirname "${BASH_SOURCE[0]}")"
+        if [[ -f "$lib_dir/response_analyzer.sh" ]]; then
+            source "$lib_dir/response_analyzer.sh"
+        fi
+    fi
+
+    # Fields to compare
+    local fields=(
+        "KORERO_MODE"
+        "PROJECT_SUBJECT"
+        "PROJECT_NAME"
+        "PROJECT_TYPE"
+        "DOMAIN_AGENT_COUNT"
+        "MAX_LOOPS"
+        "ALLOWED_TOOLS"
+        "MAX_CALLS_PER_HOUR"
+        "SESSION_CONTINUITY"
+        "TASK_SOURCES"
+    )
+
+    echo ""
+    echo -e "${BLUE:-}Configuration changes (.korerorc):${NC:-}"
+    echo "──────────────────────────────────"
+
+    local has_changes=false
+
+    for field in "${fields[@]}"; do
+        # Extract old value from existing file
+        local old_val
+        old_val=$(grep -E "^${field}=" "$korerorc" 2>/dev/null | head -1 | sed "s/^${field}=\"//" | sed 's/"$//' | sed "s/^${field}=//")
+
+        # Extract new value from new content
+        local new_val
+        new_val=$(echo "$new_content" | grep -E "^${field}=" 2>/dev/null | head -1 | sed "s/^${field}=\"//" | sed 's/"$//' | sed "s/^${field}=//")
+
+        # Only show fields where at least one side has a value
+        if [[ -n "$old_val" || -n "$new_val" ]]; then
+            if [[ "$old_val" != "$new_val" ]]; then
+                has_changes=true
+                show_config_diff "$field" "$old_val" "$new_val"
+            fi
+        fi
+    done
+
+    if [[ "$has_changes" == "false" ]]; then
+        echo -e "  ${YELLOW:-}No changes detected${NC:-}"
+        echo ""
+        return 0
+    fi
+
+    echo ""
+
+    # Prompt for confirmation in interactive mode
+    if [[ "$interactive" == "true" ]]; then
+        echo -en "Apply these changes to .korerorc? [y/N]: "
+        read -r response
+        case "${response,,}" in
+            y|yes)
+                return 0
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    fi
+
+    return 0
+}
+
+# =============================================================================
 # IDEATION MODE - PROJECT CONTEXT GATHERING
 # =============================================================================
 
@@ -2386,7 +2480,18 @@ enable_korero_in_directory() {
     # Generate .korerorc
     local korerorc_content
     korerorc_content=$(generate_korerorc "$project_name" "$DETECTED_PROJECT_TYPE" "$task_sources" "$korero_mode" "$project_subject" "$agent_count" "$max_loops")
-    safe_create_file ".korerorc" "$korerorc_content"
+
+    # When force-overwriting existing config, preview changes and confirm
+    if [[ -f ".korerorc" && "$force" == "true" ]]; then
+        local interactive_mode="${ENABLE_INTERACTIVE:-true}"
+        if preview_korerorc_changes "$korerorc_content" "$interactive_mode"; then
+            safe_create_file ".korerorc" "$korerorc_content"
+        else
+            enable_log "INFO" "Skipped .korerorc overwrite (user declined)"
+        fi
+    else
+        safe_create_file ".korerorc" "$korerorc_content"
+    fi
 
     enable_log "SUCCESS" "Korero enabled successfully!"
 
@@ -2630,3 +2735,4 @@ export -f generate_ideation_ideas_md
 export -f enable_korero_in_directory
 export -f run_quickstart_wizard
 export -f validate_korerorc_verbose
+export -f preview_korerorc_changes

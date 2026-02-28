@@ -735,6 +735,7 @@ phase_file_generation() {
 
     # Set up enable environment
     export ENABLE_FORCE="$FORCE_OVERWRITE"
+    export ENABLE_INTERACTIVE="true"
     export ENABLE_SKIP_TASKS="$SKIP_TASKS"
     export ENABLE_PROJECT_NAME="$CONFIG_PROJECT_NAME"
     export ENABLE_TASK_CONTENT="$imported_tasks"

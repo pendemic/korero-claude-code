@@ -1298,3 +1298,73 @@ EOF
     # ALLOWED_TOOLS should be added
     grep -q 'ALLOWED_TOOLS="Write,Read,Edit,Bash(npm \*)"' "$TEST_DIR/.korerorc"
 }
+
+# =============================================================================
+# VISUAL CONFIG DIFF TESTS (10 tests)
+# =============================================================================
+# Tests for show_config_diff() and confirm_config_change()
+# These functions display colorized before/after diffs of configuration changes.
+
+@test "show_config_diff displays field name in output" {
+    result=$(show_config_diff "ALLOWED_TOOLS" "Write,Read" "Write,Read,Edit")
+    [[ "$result" == *"ALLOWED_TOOLS"* ]]
+}
+
+@test "show_config_diff shows old value with minus prefix" {
+    result=$(show_config_diff "ALLOWED_TOOLS" "Write,Read" "Write,Read,Edit")
+    [[ "$result" == *"- Write,Read"* ]]
+}
+
+@test "show_config_diff shows new value with plus prefix" {
+    result=$(show_config_diff "ALLOWED_TOOLS" "Write,Read" "Write,Read,Edit")
+    [[ "$result" == *"+ Write,Read,Edit"* ]]
+}
+
+@test "show_config_diff shows no change message for identical values" {
+    result=$(show_config_diff "ALLOWED_TOOLS" "Write,Read,Edit" "Write,Read,Edit")
+    [[ "$result" == *"(no change)"* ]]
+}
+
+@test "show_config_diff handles empty old value" {
+    result=$(show_config_diff "ALLOWED_TOOLS" "" "Write,Read,Edit")
+    [[ "$result" == *"(not set)"* ]]
+    [[ "$result" == *"+ Write,Read,Edit"* ]]
+}
+
+@test "show_config_diff handles empty new value" {
+    result=$(show_config_diff "ALLOWED_TOOLS" "Write,Read,Edit" "")
+    [[ "$result" == *"- Write,Read,Edit"* ]]
+    [[ "$result" == *"(not set)"* ]]
+}
+
+@test "show_config_diff shows preset expansion for @standard" {
+    result=$(show_config_diff "ALLOWED_TOOLS" "Write,Read" "@standard")
+    [[ "$result" == *"+ @standard"* ]]
+    [[ "$result" == *"expands to:"* ]]
+}
+
+@test "show_config_diff handles Bash() patterns with special characters" {
+    result=$(show_config_diff "ALLOWED_TOOLS" "Write" "Write,Bash(npm *)")
+    [[ "$result" == *"Bash(npm *)"* ]]
+}
+
+@test "confirm_config_change returns 0 for identical values without prompting" {
+    run confirm_config_change "ALLOWED_TOOLS" "Write,Read,Edit" "Write,Read,Edit"
+    [ "$status" -eq 0 ]
+}
+
+@test "apply_permission_fix output includes diff display" {
+    echo 'ALLOWED_TOOLS="Write,Read,Edit"' > "$TEST_DIR/.korerorc"
+    export KORERO_PROJECT_ROOT="$TEST_DIR"
+
+    result=$(apply_permission_fix "Bash(npm *)" 2>&1)
+
+    # Should show field name from diff
+    [[ "$result" == *"ALLOWED_TOOLS"* ]]
+    # Should show old value with minus prefix
+    [[ "$result" == *"- Write,Read,Edit"* ]]
+    # Should show new merged value with plus prefix
+    [[ "$result" == *"+ Write,Read,Edit,Bash(npm *)"* ]]
+    # Should show updated confirmation
+    [[ "$result" == *"Updated"* ]]
+}
