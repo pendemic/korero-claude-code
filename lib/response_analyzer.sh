@@ -872,6 +872,46 @@ should_resume_session() {
 }
 
 # =============================================================================
+# SESSION AGE WARNING
+# =============================================================================
+
+# Check session file age and warn if older than threshold
+# Arguments: none (uses KORERO_DIR and SESSION_AGE_WARNING_HOURS env vars)
+# Output: Warning message to stdout if session exceeds threshold, empty otherwise
+# Returns: 0 always
+check_session_age() {
+    local session_file="${KORERO_DIR:-.korero}/.claude_session_id"
+    local max_age_hours="${SESSION_AGE_WARNING_HOURS:-12}"
+
+    if [[ ! -f "$session_file" ]]; then
+        return 0
+    fi
+
+    # Cross-platform file modification time
+    local session_time=""
+    if [[ "$(uname)" == "Darwin" ]]; then
+        session_time=$(stat -f %m "$session_file" 2>/dev/null)
+    else
+        session_time=$(stat -c %Y "$session_file" 2>/dev/null)
+    fi
+
+    if [[ -z "$session_time" ]]; then
+        return 0
+    fi
+
+    local current_time
+    current_time=$(date +%s)
+    local age_seconds=$((current_time - session_time))
+    local age_hours=$((age_seconds / 3600))
+
+    if [[ $age_hours -ge $max_age_hours ]]; then
+        echo "Warning: Session is ${age_hours} hours old. Consider: korero --reset-session"
+    fi
+
+    return 0
+}
+
+# =============================================================================
 # PERMISSION DENIAL SUGGESTION FUNCTIONS
 # =============================================================================
 
@@ -1236,6 +1276,7 @@ export -f detect_stuck_loop
 export -f store_session_id
 export -f get_last_session_id
 export -f should_resume_session
+export -f check_session_age
 export -f suggest_permission_fix
 export -f format_permission_denial_message
 export -f merge_tool_permissions

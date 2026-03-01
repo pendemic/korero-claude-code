@@ -407,6 +407,40 @@ EOF
     grep -q "fallback" "$DEBATES_DIR/loop_1.md"
 }
 
+# ===== show_debate_round_progress =====
+
+@test "show_debate_round_progress displays correct bar for round 1 of 3" {
+    run show_debate_round_progress 1 "Critique" 3
+    [[ "$output" == *"Round 1/3"* ]]
+    [[ "$output" == *"Critique"* ]]
+    [[ "$output" == *"███"* ]]
+}
+
+@test "show_debate_round_progress displays correct bar for round 2 of 3" {
+    run show_debate_round_progress 2 "Defense" 3
+    [[ "$output" == *"Round 2/3"* ]]
+    [[ "$output" == *"Defense"* ]]
+    [[ "$output" == *"██████"* ]]
+}
+
+@test "show_debate_round_progress displays correct bar for round 3 of 3" {
+    run show_debate_round_progress 3 "Judgment" 3
+    [[ "$output" == *"Round 3/3"* ]]
+    [[ "$output" == *"Judgment"* ]]
+    [[ "$output" == *"██████████"* ]]
+}
+
+@test "show_debate_round_progress defaults to 3 total rounds" {
+    run show_debate_round_progress 2 "Defense"
+    [[ "$output" == *"Round 2/3"* ]]
+}
+
+@test "complete_debate_round_progress shows full bar with message" {
+    run complete_debate_round_progress
+    [[ "$output" == *"██████████"* ]]
+    [[ "$output" == *"Debate complete!"* ]]
+}
+
 @test "run_cross_ai_debate silent fallback suppresses warning" {
     echo "Claude proposal text" > "$TEST_DIR/claude_prop.log"
     echo "" > "$TEST_DIR/codex_prop.log"

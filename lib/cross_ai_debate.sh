@@ -129,6 +129,35 @@ show_debate_summary() {
     echo -e "${DEBATE_CYAN}╚══════════════════════════════════════════════════╝${DEBATE_NC}" >&2
 }
 
+# Show round-level progress bar for debate phases
+# Arguments:
+#   $1 (round)        - Current round number (1-based)
+#   $2 (phase)        - Phase name (e.g., "Critique", "Defense", "Judgment")
+#   $3 (total_rounds) - Total number of rounds (default: 3)
+# Output: Progress bar to stderr with carriage return for in-place update
+show_debate_round_progress() {
+    local round="$1"
+    local phase="$2"
+    local total_rounds="${3:-3}"
+
+    # Build progress bar (10 segments)
+    local filled=$((round * 10 / total_rounds))
+    local empty=$((10 - filled))
+
+    local bar="["
+    for ((i=0; i<filled; i++)); do bar+="█"; done
+    for ((i=0; i<empty; i++)); do bar+="░"; done
+    bar+="]"
+
+    printf "\r%s Round %d/%d: %s    " "$bar" "$round" "$total_rounds" "$phase" >&2
+}
+
+# Show debate completion progress bar
+# Output: Full progress bar with "Debate complete!" to stderr
+complete_debate_round_progress() {
+    printf "\r[██████████] Debate complete!          \n" >&2
+}
+
 # Locate the templates directory (installed or local)
 _get_template_dir() {
     local script_dir
@@ -520,6 +549,7 @@ CLAUDE_WIN_EOF
     debate_start_time=$(date +%s)
 
     # === ROUND 1: MUTUAL CRITIQUE (parallel) ===
+    show_debate_round_progress 1 "Critique" 3
     show_debate_progress "critique" "start" "Claude + Codex critiquing in parallel"
     log_status "INFO" "  Debate Round 1/3: Mutual critique (Claude + Codex in parallel)..."
     local round1_start
@@ -590,6 +620,7 @@ CLAUDE_WIN_EOF
     local claude_defense_text="" codex_defense_text=""
 
     if [[ "$debate_rounds" -ge 2 ]]; then
+        show_debate_round_progress 2 "Defense" 3
         show_debate_progress "defense" "start" "Claude + Codex defending in parallel"
         log_status "INFO" "  Debate Round 2/3: Defense (Claude + Codex in parallel)..."
         local round2_start
@@ -654,6 +685,7 @@ CLAUDE_WIN_EOF
     fi
 
     # === ROUND 3: FINAL JUDGMENT (Claude only) ===
+    show_debate_round_progress 3 "Judgment" 3
     show_debate_progress "judgment" "start" "Claude evaluating all artifacts"
     log_status "INFO" "  Debate Round 3/3: Final judgment (Claude evaluating all artifacts)..."
     local round3_start
@@ -720,6 +752,7 @@ JUDGE_FAIL_EOF
 **Rationale:** $rationale"
 
     # Show completion summary
+    complete_debate_round_progress
     local total_elapsed=$(( $(date +%s) - debate_start_time ))
     show_debate_summary "$winner" "$title" "$confidence" "$total_elapsed"
 
@@ -728,6 +761,8 @@ JUDGE_FAIL_EOF
 
 export -f get_phase_icon
 export -f show_debate_progress
+export -f show_debate_round_progress
+export -f complete_debate_round_progress
 export -f show_debate_summary
 export -f build_critique_prompt
 export -f build_defense_prompt

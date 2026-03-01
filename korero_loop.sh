@@ -2166,8 +2166,15 @@ main() {
     # Initialize session tracking before entering the loop
     init_session_tracking
 
+    # Check session age and warn if stale
+    local session_warning
+    session_warning=$(check_session_age 2>/dev/null)
+    if [[ -n "$session_warning" ]]; then
+        log_status "WARN" "$session_warning"
+    fi
+
     log_status "INFO" "Starting main loop..."
-    
+
     while true; do
         loop_count=$((loop_count + 1))
 

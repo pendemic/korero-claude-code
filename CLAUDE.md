@@ -69,6 +69,7 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - **Visual configuration diff**: Colorized before/after display for `.korerorc` changes
    - `show_config_diff()` - Pure display: RED for removed, GREEN for added, YELLOW for no-change; shows preset expansion
    - `confirm_config_change()` - Wraps `show_config_diff()` with y/N confirmation prompt (for contexts without prior menu)
+   - **Session age warning**: `check_session_age()` - Warns when session file is older than configurable threshold (default 12 hours); cross-platform `stat` support
 
 3. **lib/date_utils.sh** - Cross-platform date utilities
    - ISO timestamp generation for logging
@@ -163,6 +164,8 @@ The system uses a modular architecture with reusable components in the `lib/` di
     - `get_phase_icon(phase)` - Returns ASCII icon for debate phase (proposal, critique, defense, judgment, complete, error)
     - `show_debate_progress(phase, status, detail, elapsed)` - Streams colorized progress indicator to stderr with phase name, status, timing
     - `show_debate_summary(winner, title, confidence, total_time)` - Displays formatted debate completion box with winner info
+    - `show_debate_round_progress(round, phase, total_rounds)` - Round-level progress bar (`[███░░░░░░░] Round 1/3: Critique`) to stderr
+    - `complete_debate_round_progress()` - Full progress bar with "Debate complete!" message to stderr
 
 13. **lib/cost_estimator.sh** - API cost estimation from loop logs
     - `estimate_tokens_from_file(file_path)` - Estimates token count from file size (4 chars/token)
@@ -402,6 +405,7 @@ Each loop iteration injects context via `build_loop_context()`:
 - Sessions are preserved in `.korero/.claude_session_id`
 - Use `--continue` flag to maintain context across loops
 - Disable with `--no-continue` for isolated iterations
+- **Session age warning**: At loop start, warns if session is older than 12 hours (configurable via `SESSION_AGE_WARNING_HOURS` in `.korerorc`)
 
 ### Multi-Agent Ideation System
 
@@ -467,14 +471,19 @@ Heavy modes run Claude Code and OpenAI Codex CLI in parallel each loop, then orc
 - Fallback result includes `"fallback": true` and `"fallback_reason"` in `.korero/.debate_result`
 
 **Streaming Progress Indicators:**
-Each debate phase outputs real-time progress to stderr with colorized status, phase icons, and elapsed time:
+Each debate phase outputs real-time progress to stderr with colorized status, phase icons, and elapsed time.
+A round-level progress bar also updates in-place showing overall debate completion:
 ```
+[███░░░░░░░] Round 1/3: Critique
 [*] Critique [IN PROGRESS] — Claude + Codex critiquing in parallel
 [+] Critique [DONE] (42s) — Both critiques received
+[██████░░░░] Round 2/3: Defense
 [#] Defense [IN PROGRESS] — Claude + Codex defending in parallel
 [+] Defense [DONE] (38s) — Both defenses received
+[█████████░] Round 3/3: Judgment
 [=] Judgment [IN PROGRESS] — Claude evaluating all artifacts
 [+] Judgment [DONE] (15s) — Verdict received
+[██████████] Debate complete!
 ╔══════════════════════════════════════════════════╗
 ║  DEBATE COMPLETE                                 ║
 ╠══════════════════════════════════════════════════╣
@@ -726,16 +735,16 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (923 tests across 28 files)
+### Test Files (933 tests across 28 files)
 
-**Unit Tests (787 tests):**
+**Unit Tests (797 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
 | `test_cli_parsing.bats` | 70 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea, quickstart, validate-config, examples, show-debate, troubleshoot, fix-config |
 | `test_cli_modern.bats` | 33 | Modern CLI commands (Phase 1.1) + build_claude_command fix |
 | `test_json_parsing.bats` | 74 | JSON output format parsing + Claude CLI format + session management + permission suggestions + visual config diff |
-| `test_session_continuity.bats` | 44 | Session lifecycle management + circuit breaker integration + issue #91 fix |
+| `test_session_continuity.bats` | 49 | Session lifecycle management + circuit breaker integration + issue #91 fix + session age warning |
 | `test_exit_detection.bats` | 58 | Exit signal detection + EXIT_SIGNAL-based completion indicators + progress detection |
 | `test_rate_limiting.bats` | 25 | Rate limiting behavior |
 | `test_enable_core.bats` | 64 | Enable core library (idempotency, project detection, template generation, config validation, quickstart, verbose validation, config preview, diversity stats, config fix commands) |
@@ -748,7 +757,7 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_debate_transcript.bats` | 18 | Debate transcript: init, append, finalize, get_latest, show, list |
 | `test_health_check.bats` | 28 | Health check: tool detection, git config, permissions, network, config, CLI flag, bash version guard |
 | `test_codex_adapter.bats` | 35 | Codex CLI adapter: command building, auth checks, response parsing, proposal extraction, fallback detection |
-| `test_cross_ai_debate.bats` | 48 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling, progress indicators, codex fallback integration |
+| `test_cross_ai_debate.bats` | 53 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling, progress indicators, round progress bar, codex fallback integration |
 | `test_heavy_mode.bats` | 31 | Heavy mode integration: .korerorc validation, CLI flags, health checks, circuit breaker, enable, CODEX_FALLBACK validation |
 | `test_agent_protocol.bats` | 21 | Agent protocol tests |
 | `test_duration_tracking.bats` | 16 | Loop duration tracking |
