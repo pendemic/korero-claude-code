@@ -2396,6 +2396,7 @@ Options:
     --dry-run               Show what would happen without executing
     --validate              Validate .korerorc configuration and exit
     --validate-config       Verbose config validation with per-field checkmarks
+    --fix-config            Apply default fixes for missing/invalid .korerorc fields
     --quickstart            Quick 3-question setup for new users
     --examples              Interactive gallery of curated workflow examples
     --show-debate [N]       Show debate transcript (latest, or loop N)
@@ -3102,6 +3103,31 @@ while [[ $# -gt 0 ]]; do
             source "$SCRIPT_DIR/lib/enable_core.sh"
             validate_korerorc_verbose ".korerorc"
             exit $?
+            ;;
+        --fix-config)
+            SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+            source "$SCRIPT_DIR/lib/enable_core.sh"
+            local korerorc=".korerorc"
+            if [[ ! -f "$korerorc" ]]; then
+                echo "No .korerorc found. Run: korero --quickstart"
+                exit 1
+            fi
+            echo "Applying default fixes to $korerorc..."
+            local fix_count=0
+            for field in ALLOWED_TOOLS KORERO_MODE MAX_LOOPS; do
+                if ! grep -q "^${field}=" "$korerorc" 2>/dev/null; then
+                    eval "$(get_config_fix "$field" "$korerorc")"
+                    echo "  Added: $field"
+                    fix_count=$((fix_count + 1))
+                fi
+            done
+            if [[ $fix_count -eq 0 ]]; then
+                echo "  No missing fields found."
+            else
+                echo "$fix_count field(s) added."
+            fi
+            echo "Run 'korero --validate-config' to verify."
+            exit 0
             ;;
         --quickstart)
             SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"

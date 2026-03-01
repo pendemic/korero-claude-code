@@ -101,6 +101,8 @@ The system uses a modular architecture with reusable components in the `lib/` di
      - `generate_ideation_ideas_md()` - Project-specific IDEAS.md header
    - **Configuration preview**: `preview_korerorc_changes(new_content, interactive)` - Field-by-field diff when overwriting existing `.korerorc`; prompts for confirmation in interactive mode
    - **Diversity tracking**: `generate_diversity_stats(ideas_dir)` - Scans idea files for `**Category:**` fields, produces compact text summary with per-category counts, overrepresentation warnings, and diversity alerts
+   - **Config fix commands**: `get_config_fix(field, korerorc)` - Returns copy-paste shell command to fix a missing/invalid field
+   - **Config validation with fixes**: `validate_korerorc_with_fixes(korerorc)` - Validates config and outputs actionable fix commands for each error
 
 6. **lib/wizard_utils.sh** - Interactive prompt utilities for enable wizard
    - User prompts: `confirm()`, `prompt_text()`, `prompt_number()`
@@ -260,6 +262,9 @@ korero --start-idea 5         # Create branch from loop 5's winning idea
 # Verbose config validation with per-field checkmarks
 korero --validate-config
 
+# Auto-fix missing/invalid config fields
+korero --fix-config
+
 # Example workflow gallery (interactive menu)
 korero --examples
 
@@ -306,8 +311,14 @@ When `MAX_LOOPS` is set to a number, the bar shows completion percentage. In con
 
 ### Running Tests
 ```bash
-# Run all tests (758 tests)
+# Run all tests (sequential, works everywhere)
 npm test
+
+# Parallel execution (requires flock — CI uses this automatically)
+npm run test:parallel
+
+# Sequential fallback for debugging
+npm run test:sequential
 
 # Run specific test suites
 npm run test:unit
@@ -321,6 +332,8 @@ bats tests/unit/test_enable_core.bats
 bats tests/unit/test_task_sources.bats
 bats tests/unit/test_korero_enable.bats
 ```
+
+> **CI Note:** GitHub Actions runs tests in parallel via `bats --jobs $(nproc)` for ~50% faster feedback. Locally, `npm test` runs sequentially for compatibility.
 
 ## Korero Loop Configuration
 
@@ -366,6 +379,7 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--start-idea N` - Create a feature branch from winning idea N and start coding loop
 - `--quickstart` - Quick 3-question setup wizard for new users (mode, project description, permissions)
 - `--validate-config` - Verbose configuration validation with per-field success/error checkmarks
+- `--fix-config` - Apply default fixes for missing/invalid `.korerorc` fields (adds ALLOWED_TOOLS, KORERO_MODE, MAX_LOOPS with sensible defaults)
 - `--examples` - Interactive example workflow gallery with 7 project-type templates
 - `--show-debate [N]` - Display debate transcript from loop N (or latest if N omitted)
 - `--health-check` - Validate all prerequisites (Claude CLI, jq, git, permissions, network, config)
@@ -712,19 +726,19 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (914 tests across 28 files)
+### Test Files (923 tests across 28 files)
 
-**Unit Tests (778 tests):**
+**Unit Tests (787 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
-| `test_cli_parsing.bats` | 69 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea, quickstart, validate-config, examples, show-debate, troubleshoot |
+| `test_cli_parsing.bats` | 70 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea, quickstart, validate-config, examples, show-debate, troubleshoot, fix-config |
 | `test_cli_modern.bats` | 33 | Modern CLI commands (Phase 1.1) + build_claude_command fix |
 | `test_json_parsing.bats` | 74 | JSON output format parsing + Claude CLI format + session management + permission suggestions + visual config diff |
 | `test_session_continuity.bats` | 44 | Session lifecycle management + circuit breaker integration + issue #91 fix |
 | `test_exit_detection.bats` | 58 | Exit signal detection + EXIT_SIGNAL-based completion indicators + progress detection |
 | `test_rate_limiting.bats` | 25 | Rate limiting behavior |
-| `test_enable_core.bats` | 56 | Enable core library (idempotency, project detection, template generation, config validation, quickstart, verbose validation, config preview, diversity stats) |
+| `test_enable_core.bats` | 64 | Enable core library (idempotency, project detection, template generation, config validation, quickstart, verbose validation, config preview, diversity stats, config fix commands) |
 | `test_task_sources.bats` | 23 | Task sources (beads, GitHub, PRD extraction, normalization) |
 | `test_korero_enable.bats` | 22 | Korero enable integration tests (wizard, CI version, JSON output) |
 | `test_wizard_utils.bats` | 20 | Wizard utility functions (stdout/stderr separation, prompt functions) |
@@ -754,8 +768,11 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ### Running Tests
 ```bash
-# All tests
+# All tests (sequential)
 npm test
+
+# Parallel execution (CI — requires flock)
+npm run test:parallel
 
 # Unit tests only
 npm run test:unit

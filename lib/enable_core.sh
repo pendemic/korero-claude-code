@@ -240,6 +240,154 @@ validate_korerorc() {
     return 0
 }
 
+# Map config fields to their default fix commands
+# Arguments:
+#   $1 (field) - Configuration field name
+#   $2 (korerorc) - Path to .korerorc file (default: .korerorc)
+# Returns: shell command to fix the field on stdout
+get_config_fix() {
+    local field="$1"
+    local korerorc="${2:-.korerorc}"
+
+    case "$field" in
+        ALLOWED_TOOLS)
+            echo "echo 'ALLOWED_TOOLS=\"@standard\"' >> $korerorc"
+            ;;
+        KORERO_MODE)
+            echo "echo 'KORERO_MODE=\"coding\"' >> $korerorc  # Or: idea, heavy-coding, heavy-idea"
+            ;;
+        KORERO_MODE_INVALID)
+            echo "sed -i 's/KORERO_MODE=.*/KORERO_MODE=\"coding\"/' $korerorc"
+            ;;
+        PROJECT_SUBJECT)
+            echo "echo 'PROJECT_SUBJECT=\"my project\"' >> $korerorc"
+            ;;
+        DOMAIN_AGENT_COUNT)
+            echo "echo 'DOMAIN_AGENT_COUNT=3' >> $korerorc  # Range: 1-10"
+            ;;
+        MAX_LOOPS)
+            echo "echo 'MAX_LOOPS=\"continuous\"' >> $korerorc  # Or: 10, 20, 50"
+            ;;
+        MAX_LOOPS_INVALID)
+            echo "sed -i 's/MAX_LOOPS=.*/MAX_LOOPS=\"continuous\"/' $korerorc"
+            ;;
+        CODEX_TIMEOUT_INVALID)
+            echo "sed -i 's/CODEX_TIMEOUT=.*/CODEX_TIMEOUT=15/' $korerorc  # Range: 1-120"
+            ;;
+        DEBATE_ROUNDS_INVALID)
+            echo "sed -i 's/DEBATE_ROUNDS=.*/DEBATE_ROUNDS=2/' $korerorc  # Range: 1-3"
+            ;;
+        CODEX_FALLBACK_INVALID)
+            echo "sed -i 's/CODEX_FALLBACK=.*/CODEX_FALLBACK=\"claude-only\"/' $korerorc  # Or: fail, silent"
+            ;;
+        *)
+            echo "# Please add $field to $korerorc manually"
+            ;;
+    esac
+}
+
+# Validate .korerorc with actionable fix commands for each error
+# Returns 0 if valid, 1 if errors found
+# Outputs errors with fix commands to stderr
+validate_korerorc_with_fixes() {
+    local korerorc="${1:-.korerorc}"
+    local -a errors=()
+    local -a fixes=()
+
+    if [[ ! -f "$korerorc" ]]; then
+        echo "Configuration file not found: $korerorc" >&2
+        echo "" >&2
+        echo "  Fix: korero-enable  # Interactive setup" >&2
+        echo "  Or:  korero --quickstart  # Quick 3-question setup" >&2
+        return 1
+    fi
+
+    # Check for required ALLOWED_TOOLS
+    if ! grep -q '^ALLOWED_TOOLS=' "$korerorc" 2>/dev/null; then
+        errors+=("Missing ALLOWED_TOOLS")
+        fixes+=("$(get_config_fix "ALLOWED_TOOLS" "$korerorc")")
+    fi
+
+    # Check KORERO_MODE value if present
+    local mode_line
+    mode_line=$(grep '^KORERO_MODE=' "$korerorc" 2>/dev/null || echo "")
+    if [[ -n "$mode_line" ]]; then
+        local mode_val
+        mode_val=$(echo "$mode_line" | sed 's/^KORERO_MODE=["\x27]*//' | sed 's/["\x27]*$//')
+        if [[ -n "$mode_val" && ! "$mode_val" =~ ^(coding|idea|heavy-coding|heavy-idea)$ ]]; then
+            errors+=("Invalid KORERO_MODE: '$mode_val' (valid: coding, idea, heavy-coding, heavy-idea)")
+            fixes+=("$(get_config_fix "KORERO_MODE_INVALID" "$korerorc")")
+        fi
+    fi
+
+    # Check MAX_LOOPS value if present
+    local loops_line
+    loops_line=$(grep '^MAX_LOOPS=' "$korerorc" 2>/dev/null || echo "")
+    if [[ -n "$loops_line" ]]; then
+        local loops_val
+        loops_val=$(echo "$loops_line" | sed 's/^MAX_LOOPS=["\x27]*//' | sed 's/["\x27]*$//')
+        if [[ -n "$loops_val" && "$loops_val" != "continuous" && ! "$loops_val" =~ ^[0-9]+$ ]]; then
+            errors+=("Invalid MAX_LOOPS: '$loops_val' (must be a number or 'continuous')")
+            fixes+=("$(get_config_fix "MAX_LOOPS_INVALID" "$korerorc")")
+        fi
+    fi
+
+    # Check CODEX_TIMEOUT value if present
+    local timeout_line
+    timeout_line=$(grep '^CODEX_TIMEOUT=' "$korerorc" 2>/dev/null || echo "")
+    if [[ -n "$timeout_line" ]]; then
+        local timeout_val
+        timeout_val=$(echo "$timeout_line" | sed 's/^CODEX_TIMEOUT=["\x27]*//' | sed 's/["\x27]*$//')
+        if [[ -n "$timeout_val" && "$timeout_val" =~ ^[0-9]+$ ]]; then
+            if [[ "$timeout_val" -lt 1 || "$timeout_val" -gt 120 ]]; then
+                errors+=("Invalid CODEX_TIMEOUT: $timeout_val (must be 1-120)")
+                fixes+=("$(get_config_fix "CODEX_TIMEOUT_INVALID" "$korerorc")")
+            fi
+        fi
+    fi
+
+    # Check DEBATE_ROUNDS value if present
+    local rounds_line
+    rounds_line=$(grep '^DEBATE_ROUNDS=' "$korerorc" 2>/dev/null || echo "")
+    if [[ -n "$rounds_line" ]]; then
+        local rounds_val
+        rounds_val=$(echo "$rounds_line" | sed 's/^DEBATE_ROUNDS=["\x27]*//' | sed 's/["\x27]*$//')
+        if [[ -n "$rounds_val" && "$rounds_val" =~ ^[0-9]+$ ]]; then
+            if [[ "$rounds_val" -lt 1 || "$rounds_val" -gt 3 ]]; then
+                errors+=("Invalid DEBATE_ROUNDS: $rounds_val (must be 1-3)")
+                fixes+=("$(get_config_fix "DEBATE_ROUNDS_INVALID" "$korerorc")")
+            fi
+        fi
+    fi
+
+    # Check CODEX_FALLBACK value if present
+    local fallback_line
+    fallback_line=$(grep '^CODEX_FALLBACK=' "$korerorc" 2>/dev/null || echo "")
+    if [[ -n "$fallback_line" ]]; then
+        local fb_val
+        fb_val=$(echo "$fallback_line" | sed 's/^CODEX_FALLBACK=["\x27]*//' | sed 's/["\x27]*$//')
+        if [[ -n "$fb_val" && ! "$fb_val" =~ ^(fail|claude-only|silent)$ ]]; then
+            errors+=("Invalid CODEX_FALLBACK: '$fb_val' (valid: fail, claude-only, silent)")
+            fixes+=("$(get_config_fix "CODEX_FALLBACK_INVALID" "$korerorc")")
+        fi
+    fi
+
+    # Display errors with fixes
+    if [[ ${#errors[@]} -gt 0 ]]; then
+        echo "Configuration errors in $korerorc:" >&2
+        echo "" >&2
+        for i in "${!errors[@]}"; do
+            echo "  ERROR: ${errors[$i]}" >&2
+            echo "    Fix: ${fixes[$i]}" >&2
+            echo "" >&2
+        done
+        echo "${#errors[@]} error(s) found. Run the fix commands above, then restart korero." >&2
+        return 1
+    fi
+
+    return 0
+}
+
 # =============================================================================
 # SAFE FILE OPERATIONS
 # =============================================================================
@@ -2846,5 +2994,7 @@ export -f generate_ideation_ideas_md
 export -f enable_korero_in_directory
 export -f run_quickstart_wizard
 export -f validate_korerorc_verbose
+export -f get_config_fix
+export -f validate_korerorc_with_fixes
 export -f preview_korerorc_changes
 export -f generate_diversity_stats

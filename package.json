@@ -12,7 +12,9 @@
     "test": "bats tests/unit/ tests/integration/",
     "test:unit": "bats tests/unit/",
     "test:integration": "bats tests/integration/",
-    "test:e2e": "bats tests/e2e/"
+    "test:e2e": "bats tests/e2e/",
+    "test:parallel": "bats --jobs $(nproc) tests/unit/ tests/integration/",
+    "test:sequential": "bats tests/unit/ tests/integration/"
   },
   "repository": {
     "type": "git",

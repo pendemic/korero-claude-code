@@ -35,11 +35,11 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y jq
 
-    - name: Run unit tests
-      run: npm run test:unit
+    - name: Run unit tests (parallel)
+      run: npx bats --jobs "$(nproc)" tests/unit/
 
-    - name: Run integration tests
-      run: npm run test:integration || true
+    - name: Run integration tests (parallel)
+      run: npx bats --jobs "$(nproc)" tests/integration/ || true
 
     - name: Run E2E tests
       run: npm run test:e2e || true

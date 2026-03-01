@@ -770,3 +770,11 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"--troubleshoot"* ]]
 }
+
+# ===== --fix-config flag =====
+
+@test "--fix-config is listed in help text" {
+    run bash "$KORERO_SCRIPT" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--fix-config"* ]]
+}

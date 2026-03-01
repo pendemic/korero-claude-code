@@ -673,3 +673,71 @@ EOF
     [[ "$output" == *"UX(2)"* ]]
     [[ "$output" == *"Performance(1)"* ]]
 }
+
+# =============================================================================
+# CONFIG FIX COMMANDS (8 tests)
+# =============================================================================
+
+@test "get_config_fix returns fix for ALLOWED_TOOLS" {
+    run get_config_fix "ALLOWED_TOOLS"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"@standard"* ]]
+    [[ "$output" == *"ALLOWED_TOOLS"* ]]
+}
+
+@test "get_config_fix returns fix for KORERO_MODE" {
+    run get_config_fix "KORERO_MODE"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"coding"* ]]
+}
+
+@test "get_config_fix returns fix for unknown field" {
+    run get_config_fix "UNKNOWN_FIELD"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"manually"* ]]
+}
+
+@test "validate_korerorc_with_fixes passes valid config" {
+    cat > "$TEST_DIR/.korerorc" << 'EOF'
+ALLOWED_TOOLS="@standard"
+KORERO_MODE="coding"
+EOF
+    run validate_korerorc_with_fixes "$TEST_DIR/.korerorc"
+    [ "$status" -eq 0 ]
+}
+
+@test "validate_korerorc_with_fixes shows fix for missing ALLOWED_TOOLS" {
+    cat > "$TEST_DIR/.korerorc" << 'EOF'
+KORERO_MODE="coding"
+EOF
+    run validate_korerorc_with_fixes "$TEST_DIR/.korerorc"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Missing ALLOWED_TOOLS"* ]]
+    [[ "$output" == *"@standard"* ]]
+}
+
+@test "validate_korerorc_with_fixes shows fix for invalid mode" {
+    cat > "$TEST_DIR/.korerorc" << 'EOF'
+ALLOWED_TOOLS="@standard"
+KORERO_MODE="invalid"
+EOF
+    run validate_korerorc_with_fixes "$TEST_DIR/.korerorc"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Invalid KORERO_MODE"* ]]
+    [[ "$output" == *"sed"* ]]
+}
+
+@test "validate_korerorc_with_fixes returns 1 for missing file" {
+    run validate_korerorc_with_fixes "$TEST_DIR/nonexistent.korerorc"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"not found"* ]]
+}
+
+@test "validate_korerorc_with_fixes shows error count" {
+    cat > "$TEST_DIR/.korerorc" << 'EOF'
+KORERO_MODE="invalid"
+EOF
+    run validate_korerorc_with_fixes "$TEST_DIR/.korerorc"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"error(s) found"* ]]
+}
