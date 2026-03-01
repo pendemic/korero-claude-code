@@ -213,9 +213,89 @@ extract_codex_proposal() {
     return 1
 }
 
+# Determine if heavy mode should fall back to Claude-only
+# Checks CODEX_FALLBACK env and Codex readiness
+# Returns: 0 if should fallback, 1 if Codex is ready (no fallback needed)
+# Side effects: sets CODEX_FALLBACK_REASON on stdout
+should_fallback_to_claude() {
+    local fallback_mode="${CODEX_FALLBACK:-fail}"
+
+    # If fallback is disabled, never fall back — caller handles errors
+    if [[ "$fallback_mode" == "fail" ]]; then
+        return 1
+    fi
+
+    # Check Codex readiness
+    local codex_status=0
+    check_codex_ready || codex_status=$?
+
+    case $codex_status in
+        0)
+            # Codex is ready, no fallback needed
+            return 1
+            ;;
+        1)
+            echo "not_installed"
+            return 0
+            ;;
+        2)
+            echo "not_authenticated"
+            return 0
+            ;;
+        *)
+            echo "unknown_error"
+            return 0
+            ;;
+    esac
+}
+
+# Display a warning when falling back to Claude-only mode
+# Arguments:
+#   $1 (reason) - Fallback reason: "not_installed", "not_authenticated", "unknown_error"
+#   $2 (fallback_mode) - Fallback mode: "claude-only" or "silent"
+# Output: Warning message to stderr (suppressed in "silent" mode)
+display_fallback_warning() {
+    local reason="${1:-unknown}"
+    local fallback_mode="${2:-${CODEX_FALLBACK:-claude-only}}"
+
+    # Silent mode suppresses all output
+    if [[ "$fallback_mode" == "silent" ]]; then
+        return 0
+    fi
+
+    local reason_text
+    case "$reason" in
+        not_installed)
+            reason_text="Codex CLI is not installed (npm install -g @openai/codex)"
+            ;;
+        not_authenticated)
+            reason_text="Codex is not authenticated (run: codex login --device-auth)"
+            ;;
+        *)
+            reason_text="Codex is unavailable (reason: $reason)"
+            ;;
+    esac
+
+    cat >&2 << FALLBACK_WARN_EOF
+╔════════════════════════════════════════════════════════╗
+║  CODEX FALLBACK                                        ║
+╠════════════════════════════════════════════════════════╣
+║                                                        ║
+║  $reason_text
+║                                                        ║
+║  Falling back to Claude-only mode.                     ║
+║  Set CODEX_FALLBACK="fail" in .korerorc to require     ║
+║  Codex (default behavior).                             ║
+║                                                        ║
+╚════════════════════════════════════════════════════════╝
+FALLBACK_WARN_EOF
+}
+
 export -f check_codex_ready
 export -f check_codex_auth
 export -f run_codex_login
 export -f build_codex_command
 export -f parse_codex_response
 export -f extract_codex_proposal
+export -f should_fallback_to_claude
+export -f display_fallback_warning

@@ -235,3 +235,80 @@ echo "mock codex"' > "$TEST_DIR/bin/codex"
     run bash -c 'PATH="'$TEST_DIR/bin':/usr/bin:/bin"; source "'$REPO_ROOT'/lib/codex_adapter.sh"; run_codex_login invalid_method'
     [ "$status" -eq 1 ]
 }
+
+# ===== should_fallback_to_claude =====
+
+@test "should_fallback_to_claude returns 1 when CODEX_FALLBACK is fail" {
+    export CODEX_FALLBACK="fail"
+    run should_fallback_to_claude
+    [ "$status" -eq 1 ]
+}
+
+@test "should_fallback_to_claude returns 0 with reason when codex not installed" {
+    export CODEX_FALLBACK="claude-only"
+    run bash -c 'PATH=/usr/bin:/bin; export CODEX_FALLBACK="claude-only"; source "'$REPO_ROOT'/lib/codex_adapter.sh"; should_fallback_to_claude'
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"not_installed"* ]]
+}
+
+@test "should_fallback_to_claude returns 0 with not_authenticated when auth missing" {
+    export CODEX_FALLBACK="claude-only"
+    # Mock codex command that exists but auth fails
+    mkdir -p "$TEST_DIR/bin"
+    echo '#!/bin/bash
+if [ "$1" = "login" ]; then exit 1; fi
+echo "codex mock"' > "$TEST_DIR/bin/codex"
+    chmod +x "$TEST_DIR/bin/codex"
+    export CODEX_HOME="$TEST_DIR/.codex_empty"
+    mkdir -p "$CODEX_HOME"
+    run bash -c 'PATH="'$TEST_DIR/bin':/usr/bin:/bin"; export CODEX_FALLBACK="claude-only"; export CODEX_HOME="'$CODEX_HOME'"; source "'$REPO_ROOT'/lib/codex_adapter.sh"; should_fallback_to_claude'
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"not_authenticated"* ]]
+}
+
+@test "should_fallback_to_claude returns 1 when codex is ready" {
+    export CODEX_FALLBACK="claude-only"
+    mkdir -p "$TEST_DIR/bin"
+    echo '#!/bin/bash
+echo "codex mock"' > "$TEST_DIR/bin/codex"
+    chmod +x "$TEST_DIR/bin/codex"
+    export CODEX_HOME="$TEST_DIR/.codex_ok"
+    mkdir -p "$CODEX_HOME"
+    echo '{"token":"test"}' > "$CODEX_HOME/auth.json"
+    run bash -c 'PATH="'$TEST_DIR/bin':/usr/bin:/bin"; export CODEX_FALLBACK="claude-only"; export CODEX_HOME="'$CODEX_HOME'"; source "'$REPO_ROOT'/lib/codex_adapter.sh"; should_fallback_to_claude'
+    [ "$status" -eq 1 ]
+}
+
+@test "should_fallback_to_claude respects silent mode" {
+    export CODEX_FALLBACK="silent"
+    run bash -c 'PATH=/usr/bin:/bin; export CODEX_FALLBACK="silent"; source "'$REPO_ROOT'/lib/codex_adapter.sh"; should_fallback_to_claude'
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"not_installed"* ]]
+}
+
+# ===== display_fallback_warning =====
+
+@test "display_fallback_warning shows warning for not_installed" {
+    run display_fallback_warning "not_installed" "claude-only"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CODEX FALLBACK"* ]]
+    [[ "$output" == *"not installed"* ]]
+}
+
+@test "display_fallback_warning shows warning for not_authenticated" {
+    run display_fallback_warning "not_authenticated" "claude-only"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"not authenticated"* ]]
+}
+
+@test "display_fallback_warning suppresses output in silent mode" {
+    run display_fallback_warning "not_installed" "silent"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "display_fallback_warning shows fallback instructions" {
+    run display_fallback_warning "not_installed" "claude-only"
+    [[ "$output" == *"Falling back to Claude-only"* ]]
+    [[ "$output" == *"CODEX_FALLBACK"* ]]
+}

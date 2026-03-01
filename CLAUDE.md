@@ -100,6 +100,7 @@ The system uses a modular architecture with reusable components in the `lib/` di
      - `generate_ideation_fix_plan_md()` - Pre-built tracker tables, category coverage, type balance, per-loop checklists with checkpoints
      - `generate_ideation_ideas_md()` - Project-specific IDEAS.md header
    - **Configuration preview**: `preview_korerorc_changes(new_content, interactive)` - Field-by-field diff when overwriting existing `.korerorc`; prompts for confirmation in interactive mode
+   - **Diversity tracking**: `generate_diversity_stats(ideas_dir)` - Scans idea files for `**Category:**` fields, produces compact text summary with per-category counts, overrepresentation warnings, and diversity alerts
 
 6. **lib/wizard_utils.sh** - Interactive prompt utilities for enable wizard
    - User prompts: `confirm()`, `prompt_text()`, `prompt_number()`
@@ -147,6 +148,8 @@ The system uses a modular architecture with reusable components in the `lib/` di
     - `build_codex_command(prompt, mode, output_path)` - Populates `CODEX_CMD_ARGS` array with `codex exec --json --sandbox read-only`
     - `parse_codex_response(ndjson_file, last_message_file, result_file)` - Creates normalized JSON at `.korero/.codex_parse_result`
     - `extract_codex_proposal(last_message_file)` - Returns final proposal text on stdout
+    - `should_fallback_to_claude()` - Checks `CODEX_FALLBACK` env and Codex readiness; returns 0 (should fallback) with reason on stdout, 1 (Codex ready)
+    - `display_fallback_warning(reason, fallback_mode)` - Shows fallback warning to stderr; suppressed in "silent" mode
 
 12. **lib/cross_ai_debate.sh** - Cross-AI debate orchestrator for heavy modes
     - `run_cross_ai_debate(claude_file, codex_file, loop_num, mode, project, rounds)` - Orchestrates 3-round debate, writes `.korero/.debate_result`
@@ -375,6 +378,7 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 Each loop iteration injects context via `build_loop_context()`:
 - Current loop number
 - Remaining tasks from fix_plan.md
+- Category diversity stats (per-category counts, overrepresentation warnings)
 - Idea context (when started via `--start-idea`)
 - Circuit breaker state (if not CLOSED)
 - Previous loop work summary
@@ -426,6 +430,7 @@ MAX_LOOPS="continuous"           # Loop limit: number or continuous
 CODEX_TIMEOUT=15                 # Codex execution timeout in minutes (1-120)
 CODEX_APPROVAL="never"          # Codex approval mode: never | on-request
 DEBATE_ROUNDS=2                  # Cross-AI debate rounds (1-3)
+CODEX_FALLBACK="claude-only"    # Fallback when Codex unavailable: fail | claude-only | silent
 ```
 
 ### Heavy Mode Architecture
@@ -443,6 +448,9 @@ Heavy modes run Claude Code and OpenAI Codex CLI in parallel each loop, then orc
 - If one AI fails, the surviving AI's proposal is used directly (debate skipped)
 - If both AIs fail, the loop exits with an error
 - Codex always runs in `--sandbox read-only`; only Claude implements the winner
+- **CODEX_FALLBACK modes**: `fail` (default, halt on Codex error), `claude-only` (auto-fallback with warning), `silent` (auto-fallback without output)
+- Fallback is checked at the start of `run_cross_ai_debate()` via `should_fallback_to_claude()` before any API calls
+- Fallback result includes `"fallback": true` and `"fallback_reason"` in `.korero/.debate_result`
 
 **Streaming Progress Indicators:**
 Each debate phase outputs real-time progress to stderr with colorized status, phase icons, and elapsed time:
@@ -704,9 +712,9 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (889 tests across 28 files)
+### Test Files (914 tests across 28 files)
 
-**Unit Tests (753 tests):**
+**Unit Tests (778 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
@@ -716,7 +724,7 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_session_continuity.bats` | 44 | Session lifecycle management + circuit breaker integration + issue #91 fix |
 | `test_exit_detection.bats` | 58 | Exit signal detection + EXIT_SIGNAL-based completion indicators + progress detection |
 | `test_rate_limiting.bats` | 25 | Rate limiting behavior |
-| `test_enable_core.bats` | 49 | Enable core library (idempotency, project detection, template generation, config validation, quickstart, verbose validation, config preview) |
+| `test_enable_core.bats` | 56 | Enable core library (idempotency, project detection, template generation, config validation, quickstart, verbose validation, config preview, diversity stats) |
 | `test_task_sources.bats` | 23 | Task sources (beads, GitHub, PRD extraction, normalization) |
 | `test_korero_enable.bats` | 22 | Korero enable integration tests (wizard, CI version, JSON output) |
 | `test_wizard_utils.bats` | 20 | Wizard utility functions (stdout/stderr separation, prompt functions) |
@@ -725,9 +733,9 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_korero_ideas.bats` | 31 | Ideas browsing, search, get_idea_title, sanitize_branch_name |
 | `test_debate_transcript.bats` | 18 | Debate transcript: init, append, finalize, get_latest, show, list |
 | `test_health_check.bats` | 28 | Health check: tool detection, git config, permissions, network, config, CLI flag, bash version guard |
-| `test_codex_adapter.bats` | 25 | Codex CLI adapter: command building, auth checks, response parsing, proposal extraction |
-| `test_cross_ai_debate.bats` | 44 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling, progress indicators |
-| `test_heavy_mode.bats` | 27 | Heavy mode integration: .korerorc validation, CLI flags, health checks, circuit breaker, enable |
+| `test_codex_adapter.bats` | 35 | Codex CLI adapter: command building, auth checks, response parsing, proposal extraction, fallback detection |
+| `test_cross_ai_debate.bats` | 48 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling, progress indicators, codex fallback integration |
+| `test_heavy_mode.bats` | 31 | Heavy mode integration: .korerorc validation, CLI flags, health checks, circuit breaker, enable, CODEX_FALLBACK validation |
 | `test_agent_protocol.bats` | 21 | Agent protocol tests |
 | `test_duration_tracking.bats` | 16 | Loop duration tracking |
 | `test_korero_config.bats` | 9 | Configuration management |

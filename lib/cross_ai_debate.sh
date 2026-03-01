@@ -437,6 +437,35 @@ run_cross_ai_debate() {
     local debate_dir="$KORERO_DIR/debates"
     mkdir -p "$debate_dir"
 
+    # Check Codex fallback mode before starting debate
+    local fallback_reason=""
+    fallback_reason=$(should_fallback_to_claude 2>/dev/null) || true
+    if [[ -n "$fallback_reason" ]]; then
+        local fallback_mode="${CODEX_FALLBACK:-fail}"
+        display_fallback_warning "$fallback_reason" "$fallback_mode"
+        # In fallback mode, use Claude's proposal directly (skip debate)
+        local claude_text
+        claude_text=$(cat "$claude_proposal_file" 2>/dev/null || echo "")
+        if command -v jq &>/dev/null; then
+            local jr
+            jr=$(echo "$claude_text" | jq -r '.result // empty' 2>/dev/null || true)
+            if [[ -n "$jr" ]]; then claude_text="$jr"; fi
+        fi
+        cat > "$DEBATE_RESULT_FILE" << FALLBACK_EOF
+{
+  "winner": "claude",
+  "title": "Claude proposal (Codex fallback: $fallback_reason)",
+  "confidence": 100,
+  "rationale": "Codex unavailable ($fallback_reason). Claude wins by default in fallback mode.",
+  "runner_up_insight": "N/A",
+  "fallback": true,
+  "fallback_reason": "$fallback_reason"
+}
+FALLBACK_EOF
+        append_transcript_section "$loop_num" "Outcome" "Claude wins by default (Codex fallback: $fallback_reason)."
+        return 0
+    fi
+
     # Read proposals
     local claude_proposal codex_proposal
     claude_proposal=$(cat "$claude_proposal_file" 2>/dev/null || echo "")

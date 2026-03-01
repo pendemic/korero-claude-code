@@ -210,6 +210,16 @@ validate_korerorc() {
             fi
         fi
 
+        # Check CODEX_FALLBACK validity (heavy modes)
+        if [[ "$line" =~ CODEX_FALLBACK=[\"\']*([a-zA-Z-]+) ]]; then
+            local codex_fb="${BASH_REMATCH[1]}"
+            if [[ ! "$codex_fb" =~ ^(fail|claude-only|silent)$ ]]; then
+                echo "$config_file:$line_num - Invalid CODEX_FALLBACK '$codex_fb'" >&2
+                echo "  Valid values: fail, claude-only, silent" >&2
+                ((errors++))
+            fi
+        fi
+
         # Check MAX_LOOPS validity
         if [[ "$line" =~ MAX_LOOPS=[\"\']*([a-zA-Z0-9]+) ]]; then
             local loops_val="${BASH_REMATCH[1]}"
@@ -812,6 +822,7 @@ MAX_LOOPS=\"${max_loops}\"
 CODEX_TIMEOUT=15
 CODEX_APPROVAL=\"never\"
 DEBATE_ROUNDS=2
+CODEX_FALLBACK=\"claude-only\"
 "
         fi
     fi
@@ -2627,6 +2638,15 @@ validate_korerorc_verbose() {
                     ((field_errors++))
                 fi
             fi
+            if [[ -n "${CODEX_FALLBACK:-}" ]]; then
+                if [[ "$CODEX_FALLBACK" =~ ^(fail|claude-only|silent)$ ]]; then
+                    echo "✓ CODEX_FALLBACK: $CODEX_FALLBACK (valid)"
+                else
+                    echo "✗ CODEX_FALLBACK: $CODEX_FALLBACK"
+                    echo "  Error: Must be fail, claude-only, or silent"
+                    ((field_errors++))
+                fi
+            fi
         fi
 
         # Validate ALLOWED_TOOLS
@@ -2717,6 +2737,97 @@ export -f safe_create_dir
 export -f create_korero_structure
 export -f detect_project_context
 export -f detect_git_info
+# generate_diversity_stats - Scan idea files and produce a category balance summary
+#
+# Reads .korero/ideas/loop_*_idea.md files, extracts **Category:** fields,
+# and produces a compact text summary of category coverage for injection into
+# the loop context.
+#
+# Arguments:
+#   $1 (ideas_dir) - Path to ideas directory (default: $KORERO_DIR/ideas)
+# Returns: Multi-line text summary on stdout; empty string if no ideas exist
+generate_diversity_stats() {
+    local ideas_dir="${1:-${KORERO_DIR:-.korero}/ideas}"
+
+    if [[ ! -d "$ideas_dir" ]]; then
+        echo ""
+        return 0
+    fi
+
+    # Collect category counts from idea files
+    local -A category_counts=()
+    local total_ideas=0
+    local file
+
+    for file in "$ideas_dir"/loop_*_idea.md; do
+        if [[ ! -f "$file" ]]; then
+            continue
+        fi
+        total_ideas=$((total_ideas + 1))
+
+        # Extract category from **Category:** line (portable, no grep -P)
+        local category=""
+        category=$(grep '\*\*Category:\*\*' "$file" 2>/dev/null | head -1 | sed 's/.*\*\*Category:\*\*[[:space:]]*//')
+        if [[ -z "$category" ]]; then
+            # Fallback: try "Category:" without bold
+            category=$(grep '^Category:' "$file" 2>/dev/null | head -1 | sed 's/^Category:[[:space:]]*//')
+        fi
+        category="${category:-Uncategorized}"
+        # Trim whitespace
+        category="${category#"${category%%[![:space:]]*}"}"
+        category="${category%"${category##*[![:space:]]}"}"
+
+        category_counts["$category"]=$(( ${category_counts["$category"]:-0} + 1 ))
+    done
+
+    if [[ $total_ideas -eq 0 ]]; then
+        echo ""
+        return 0
+    fi
+
+    # Find max and min categories
+    local max_count=0 min_count=999999
+    local max_cat="" min_cat=""
+    local unique_categories=0
+
+    for cat in "${!category_counts[@]}"; do
+        local count=${category_counts[$cat]}
+        unique_categories=$((unique_categories + 1))
+        if [[ $count -gt $max_count ]]; then
+            max_count=$count
+            max_cat="$cat"
+        fi
+        if [[ $count -lt $min_count ]]; then
+            min_count=$count
+            min_cat="$cat"
+        fi
+    done
+
+    # Build compact summary
+    local summary="Category diversity: ${unique_categories} categories across ${total_ideas} ideas."
+
+    # Build per-category breakdown
+    local breakdown=""
+    for cat in "${!category_counts[@]}"; do
+        local count=${category_counts[$cat]}
+        if [[ -n "$breakdown" ]]; then
+            breakdown+=", "
+        fi
+        breakdown+="${cat}(${count})"
+    done
+    summary+=" Coverage: ${breakdown}."
+
+    # Add recommendation if imbalanced
+    if [[ $max_count -ge 3 && $unique_categories -gt 1 ]]; then
+        summary+=" Note: '${max_cat}' is overrepresented (${max_count}x). Prioritize underrepresented categories."
+    fi
+    if [[ $unique_categories -eq 1 && $total_ideas -ge 3 ]]; then
+        summary+=" Warning: All ideas in one category. Diversify."
+    fi
+
+    echo "$summary"
+}
+
 export -f detect_task_sources
 export -f get_templates_dir
 export -f generate_prompt_md
@@ -2736,3 +2847,4 @@ export -f enable_korero_in_directory
 export -f run_quickstart_wizard
 export -f validate_korerorc_verbose
 export -f preview_korerorc_changes
+export -f generate_diversity_stats

@@ -153,6 +153,45 @@ EOF
     echo "$output" | grep -q "✓ DEBATE_ROUNDS: 3"
 }
 
+@test "validate_korerorc rejects invalid CODEX_FALLBACK" {
+    source "$REPO_ROOT/lib/enable_core.sh"
+    cat > ".korerorc" << 'EOF'
+KORERO_MODE="heavy-coding"
+CODEX_FALLBACK="invalid_value"
+EOF
+    run validate_korerorc ".korerorc"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_korerorc accepts valid CODEX_FALLBACK values" {
+    source "$REPO_ROOT/lib/enable_core.sh"
+    for val in fail claude-only silent; do
+        cat > ".korerorc" << EOF
+KORERO_MODE="heavy-coding"
+CODEX_FALLBACK="$val"
+EOF
+        run validate_korerorc ".korerorc"
+        [ "$status" -eq 0 ]
+    done
+}
+
+@test "validate_korerorc_verbose validates CODEX_FALLBACK" {
+    source "$REPO_ROOT/lib/enable_core.sh"
+    cat > ".korerorc" << 'EOF'
+KORERO_MODE="heavy-coding"
+CODEX_FALLBACK="claude-only"
+ALLOWED_TOOLS="@standard"
+EOF
+    run validate_korerorc_verbose ".korerorc"
+    echo "$output" | grep -q "✓ CODEX_FALLBACK: claude-only"
+}
+
+@test "generate_korerorc includes CODEX_FALLBACK for heavy modes" {
+    source "$REPO_ROOT/lib/enable_core.sh"
+    result=$(generate_korerorc "testproj" "node" "local" "heavy-coding" "my project" 3 10)
+    echo "$result" | grep -q 'CODEX_FALLBACK="claude-only"'
+}
+
 # ===== CLI flag parsing =====
 
 @test "korero_loop.sh parses --codex-timeout flag" {

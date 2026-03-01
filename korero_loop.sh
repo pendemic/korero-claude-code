@@ -1016,6 +1016,16 @@ build_loop_context() {
         fi
     fi
 
+    # Add diversity stats for ideation modes
+    local current_mode="${KORERO_MODE:-coding}"
+    if [[ "$current_mode" == "idea" || "$current_mode" == "heavy-idea" || "$current_mode" == "coding" || "$current_mode" == "heavy-coding" ]]; then
+        local diversity_stats=""
+        diversity_stats=$(generate_diversity_stats "$KORERO_DIR/ideas" 2>/dev/null || echo "")
+        if [[ -n "$diversity_stats" ]]; then
+            context+="$diversity_stats "
+        fi
+    fi
+
     # Add idea context if implementing a specific idea
     if [[ -f "$KORERO_DIR/.idea_context" ]]; then
         local idea_title=""

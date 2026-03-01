@@ -576,3 +576,100 @@ MAX_CALLS_PER_HOUR=100'
     run preview_korerorc_changes "$new_content" "false"
     [ "$status" -eq 0 ]
 }
+
+# =============================================================================
+# DIVERSITY STATS (7 tests)
+# =============================================================================
+
+@test "generate_diversity_stats returns empty for missing directory" {
+    run generate_diversity_stats "$TEST_DIR/nonexistent/ideas"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "generate_diversity_stats returns empty for empty directory" {
+    mkdir -p "$TEST_DIR/ideas"
+    run generate_diversity_stats "$TEST_DIR/ideas"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "generate_diversity_stats counts categories from idea files" {
+    mkdir -p "$TEST_DIR/ideas"
+    cat > "$TEST_DIR/ideas/loop_1_idea.md" << 'EOF'
+**Title:** Shell Compatibility Detection
+**Type:** Usability Improvement
+**Category:** Cross-Platform Support
+EOF
+    cat > "$TEST_DIR/ideas/loop_2_idea.md" << 'EOF'
+**Title:** Permission Fix Suggestions
+**Type:** New Feature
+**Category:** CLI Integration
+EOF
+    run generate_diversity_stats "$TEST_DIR/ideas"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"2 categories"* ]]
+    [[ "$output" == *"2 ideas"* ]]
+}
+
+@test "generate_diversity_stats detects overrepresented category" {
+    mkdir -p "$TEST_DIR/ideas"
+    for i in 1 2 3; do
+        cat > "$TEST_DIR/ideas/loop_${i}_idea.md" << EOF
+**Title:** Idea $i
+**Category:** DevOps
+EOF
+    done
+    cat > "$TEST_DIR/ideas/loop_4_idea.md" << 'EOF'
+**Title:** Idea 4
+**Category:** UX
+EOF
+    run generate_diversity_stats "$TEST_DIR/ideas"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"overrepresented"* ]]
+    [[ "$output" == *"DevOps"* ]]
+}
+
+@test "generate_diversity_stats warns on single category" {
+    mkdir -p "$TEST_DIR/ideas"
+    for i in 1 2 3; do
+        cat > "$TEST_DIR/ideas/loop_${i}_idea.md" << EOF
+**Title:** Idea $i
+**Category:** DevOps
+EOF
+    done
+    run generate_diversity_stats "$TEST_DIR/ideas"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"one category"* ]]
+}
+
+@test "generate_diversity_stats handles uncategorized ideas" {
+    mkdir -p "$TEST_DIR/ideas"
+    cat > "$TEST_DIR/ideas/loop_1_idea.md" << 'EOF'
+**Title:** Some idea without category
+**Type:** New Feature
+EOF
+    run generate_diversity_stats "$TEST_DIR/ideas"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Uncategorized"* ]]
+}
+
+@test "generate_diversity_stats shows per-category counts" {
+    mkdir -p "$TEST_DIR/ideas"
+    cat > "$TEST_DIR/ideas/loop_1_idea.md" << 'EOF'
+**Title:** Idea 1
+**Category:** UX
+EOF
+    cat > "$TEST_DIR/ideas/loop_2_idea.md" << 'EOF'
+**Title:** Idea 2
+**Category:** Performance
+EOF
+    cat > "$TEST_DIR/ideas/loop_3_idea.md" << 'EOF'
+**Title:** Idea 3
+**Category:** UX
+EOF
+    run generate_diversity_stats "$TEST_DIR/ideas"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"UX(2)"* ]]
+    [[ "$output" == *"Performance(1)"* ]]
+}

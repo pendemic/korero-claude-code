@@ -348,3 +348,80 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"Add streaming support"* ]]
 }
+
+# ===== run_cross_ai_debate fallback mode =====
+
+@test "run_cross_ai_debate uses claude fallback when codex not installed" {
+    echo "Claude proposal text" > "$TEST_DIR/claude_prop.log"
+    echo "Codex proposal text" > "$TEST_DIR/codex_prop.log"
+    init_debate_transcript 1 > /dev/null
+    # Override PATH so codex is not found, set fallback mode
+    run bash -c '
+        export KORERO_DIR="'$KORERO_DIR'"
+        export DEBATES_DIR="'$DEBATES_DIR'"
+        export CODEX_FALLBACK="claude-only"
+        PATH=/usr/bin:/bin
+        source "'$REPO_ROOT'/lib/debate_transcript.sh"
+        source "'$REPO_ROOT'/lib/codex_adapter.sh"
+        source "'$REPO_ROOT'/lib/cross_ai_debate.sh"
+        run_cross_ai_debate "'$TEST_DIR'/claude_prop.log" "'$TEST_DIR'/codex_prop.log" 1 "heavy-idea" "proj" 2
+    '
+    [ "$status" -eq 0 ]
+    grep -q '"winner": "claude"' "$KORERO_DIR/.debate_result"
+    grep -q '"fallback": true' "$KORERO_DIR/.debate_result"
+}
+
+@test "run_cross_ai_debate fallback records reason in result" {
+    echo "Claude proposal text" > "$TEST_DIR/claude_prop.log"
+    echo "" > "$TEST_DIR/codex_prop.log"
+    init_debate_transcript 1 > /dev/null
+    run bash -c '
+        export KORERO_DIR="'$KORERO_DIR'"
+        export DEBATES_DIR="'$DEBATES_DIR'"
+        export CODEX_FALLBACK="silent"
+        PATH=/usr/bin:/bin
+        source "'$REPO_ROOT'/lib/debate_transcript.sh"
+        source "'$REPO_ROOT'/lib/codex_adapter.sh"
+        source "'$REPO_ROOT'/lib/cross_ai_debate.sh"
+        run_cross_ai_debate "'$TEST_DIR'/claude_prop.log" "'$TEST_DIR'/codex_prop.log" 1 "heavy-idea" "proj" 2
+    '
+    [ "$status" -eq 0 ]
+    grep -q '"fallback_reason": "not_installed"' "$KORERO_DIR/.debate_result"
+}
+
+@test "run_cross_ai_debate fallback records in transcript" {
+    echo "Claude proposal text" > "$TEST_DIR/claude_prop.log"
+    echo "" > "$TEST_DIR/codex_prop.log"
+    init_debate_transcript 1 > /dev/null
+    run bash -c '
+        export KORERO_DIR="'$KORERO_DIR'"
+        export DEBATES_DIR="'$DEBATES_DIR'"
+        export CODEX_FALLBACK="claude-only"
+        PATH=/usr/bin:/bin
+        source "'$REPO_ROOT'/lib/debate_transcript.sh"
+        source "'$REPO_ROOT'/lib/codex_adapter.sh"
+        source "'$REPO_ROOT'/lib/cross_ai_debate.sh"
+        run_cross_ai_debate "'$TEST_DIR'/claude_prop.log" "'$TEST_DIR'/codex_prop.log" 1 "heavy-idea" "proj" 2
+    '
+    [ "$status" -eq 0 ]
+    grep -q "fallback" "$DEBATES_DIR/loop_1.md"
+}
+
+@test "run_cross_ai_debate silent fallback suppresses warning" {
+    echo "Claude proposal text" > "$TEST_DIR/claude_prop.log"
+    echo "" > "$TEST_DIR/codex_prop.log"
+    init_debate_transcript 1 > /dev/null
+    run bash -c '
+        export KORERO_DIR="'$KORERO_DIR'"
+        export DEBATES_DIR="'$DEBATES_DIR'"
+        export CODEX_FALLBACK="silent"
+        PATH=/usr/bin:/bin
+        source "'$REPO_ROOT'/lib/debate_transcript.sh"
+        source "'$REPO_ROOT'/lib/codex_adapter.sh"
+        source "'$REPO_ROOT'/lib/cross_ai_debate.sh"
+        run_cross_ai_debate "'$TEST_DIR'/claude_prop.log" "'$TEST_DIR'/codex_prop.log" 1 "heavy-idea" "proj" 2
+    '
+    [ "$status" -eq 0 ]
+    # Silent mode should not show the CODEX FALLBACK banner
+    [[ "$output" != *"CODEX FALLBACK"* ]]
+}
