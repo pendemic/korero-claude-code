@@ -771,6 +771,39 @@ EOF
     [[ "$output" == *"--troubleshoot"* ]]
 }
 
+# ===== --diagnose (interactive troubleshooter) =====
+
+@test "--diagnose is listed in help text" {
+    run bash "$KORERO_SCRIPT" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--diagnose"* ]]
+}
+
+@test "--diagnose launches interactive troubleshooter" {
+    run bash -c "echo 'n' | bash '$KORERO_SCRIPT' --diagnose"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"INTERACTIVE TROUBLESHOOTER"* ]]
+}
+
+@test "--diagnose shows permission diagnosis for Y/Y input" {
+    run bash -c "printf 'y\ny\n' | bash '$KORERO_SCRIPT' --diagnose"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Missing Bash tool permission"* ]]
+    [[ "$output" == *"ALLOWED_TOOLS"* ]]
+}
+
+@test "--diagnose shows rate limit diagnosis" {
+    run bash -c "printf 'n\ny\ny\n' | bash '$KORERO_SCRIPT' --diagnose"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Rate limit exceeded"* ]]
+}
+
+@test "--diagnose shows fallback when all questions answered no" {
+    run bash -c "printf 'n\nn\nn\nn\nn\nn\n' | bash '$KORERO_SCRIPT' --diagnose"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No specific diagnosis"* ]]
+}
+
 # ===== --fix-config flag =====
 
 @test "--fix-config is listed in help text" {

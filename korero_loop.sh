@@ -53,6 +53,7 @@ MAX_DURATION_ENTRIES=10
 # Rate limit warning flags (reset each hour)
 RATE_WARNED_80=false
 RATE_WARNED_95=false
+LOOPS_THIS_HOUR=0
 
 # Save environment variable state BEFORE setting defaults
 # These are used by load_korerorc() to determine which values came from environment
@@ -347,6 +348,7 @@ init_call_tracking() {
         echo "$current_hour" > "$TIMESTAMP_FILE"
         RATE_WARNED_80=false
         RATE_WARNED_95=false
+        LOOPS_THIS_HOUR=0
         log_status "INFO" "Call counter reset for new hour: $current_hour"
     fi
 
@@ -719,6 +721,75 @@ check_rate_limit_warnings() {
     fi
 }
 
+# Predict remaining loops before hitting rate limit
+# Uses current call count, loop count, and max calls to project remaining loops
+# Returns: projected remaining loops on stdout (0 if at/over limit)
+predict_remaining_loops() {
+    local max_calls="${MAX_CALLS_PER_HOUR:-100}"
+    local current_calls
+    current_calls=$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")
+    local loops_this_hour="${LOOPS_THIS_HOUR:-1}"
+
+    # Avoid division by zero
+    if [[ $loops_this_hour -eq 0 ]]; then
+        loops_this_hour=1
+    fi
+
+    local avg_calls_per_loop=$((current_calls / loops_this_hour))
+
+    # Avoid division by zero for avg
+    if [[ $avg_calls_per_loop -eq 0 ]]; then
+        avg_calls_per_loop=1
+    fi
+
+    local remaining_calls=$((max_calls - current_calls))
+    if [[ $remaining_calls -le 0 ]]; then
+        echo "0"
+        return
+    fi
+
+    local projected_loops=$((remaining_calls / avg_calls_per_loop))
+    echo "$projected_loops"
+}
+
+# Show rate limit prediction warning if approaching limit
+# Warns when projected remaining loops drops below threshold (default: 5)
+show_rate_limit_prediction() {
+    local threshold="${RATE_LIMIT_WARNING_THRESHOLD:-5}"
+    local max_calls="${MAX_CALLS_PER_HOUR:-100}"
+    local current_calls
+    current_calls=$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")
+    local loops_this_hour="${LOOPS_THIS_HOUR:-1}"
+
+    # Skip if threshold is 0 (disabled)
+    if [[ "$threshold" -eq 0 ]]; then
+        return
+    fi
+
+    local projected
+    projected=$(predict_remaining_loops)
+    local usage_percent=$((current_calls * 100 / max_calls))
+    local effective_loops=$((loops_this_hour > 0 ? loops_this_hour : 1))
+    local avg_calls=$((current_calls / effective_loops))
+
+    if [[ $projected -lt $threshold && $projected -ge 0 ]]; then
+        echo ""
+        echo "═══════════════════════════════════════════════════════════"
+        echo "RATE LIMIT PROJECTION"
+        echo "═══════════════════════════════════════════════════════════"
+        echo "Current usage: ${current_calls}/${max_calls} calls (${usage_percent}%)"
+        echo "Average consumption: ${avg_calls} calls/loop"
+        echo "Projected remaining: ~${projected} loops before limit"
+        echo ""
+        echo "Suggestions:"
+        echo "  - Pause after this loop to let the hourly limit reset"
+        echo "  - Increase limit: korero --calls $((max_calls + 50))"
+        echo "  - Check status anytime: korero --status"
+        echo "═══════════════════════════════════════════════════════════"
+        echo ""
+    fi
+}
+
 # Wait for rate limit reset with countdown
 wait_for_reset() {
     local calls_made=$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")
@@ -748,6 +819,7 @@ wait_for_reset() {
     echo "$(date +%Y%m%d%H)" > "$TIMESTAMP_FILE"
     RATE_WARNED_80=false
     RATE_WARNED_95=false
+    LOOPS_THIS_HOUR=0
     log_status "SUCCESS" "Rate limit reset! Ready for new calls."
 }
 
@@ -2197,6 +2269,10 @@ main() {
         log_status "INFO" "Loop #$loop_count - calling init_call_tracking..."
         init_call_tracking
 
+        # Track loops this hour and show rate limit prediction
+        LOOPS_THIS_HOUR=$((LOOPS_THIS_HOUR + 1))
+        show_rate_limit_prediction
+
         log_status "LOOP" "=== Starting Loop #$loop_count ==="
 
         # Display visual progress indicator
@@ -2410,6 +2486,7 @@ Options:
     --health-check          Validate environment prerequisites (Claude CLI, jq, git, network)
     --cost-estimate         Estimate API costs from loop logs and display report
     --troubleshoot          Show troubleshooting quick reference for common issues
+    --diagnose              Interactive troubleshooting wizard (guided diagnosis)
     --start-idea N          Create branch from winning idea N and start coding loop
     --reset-circuit         Reset circuit breaker to CLOSED state
     --circuit-status        Show circuit breaker status and exit
@@ -2545,6 +2622,269 @@ Tip: Run 'korero --help <topic>' for detailed documentation
 ═══════════════════════════════════════════════════════════
 
 TROUBLESHOOT_EOF
+}
+
+# Interactive Troubleshooter — guided diagnosis with yes/no questions
+run_interactive_troubleshooter() {
+    # Simple confirm helper (reads y/n from stdin)
+    _ts_confirm() {
+        local prompt="$1"
+        local answer
+        read -rp "$prompt [Y/n] " answer
+        case "$answer" in
+            [Nn]*) return 1 ;;
+            *) return 0 ;;
+        esac
+    }
+
+    echo ""
+    echo "═══════════════════════════════════════════════════════════"
+    echo "           KORERO INTERACTIVE TROUBLESHOOTER"
+    echo "═══════════════════════════════════════════════════════════"
+    echo ""
+    echo "Let me help diagnose your issue."
+    echo ""
+
+    # Branch 1: Permission issues
+    if _ts_confirm "Are you seeing 'permission denied' errors?"; then
+        if _ts_confirm "Is the error for a Bash command (npm, git, docker, etc.)?"; then
+            cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Missing Bash tool permission
+
+FIX: Add the command pattern to ALLOWED_TOOLS in .korerorc
+
+Examples:
+  ALLOWED_TOOLS="@standard"                    # Includes git, npm, pytest
+  ALLOWED_TOOLS="@standard,Bash(docker *)"     # Add docker
+  ALLOWED_TOOLS="@permissive"                  # Allow all Bash commands
+
+Quick reference: korero --help presets
+═══════════════════════════════════════════════════════════
+EOF
+            return 0
+        else
+            cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Missing file operation permission
+
+FIX: Ensure Read, Write, and Edit are in ALLOWED_TOOLS
+
+Example:
+  ALLOWED_TOOLS="Write,Read,Edit,Bash(git *)"
+
+Or use any preset (all include Read/Write/Edit):
+  ALLOWED_TOOLS="@conservative"
+
+Quick reference: korero --help tools
+═══════════════════════════════════════════════════════════
+EOF
+            return 0
+        fi
+    fi
+
+    # Branch 2: Rate limiting
+    if _ts_confirm "Are you hitting rate limit warnings or errors?"; then
+        if _ts_confirm "Is the loop stopping due to 'rate limit exceeded'?"; then
+            cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Rate limit exceeded
+
+FIX: Wait for hourly reset or increase the limit
+
+Check current status:
+  korero --status
+
+Increase limit temporarily:
+  korero --calls 150
+
+Increase limit permanently in .korerorc:
+  MAX_CALLS_PER_HOUR=150
+
+Quick reference: korero --help rate-limiting
+═══════════════════════════════════════════════════════════
+EOF
+            return 0
+        else
+            cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Rate limit warning (approaching limit)
+
+This is informational — no action required yet.
+
+To reduce API usage:
+  - Use --calls flag to set a lower limit
+  - Pause between intensive sessions
+
+Monitor usage:
+  korero --status
+
+Quick reference: korero --help rate-limiting
+═══════════════════════════════════════════════════════════
+EOF
+            return 0
+        fi
+    fi
+
+    # Branch 3: Circuit breaker
+    if _ts_confirm "Is the loop showing 'circuit breaker OPEN' or stopping unexpectedly?"; then
+        cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Circuit breaker triggered
+
+The circuit breaker opens when it detects problems like:
+- No file changes for 3+ consecutive loops
+- Same error repeated 5+ times
+- Permission denials without recovery
+
+Check current state:
+  korero --circuit-status
+
+Reset after fixing the underlying issue:
+  korero --reset-circuit
+
+Quick reference: korero --help circuit-breaker
+═══════════════════════════════════════════════════════════
+EOF
+        return 0
+    fi
+
+    # Branch 4: Session issues
+    if _ts_confirm "Are you having session continuity problems?"; then
+        if _ts_confirm "Is the session context seeming stale or outdated?"; then
+            cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Stale session context
+
+Sessions older than 12 hours may have degraded context.
+
+Reset the session:
+  korero --reset-session
+
+Check session age in status output:
+  korero --status
+
+Quick reference: korero --help session
+═══════════════════════════════════════════════════════════
+EOF
+            return 0
+        else
+            cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Session continuity failure
+
+Check these settings in .korerorc:
+  CLAUDE_USE_CONTINUE=true    # Required for session continuity
+
+Verify session file exists:
+  ls -la .korero/.claude_session_id
+
+Manual session reset:
+  korero --reset-session
+
+Quick reference: korero --help session
+═══════════════════════════════════════════════════════════
+EOF
+            return 0
+        fi
+    fi
+
+    # Branch 5: Heavy mode (Codex)
+    if _ts_confirm "Are you using heavy mode (Claude + Codex)?"; then
+        if _ts_confirm "Is Codex authentication failing?"; then
+            cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Codex authentication failure
+
+Run Codex login:
+  codex login
+
+Or check auth file:
+  cat ~/.codex/auth.json
+
+Verify Codex is working:
+  codex --version
+
+Quick reference: korero --help modes
+═══════════════════════════════════════════════════════════
+EOF
+            return 0
+        else
+            cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Heavy mode debate issue
+
+For timeout issues, increase in .korerorc:
+  CODEX_TIMEOUT=30    # Default is 15 minutes
+
+For debate round issues:
+  DEBATE_ROUNDS=2     # 1-3 rounds
+
+View latest debate:
+  korero --show-debate
+
+Quick reference: korero --help modes
+═══════════════════════════════════════════════════════════
+EOF
+            return 0
+        fi
+    fi
+
+    # Branch 6: Configuration
+    if _ts_confirm "Are you seeing .korerorc or configuration errors?"; then
+        cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Configuration issue
+
+Validate your configuration:
+  korero --validate           # Quick check
+  korero --validate-config    # Verbose with per-field status
+  korero --fix-config         # Auto-fix missing fields
+
+Common issues:
+- Missing quotes around values with spaces
+- Unknown preset names (valid: @conservative, @standard, @permissive)
+- Typos in variable names
+
+Quick reference: korero --help config
+═══════════════════════════════════════════════════════════
+EOF
+        return 0
+    fi
+
+    # Fallback: No diagnosis matched
+    cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+No specific diagnosis matched your issue.
+
+General troubleshooting steps:
+1. Check status: korero --status
+2. Validate config: korero --validate
+3. View recent logs: ls -la .korero/logs/
+4. Check circuit breaker: korero --circuit-status
+5. Run health check: korero --health-check
+
+For help topics:
+  korero --help presets
+  korero --help config
+  korero --help session
+  korero --help circuit-breaker
+
+Still stuck? Open an issue:
+  https://github.com/pendemic/korero-claude-code/issues
+═══════════════════════════════════════════════════════════
+EOF
 }
 
 # Example Gallery — curated workflow examples for new users
@@ -3157,6 +3497,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --troubleshoot|--troubleshooting)
             show_troubleshoot_reference
+            exit 0
+            ;;
+        --diagnose)
+            run_interactive_troubleshooter
             exit 0
             ;;
         --show-debate)

@@ -284,6 +284,7 @@ korero --cost-estimate           # Show estimated API costs from logs
 
 # Troubleshooting
 korero --troubleshoot            # Quick reference for common issues and fixes
+korero --diagnose                # Interactive troubleshooting wizard (guided diagnosis)
 
 # Circuit breaker management
 korero --reset-circuit
@@ -352,6 +353,7 @@ The loop is controlled by several key files and environment variables within the
 - Default: 100 API calls per hour (configurable via `--calls` flag)
 - Automatic hourly reset with countdown display
 - Call tracking persists across script restarts
+- **Predictive warnings**: When projected remaining loops drops below threshold (default: 5), a prediction warning is shown with usage stats and suggestions. Configure via `RATE_LIMIT_WARNING_THRESHOLD` in `.korerorc` (set to 0 to disable).
 
 ### Modern CLI Configuration (Phase 1.1)
 
@@ -388,6 +390,7 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--health-check` - Validate all prerequisites (Claude CLI, jq, git, permissions, network, config)
 - `--cost-estimate` - Estimate API costs from loop log files and display formatted report
 - `--troubleshoot` / `--troubleshooting` - Show categorized troubleshooting quick reference with common issues and fix commands
+- `--diagnose` - Interactive troubleshooting wizard with guided yes/no decision tree for diagnosing issues
 - `--codex-timeout NUM` - Set Codex execution timeout in minutes (1-120, heavy modes only)
 - `--debate-rounds NUM` - Set number of cross-AI debate rounds (1-3, heavy modes only)
 
@@ -735,18 +738,18 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (933 tests across 28 files)
+### Test Files (947 tests across 28 files)
 
-**Unit Tests (797 tests):**
+**Unit Tests (811 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
-| `test_cli_parsing.bats` | 70 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea, quickstart, validate-config, examples, show-debate, troubleshoot, fix-config |
+| `test_cli_parsing.bats` | 75 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea, quickstart, validate-config, examples, show-debate, troubleshoot, diagnose, fix-config |
 | `test_cli_modern.bats` | 33 | Modern CLI commands (Phase 1.1) + build_claude_command fix |
 | `test_json_parsing.bats` | 74 | JSON output format parsing + Claude CLI format + session management + permission suggestions + visual config diff |
 | `test_session_continuity.bats` | 49 | Session lifecycle management + circuit breaker integration + issue #91 fix + session age warning |
 | `test_exit_detection.bats` | 58 | Exit signal detection + EXIT_SIGNAL-based completion indicators + progress detection |
-| `test_rate_limiting.bats` | 25 | Rate limiting behavior |
+| `test_rate_limiting.bats` | 34 | Rate limiting behavior + predictive rate limit warnings |
 | `test_enable_core.bats` | 64 | Enable core library (idempotency, project detection, template generation, config validation, quickstart, verbose validation, config preview, diversity stats, config fix commands) |
 | `test_task_sources.bats` | 23 | Task sources (beads, GitHub, PRD extraction, normalization) |
 | `test_korero_enable.bats` | 22 | Korero enable integration tests (wizard, CI version, JSON output) |
