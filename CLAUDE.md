@@ -45,6 +45,9 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - Three states: CLOSED (normal), HALF_OPEN (monitoring), OPEN (halted)
    - Configurable thresholds for no-progress and error detection
    - Automatic state transitions and recovery
+   - `check_budget_threshold()` - Returns 0 if under budget or no budget set, 1 if at/over; uses `KORERO_BUDGET_USD` + `.korero/cost_history.json`; `bc` for floating-point comparison
+   - `get_budget_percentage()` - Returns current spend as integer percentage of budget (0 if no budget set)
+   - `prompt_budget_exceeded(current_cost, budget)` - Interactive recovery prompt: continue / reduce rate limit (halves MAX_CALLS_PER_HOUR) / exit
 
 2. **lib/response_analyzer.sh** - Intelligent response analysis
    - Analyzes Claude Code output for completion signals
@@ -166,6 +169,11 @@ The system uses a modular architecture with reusable components in the `lib/` di
     - `show_debate_summary(winner, title, confidence, total_time)` - Displays formatted debate completion box with winner info
     - `show_debate_round_progress(round, phase, total_rounds)` - Round-level progress bar (`[███░░░░░░░] Round 1/3: Critique`) to stderr
     - `complete_debate_round_progress()` - Full progress bar with "Debate complete!" message to stderr
+    - `calculate_length_ratio(claude_file, codex_file)` - Argument length ratio between proposals (balanced = ~1.0)
+    - `calculate_coverage(proposal_file, critique_file)` - Counter-argument coverage percentage (0-100)
+    - `calculate_verdict_confidence(judgment_file)` - Confidence score from judgment language (0-100)
+    - `calculate_debate_quality(claude, codex, claude_crit, codex_crit, judgment)` - Composite quality score (0-100); 30% length + 40% coverage + 30% confidence
+    - `record_debate_quality(loop_num, quality, ratio, coverage, confidence)` - Appends metrics to `.korero/.debate_quality.json`
 
 13. **lib/cost_estimator.sh** - API cost estimation from loop logs
     - `estimate_tokens_from_file(file_path)` - Estimates token count from file size (4 chars/token)
@@ -284,6 +292,9 @@ korero --health-check || exit 1  # Use in CI to fail fast
 korero --cost-estimate           # Show estimated API costs from logs
 korero --cost-history            # Show per-loop cost breakdown with session totals
 
+# Debate quality (heavy modes)
+korero --debate-stats            # Show debate quality statistics across loops
+
 # Idea search
 korero --search-ideas "caching"  # Search past ideas by keyword
 
@@ -395,6 +406,7 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--health-check` - Validate all prerequisites (Claude CLI, jq, git, permissions, network, config)
 - `--cost-estimate` - Estimate API costs from loop log files and display formatted report
 - `--cost-history` / `--costs` - Show per-loop cost breakdown with session totals from `cost_history.json`
+- `--debate-stats` / `--quality` - Show debate quality statistics (heavy modes); reads from `.korero/.debate_quality.json`
 - `--search-ideas KEYWORD` / `--find-ideas KEYWORD` - Search past ideas by keyword (case-insensitive), shows metadata and matching context
 - `--troubleshoot` / `--troubleshooting` - Show categorized troubleshooting quick reference with common issues and fix commands
 - `--diagnose` - Interactive troubleshooting wizard with guided yes/no decision tree for diagnosing issues
@@ -507,7 +519,16 @@ A round-level progress bar also updates in-place showing overall debate completi
 **Key Files:**
 - `.korero/.debate_result` — JSON with winner, title, confidence, rationale
 - `.korero/debates/loop_N.md` — Full debate transcript per loop
+- `.korero/.debate_quality.json` — Per-loop quality metrics (length ratio, coverage, verdict confidence, composite score)
 - `templates/heavy_debate_prompts/` — Critique, defense, and judge prompt templates
+
+**Debate Quality Metrics** (calculated after each debate, stored in `.korero/.debate_quality.json`):
+- **Length Ratio** — Word count ratio between Claude and Codex proposals (ideal: 0.7–1.3); extreme ratios flag disengagement
+- **Coverage** — % of proposal key terms addressed in the critique (higher = more substantive engagement)
+- **Verdict Confidence** — Decisiveness score from judgment language: clearly superior=90, preferred=75, slight edge=40, tie=20, default=50
+- **Quality Score** — Composite 0–100 (30% length + 40% coverage + 30% confidence); ≥70 indicates high-quality debates
+
+View with `korero --debate-stats` (alias: `--quality`).
 
 ### Intelligent Exit Detection
 The loop uses a dual-condition check to prevent premature exits during productive iterations:
@@ -668,6 +689,27 @@ fi
 - `CB_PERMISSION_DENIAL_THRESHOLD=2` - Open circuit after 2 loops with permission denials (Issue #101)
 - `CB_CODEX_FAILURE_THRESHOLD=3` - Open circuit after 3 consecutive Codex failures (heavy modes only)
 
+### Budget Alert System
+
+Prevents unexpected API bills by pausing when estimated costs exceed a configurable threshold:
+
+```bash
+# In .korerorc — set spending limit in USD
+KORERO_BUDGET_USD="10.00"   # Pause when estimated spend reaches $10
+```
+
+When the budget is reached, users choose from:
+1. **Continue** — acknowledge overspend and proceed
+2. **Reduce rate limit** — halves `MAX_CALLS_PER_HOUR` to slow spending
+3. **Exit** — stop the loop and review costs with `korero --cost-history`
+
+A **warning at 80%** of the budget is shown before the hard pause. Budget checking is **fully opt-in** — if `KORERO_BUDGET_USD` is not set, no checking occurs.
+
+**Key functions** (in `lib/circuit_breaker.sh`):
+- `check_budget_threshold()` - Returns 0 (under) or 1 (over/at budget); handles floating-point via `bc`
+- `get_budget_percentage()` - Returns spend as percentage of budget (0 if no budget set)
+- `prompt_budget_exceeded(current, budget)` - Interactive recovery prompt; returns 0 (continue) or 1 (exit)
+
 ### Permission Denial Detection (Issue #101)
 
 When Claude Code is denied permission to execute commands (e.g., `npm install`), Korero detects this from the `permission_denials` array in the JSON output and offers interactive recovery:
@@ -745,9 +787,9 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (964 tests across 28 files)
+### Test Files (996 tests across 29 files)
 
-**Unit Tests (828 tests):**
+**Unit Tests (860 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
@@ -767,7 +809,8 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_debate_transcript.bats` | 18 | Debate transcript: init, append, finalize, get_latest, show, list |
 | `test_health_check.bats` | 28 | Health check: tool detection, git config, permissions, network, config, CLI flag, bash version guard |
 | `test_codex_adapter.bats` | 35 | Codex CLI adapter: command building, auth checks, response parsing, proposal extraction, fallback detection |
-| `test_cross_ai_debate.bats` | 53 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling, progress indicators, round progress bar, codex fallback integration |
+| `test_circuit_breaker.bats` | 16 | Budget Alert System: check_budget_threshold, get_budget_percentage, prompt_budget_exceeded |
+| `test_cross_ai_debate.bats` | 69 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling, progress indicators, round progress bar, codex fallback integration, debate quality metrics |
 | `test_heavy_mode.bats` | 31 | Heavy mode integration: .korerorc validation, CLI flags, health checks, circuit breaker, enable, CODEX_FALLBACK validation |
 | `test_agent_protocol.bats` | 21 | Agent protocol tests |
 | `test_duration_tracking.bats` | 16 | Loop duration tracking |

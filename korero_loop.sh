@@ -2292,6 +2292,26 @@ main() {
             break
         fi
 
+        # Check budget threshold (if KORERO_BUDGET_USD is set)
+        if [[ -n "${KORERO_BUDGET_USD:-}" ]]; then
+            # Warn at 80%
+            local budget_pct
+            budget_pct=$(get_budget_percentage)
+            if [[ "${budget_pct:-0}" -ge 80 && "${budget_pct:-0}" -lt 100 ]] 2>/dev/null; then
+                log_status "WARN" "Budget warning: ${budget_pct}% of \$${KORERO_BUDGET_USD} spent (estimated)"
+            fi
+
+            # Pause when threshold exceeded
+            if ! check_budget_threshold; then
+                local current_cost
+                current_cost=$(jq -r '.session_total_usd // 0' "$KORERO_DIR/cost_history.json" 2>/dev/null || echo "0")
+                if ! prompt_budget_exceeded "$current_cost" "$KORERO_BUDGET_USD"; then
+                    log_status "INFO" "Exiting due to budget limit."
+                    break
+                fi
+            fi
+        fi
+
         # Check rate limits
         if ! can_make_call; then
             wait_for_reset
@@ -2491,6 +2511,7 @@ Options:
     --health-check          Validate environment prerequisites (Claude CLI, jq, git, network)
     --cost-estimate         Estimate API costs from loop logs and display report
     --cost-history          Show per-loop cost breakdown with session totals
+    --debate-stats          Show debate quality statistics (heavy modes)
     --search-ideas KEYWORD  Search past ideas by keyword (case-insensitive)
     --troubleshoot          Show troubleshooting quick reference for common issues
     --diagnose              Interactive troubleshooting wizard (guided diagnosis)
@@ -3013,6 +3034,68 @@ show_cost_history() {
     echo "Average per loop:      \$${avg_cost}"
     echo "Loops recorded:        ${loop_count}"
     echo "═══════════════════════════════════════════════════════════"
+}
+
+# Show debate quality statistics from .korero/.debate_quality.json
+show_debate_stats() {
+    local korero_dir="${KORERO_DIR:-.korero}"
+    local quality_file="$korero_dir/.debate_quality.json"
+
+    if [[ ! -f "$quality_file" ]]; then
+        echo "No debate quality data found. Run heavy mode loops first."
+        return 1
+    fi
+
+    if ! command -v jq &>/dev/null; then
+        echo "jq is required to display debate statistics."
+        return 1
+    fi
+
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════╗"
+    echo "║              DEBATE QUALITY STATISTICS                     ║"
+    echo "╚════════════════════════════════════════════════════════════╝"
+    echo ""
+
+    local total_debates avg_quality
+    total_debates=$(jq '.debates | length' "$quality_file" 2>/dev/null || echo "0")
+    avg_quality=$(jq 'if (.debates | length) > 0 then ([.debates[].quality_score] | add / length | floor) else 0 end' "$quality_file" 2>/dev/null || echo "0")
+
+    echo "  Total debates analyzed: $total_debates"
+    echo "  Average quality score:  $avg_quality/100"
+    echo ""
+
+    if [[ "$avg_quality" -ge 70 ]]; then
+        echo "  Assessment: HIGH QUALITY — AIs are engaging substantively"
+    elif [[ "$avg_quality" -ge 50 ]]; then
+        echo "  Assessment: MODERATE — Some improvement possible"
+    else
+        echo "  Assessment: LOW — Consider reviewing debate prompts"
+    fi
+    echo ""
+
+    if [[ "$total_debates" -gt 0 ]]; then
+        echo "  Recent Debates (up to 5):"
+        echo "  ────────────────────────────────────────────────────────"
+        printf "  %-6s| %-9s| %-13s| %-10s| %s\n" "Loop" "Quality" "Length Ratio" "Coverage" "Confidence"
+        echo "  ──────|───────────|─────────────|──────────|───────────"
+
+        jq -r '
+          .debates |
+          sort_by(.loop) |
+          reverse |
+          .[:5][] |
+          "\(.loop)|\(.quality_score)|\(.length_ratio)|\(.coverage)|\(.verdict_confidence)"
+        ' "$quality_file" 2>/dev/null | \
+        while IFS='|' read -r loop quality ratio coverage conf; do
+            printf "  %-6s|   %3s/100 |  %-11s|  %4s%%    |  %3s%%\n" \
+                "$loop" "$quality" "$ratio" "$coverage" "$conf"
+        done
+    fi
+
+    echo ""
+    echo "╚════════════════════════════════════════════════════════════╝"
+    echo ""
 }
 
 # Example Gallery — curated workflow examples for new users
@@ -3625,6 +3708,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --cost-history|--costs)
             show_cost_history
+            exit $?
+            ;;
+        --debate-stats|--quality)
+            show_debate_stats
             exit $?
             ;;
         --search-ideas|--find-ideas)

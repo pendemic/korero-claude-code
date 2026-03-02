@@ -158,6 +158,185 @@ complete_debate_round_progress() {
     printf "\r[██████████] Debate complete!          \n" >&2
 }
 
+# Calculate argument length ratio between two proposal files
+# Arguments:
+#   $1 (claude_file) - Path to Claude's proposal
+#   $2 (codex_file)  - Path to Codex's proposal
+# Returns: ratio as decimal on stdout (e.g., "0.85"), or "0" on error
+calculate_length_ratio() {
+    local claude_file="$1"
+    local codex_file="$2"
+
+    local claude_words codex_words
+    if [[ -f "$claude_file" ]]; then
+        claude_words=$(wc -w < "$claude_file" 2>/dev/null | tr -d '[:space:]' || echo "0")
+    else
+        claude_words="0"
+    fi
+    if [[ -f "$codex_file" ]]; then
+        codex_words=$(wc -w < "$codex_file" 2>/dev/null | tr -d '[:space:]' || echo "0")
+    else
+        codex_words="0"
+    fi
+
+    claude_words="${claude_words:-0}"
+    codex_words="${codex_words:-0}"
+
+    if [[ "$codex_words" -eq 0 ]]; then
+        echo "0"
+        return
+    fi
+
+    if command -v bc &>/dev/null; then
+        echo "scale=2; $claude_words / $codex_words" | bc -l 2>/dev/null || echo "1.00"
+    else
+        echo "1.00"
+    fi
+}
+
+# Calculate counter-argument coverage between a proposal and its critique
+# Arguments:
+#   $1 (proposal_file) - Path to the proposal being critiqued
+#   $2 (critique_file) - Path to the critique
+# Returns: percentage (0-100) on stdout
+calculate_coverage() {
+    local proposal_file="$1"
+    local critique_file="$2"
+
+    [[ ! -f "$proposal_file" || ! -f "$critique_file" ]] && echo "0" && return
+
+    # Extract significant terms (4+ letters) from proposal
+    local key_terms
+    key_terms=$(grep -oE '[A-Za-z]{4,}' "$proposal_file" 2>/dev/null | sort -u | head -20)
+
+    local total_terms=0
+    local matched_terms=0
+
+    while IFS= read -r term; do
+        [[ -z "$term" ]] && continue
+        total_terms=$((total_terms + 1))
+        if grep -qi "$term" "$critique_file" 2>/dev/null; then
+            matched_terms=$((matched_terms + 1))
+        fi
+    done <<< "$key_terms"
+
+    if [[ "$total_terms" -eq 0 ]]; then
+        echo "0"
+        return
+    fi
+
+    echo $(( (matched_terms * 100) / total_terms ))
+}
+
+# Calculate verdict confidence from judgment text
+# Arguments:
+#   $1 (judgment_file) - Path to the judgment output
+# Returns: confidence score (0-100) on stdout
+calculate_verdict_confidence() {
+    local judgment_file="$1"
+    [[ ! -f "$judgment_file" ]] && echo "50" && return
+
+    local content
+    content=$(cat "$judgment_file" 2>/dev/null || echo "")
+
+    if echo "$content" | grep -qiE '(clearly superior|definitive|obvious choice|strong winner)'; then
+        echo "90"
+    elif echo "$content" | grep -qiE '(better overall|solid advantage|preferred|convincingly)'; then
+        echo "75"
+    elif echo "$content" | grep -qiE '(slight edge|marginal|close call|narrow|minor advantage)'; then
+        echo "40"
+    elif echo "$content" | grep -qiE '(tie|equal|cannot decide|both strong|neither|draw)'; then
+        echo "20"
+    else
+        echo "50"
+    fi
+}
+
+# Calculate composite debate quality score (0-100)
+# Arguments:
+#   $1 (claude_proposal_file)  - Path to Claude's proposal
+#   $2 (codex_proposal_file)   - Path to Codex's proposal
+#   $3 (claude_critique_file)  - Path to Claude's critique of Codex
+#   $4 (codex_critique_file)   - Path to Codex's critique of Claude
+#   $5 (judgment_file)         - Path to the final judgment
+# Returns: quality score (0-100) on stdout
+calculate_debate_quality() {
+    local claude_proposal="$1"
+    local codex_proposal="$2"
+    local claude_critique="$3"
+    local codex_critique="$4"
+    local judgment="$5"
+
+    local length_ratio coverage_claude coverage_codex verdict_conf
+
+    length_ratio=$(calculate_length_ratio "$claude_proposal" "$codex_proposal")
+    coverage_claude=$(calculate_coverage "$codex_proposal" "$claude_critique")
+    coverage_codex=$(calculate_coverage "$claude_proposal" "$codex_critique")
+    verdict_conf=$(calculate_verdict_confidence "$judgment")
+
+    # Normalize length ratio to score (balanced = 100, extreme deviation = lower)
+    local length_score=100
+    if command -v bc &>/dev/null; then
+        local is_balanced
+        is_balanced=$(echo "$length_ratio >= 0.7 && $length_ratio <= 1.3" | bc -l 2>/dev/null || echo "0")
+        local is_ok
+        is_ok=$(echo "$length_ratio >= 0.5 && $length_ratio <= 1.5" | bc -l 2>/dev/null || echo "0")
+        if [[ "$is_balanced" -eq 1 ]]; then
+            length_score=100
+        elif [[ "$is_ok" -eq 1 ]]; then
+            length_score=70
+        else
+            length_score=40
+        fi
+    fi
+
+    local avg_coverage=$(( (coverage_claude + coverage_codex) / 2 ))
+
+    # Weighted composite: 30% length, 40% coverage, 30% confidence
+    local quality_score
+    quality_score=$(( (length_score * 30 + avg_coverage * 40 + verdict_conf * 30) / 100 ))
+
+    echo "$quality_score"
+}
+
+# Record debate quality metrics to .korero/.debate_quality.json
+# Arguments:
+#   $1 (loop_num)      - Loop number
+#   $2 (quality_score) - Overall quality score (0-100)
+#   $3 (length_ratio)  - Argument length ratio
+#   $4 (coverage)      - Average counter-argument coverage
+#   $5 (verdict_conf)  - Verdict confidence score
+record_debate_quality() {
+    local loop_num="$1"
+    local quality_score="$2"
+    local length_ratio="$3"
+    local coverage="$4"
+    local verdict_conf="$5"
+
+    local quality_file="${KORERO_DIR:-.korero}/.debate_quality.json"
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ")
+
+    if ! command -v jq &>/dev/null; then
+        return 0
+    fi
+
+    if [[ ! -f "$quality_file" ]]; then
+        echo '{"debates":[]}' > "$quality_file"
+    fi
+
+    local tmp_file
+    tmp_file=$(mktemp)
+    jq --argjson loop "$loop_num" \
+       --argjson quality "$quality_score" \
+       --arg ratio "$length_ratio" \
+       --argjson coverage "$coverage" \
+       --argjson confidence "$verdict_conf" \
+       --arg ts "$timestamp" \
+       '.debates += [{"loop": $loop, "quality_score": $quality, "length_ratio": $ratio, "coverage": $coverage, "verdict_confidence": $confidence, "timestamp": $ts}]' \
+       "$quality_file" > "$tmp_file" 2>/dev/null && mv "$tmp_file" "$quality_file" || rm -f "$tmp_file"
+}
+
 # Locate the templates directory (installed or local)
 _get_template_dir() {
     local script_dir
@@ -732,6 +911,20 @@ JUDGE_FAIL_EOF
     # Parse verdict (|| true prevents set -e exit on parse failure — default verdict written)
     parse_debate_verdict "$judge_file" "$DEBATE_RESULT_FILE" || true
 
+    # Calculate and record debate quality metrics
+    local quality_score length_ratio coverage verdict_conf_score
+    quality_score=$(calculate_debate_quality \
+        "$claude_proposal_file" \
+        "$codex_proposal_file" \
+        "${claude_critique_file:-/dev/null}" \
+        "${codex_critique_file:-/dev/null}" \
+        "$judge_file")
+    length_ratio=$(calculate_length_ratio "$claude_proposal_file" "$codex_proposal_file")
+    coverage=$(calculate_coverage "$codex_proposal_file" "${claude_critique_file:-/dev/null}")
+    verdict_conf_score=$(calculate_verdict_confidence "$judge_file")
+    record_debate_quality "$loop_num" "${quality_score:-0}" "${length_ratio:-1.00}" "${coverage:-0}" "${verdict_conf_score:-50}"
+    log_status "INFO" "Debate quality score: ${quality_score:-0}/100"
+
     # Record verdict in transcript
     local winner title confidence rationale
     if command -v jq &>/dev/null; then
@@ -770,3 +963,8 @@ export -f build_judge_prompt
 export -f parse_debate_verdict
 export -f get_debate_winner
 export -f run_cross_ai_debate
+export -f calculate_length_ratio
+export -f calculate_coverage
+export -f calculate_verdict_confidence
+export -f calculate_debate_quality
+export -f record_debate_quality

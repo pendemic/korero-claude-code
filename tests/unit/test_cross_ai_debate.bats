@@ -441,6 +441,141 @@ EOF
     [[ "$output" == *"Debate complete!"* ]]
 }
 
+# ===== calculate_length_ratio =====
+
+@test "calculate_length_ratio returns balanced ratio for similar-length files" {
+    echo "This is a proposal with several words to test the length calculation" > "$TEST_DIR/claude.txt"
+    echo "This codex proposal also has about the same number of words here" > "$TEST_DIR/codex.txt"
+    run calculate_length_ratio "$TEST_DIR/claude.txt" "$TEST_DIR/codex.txt"
+    [ "$status" -eq 0 ]
+    # Should be close to 1.0 (non-empty output)
+    [[ -n "$output" ]]
+}
+
+@test "calculate_length_ratio returns 0 for empty codex file" {
+    echo "Claude has content" > "$TEST_DIR/claude.txt"
+    touch "$TEST_DIR/empty.txt"
+    run calculate_length_ratio "$TEST_DIR/claude.txt" "$TEST_DIR/empty.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "0" ]
+}
+
+@test "calculate_length_ratio returns 0 for missing files" {
+    run calculate_length_ratio "/nonexistent/a.txt" "/nonexistent/b.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "0" ]
+}
+
+# ===== calculate_coverage =====
+
+@test "calculate_coverage returns 0 for missing files" {
+    run calculate_coverage "/nonexistent/proposal.txt" "/nonexistent/critique.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "0" ]
+}
+
+@test "calculate_coverage returns positive for matching terms" {
+    echo "The implementation should use caching and Redis for performance optimization" > "$TEST_DIR/proposal.txt"
+    echo "The critique addresses caching Redis implementation performance optimization concerns" > "$TEST_DIR/critique.txt"
+    run calculate_coverage "$TEST_DIR/proposal.txt" "$TEST_DIR/critique.txt"
+    [ "$status" -eq 0 ]
+    [[ "$output" -gt 0 ]]
+}
+
+@test "calculate_coverage returns 0 for completely different content" {
+    echo "aaaa bbbb cccc dddd eeee ffff" > "$TEST_DIR/proposal.txt"
+    echo "zzzz yyyy xxxx wwww vvvv uuuu" > "$TEST_DIR/critique.txt"
+    run calculate_coverage "$TEST_DIR/proposal.txt" "$TEST_DIR/critique.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "0" ]
+}
+
+# ===== calculate_verdict_confidence =====
+
+@test "calculate_verdict_confidence returns 90 for clearly superior language" {
+    echo "Claude's proposal is clearly superior and is the obvious choice." > "$TEST_DIR/judgment.txt"
+    run calculate_verdict_confidence "$TEST_DIR/judgment.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "90" ]
+}
+
+@test "calculate_verdict_confidence returns 75 for preferred language" {
+    echo "Claude's proposal is better overall and more convincingly argued." > "$TEST_DIR/judgment.txt"
+    run calculate_verdict_confidence "$TEST_DIR/judgment.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "75" ]
+}
+
+@test "calculate_verdict_confidence returns 40 for marginal language" {
+    echo "Claude has a slight edge, though it was a close call." > "$TEST_DIR/judgment.txt"
+    run calculate_verdict_confidence "$TEST_DIR/judgment.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "40" ]
+}
+
+@test "calculate_verdict_confidence returns 50 as default" {
+    echo "Both proposals present interesting approaches." > "$TEST_DIR/judgment.txt"
+    run calculate_verdict_confidence "$TEST_DIR/judgment.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "50" ]
+}
+
+@test "calculate_verdict_confidence returns 50 for missing file" {
+    run calculate_verdict_confidence "/nonexistent/judgment.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "50" ]
+}
+
+# ===== calculate_debate_quality =====
+
+@test "calculate_debate_quality returns score between 0 and 100" {
+    echo "Claude proposes implementing feature X with approach Y" > "$TEST_DIR/claude.txt"
+    echo "Codex proposes implementing feature X with approach Z" > "$TEST_DIR/codex.txt"
+    echo "The critique addresses feature approach implementation" > "$TEST_DIR/claude_crit.txt"
+    echo "The critique addresses feature approach implementation" > "$TEST_DIR/codex_crit.txt"
+    echo "Claude's proposal is the preferred choice overall" > "$TEST_DIR/judgment.txt"
+    run calculate_debate_quality \
+        "$TEST_DIR/claude.txt" "$TEST_DIR/codex.txt" \
+        "$TEST_DIR/claude_crit.txt" "$TEST_DIR/codex_crit.txt" \
+        "$TEST_DIR/judgment.txt"
+    [ "$status" -eq 0 ]
+    [[ "$output" -ge 0 && "$output" -le 100 ]]
+}
+
+# ===== record_debate_quality =====
+
+@test "record_debate_quality creates JSON file" {
+    if ! command -v jq &>/dev/null; then skip "jq not available"; fi
+    run record_debate_quality 1 75 "0.95" 80 70
+    [ "$status" -eq 0 ]
+    [ -f "$KORERO_DIR/.debate_quality.json" ]
+}
+
+@test "record_debate_quality stores correct quality score" {
+    if ! command -v jq &>/dev/null; then skip "jq not available"; fi
+    record_debate_quality 1 75 "0.95" 80 70
+    local score
+    score=$(jq '.debates[0].quality_score' "$KORERO_DIR/.debate_quality.json")
+    [ "$score" -eq 75 ]
+}
+
+@test "record_debate_quality accumulates multiple debates" {
+    if ! command -v jq &>/dev/null; then skip "jq not available"; fi
+    record_debate_quality 1 70 "1.00" 60 80
+    record_debate_quality 2 80 "0.90" 75 90
+    local count
+    count=$(jq '.debates | length' "$KORERO_DIR/.debate_quality.json")
+    [ "$count" -eq 2 ]
+}
+
+@test "record_debate_quality includes timestamp" {
+    if ! command -v jq &>/dev/null; then skip "jq not available"; fi
+    record_debate_quality 1 75 "0.95" 80 70
+    local ts
+    ts=$(jq -r '.debates[0].timestamp' "$KORERO_DIR/.debate_quality.json")
+    [[ "$ts" == *"T"* ]]
+}
+
 @test "run_cross_ai_debate silent fallback suppresses warning" {
     echo "Claude proposal text" > "$TEST_DIR/claude_prop.log"
     echo "" > "$TEST_DIR/codex_prop.log"
