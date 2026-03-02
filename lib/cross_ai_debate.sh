@@ -754,11 +754,11 @@ CLAUDE_WIN_EOF
     portable_timeout "${timeout_seconds}s" "${CODEX_CMD_ARGS[@]}" > "$codex_critique_file" 2>&1 &
     local codex_crit_pid=$!
 
-    # Wait for both critiques
-    local claude_crit_exit=0 codex_crit_exit=0
-    wait $claude_crit_pid || claude_crit_exit=$?
-    wait $codex_crit_pid || codex_crit_exit=$?
-    local round1_elapsed=$(( $(date +%s) - round1_start ))
+    # Wait for both critiques with per-AI timing display
+    run_parallel_critiques_with_timing "Critique" "$claude_crit_pid" "$codex_crit_pid" "$round1_start"
+    local claude_crit_exit=$PARALLEL_CLAUDE_EXIT
+    local codex_crit_exit=$PARALLEL_CODEX_EXIT
+    local round1_elapsed=$PARALLEL_ELAPSED
     log_status "INFO" "  Round 1 complete — Claude critique: exit $claude_crit_exit, Codex critique: exit $codex_crit_exit"
 
     if [[ $claude_crit_exit -ne 0 || $codex_crit_exit -ne 0 ]]; then
@@ -822,11 +822,11 @@ CLAUDE_WIN_EOF
         portable_timeout "${timeout_seconds}s" "${CODEX_CMD_ARGS[@]}" > "$codex_defense_file" 2>&1 &
         local codex_def_pid=$!
 
-        # Wait for both defenses
-        local claude_def_exit=0 codex_def_exit=0
-        wait $claude_def_pid || claude_def_exit=$?
-        wait $codex_def_pid || codex_def_exit=$?
-        local round2_elapsed=$(( $(date +%s) - round2_start ))
+        # Wait for both defenses with per-AI timing display
+        run_parallel_critiques_with_timing "Defense" "$claude_def_pid" "$codex_def_pid" "$round2_start"
+        local claude_def_exit=$PARALLEL_CLAUDE_EXIT
+        local codex_def_exit=$PARALLEL_CODEX_EXIT
+        local round2_elapsed=$PARALLEL_ELAPSED
         log_status "INFO" "  Round 2 complete — Claude defense: exit $claude_def_exit, Codex defense: exit $codex_def_exit"
 
         # Extract defense text
@@ -952,6 +952,101 @@ JUDGE_FAIL_EOF
     return 0
 }
 
+# ===== Parallel Critique Timing Display (Loop 32) =====
+
+# Display elapsed time for each parallel AI process as it finishes
+# Arguments:
+#   $1 (ai_name)    - "claude" or "codex"
+#   $2 (elapsed_sec) - Elapsed seconds as an integer
+#   $3 (exit_code)  - Exit code of the process (0=success, other=fail)
+# Output: Colorized per-AI timing line to stderr (suppressed if KORERO_QUIET=1)
+display_parallel_timing() {
+    local ai_name="$1"
+    local elapsed_sec="${2:-0}"
+    local exit_code="${3:-0}"
+
+    # Suppress if quiet mode is set
+    [[ "${KORERO_QUIET:-0}" == "1" ]] && return 0
+
+    local color="$DEBATE_GREEN"
+    local status_icon="✓"
+    if [[ "$exit_code" -ne 0 ]]; then
+        color="$DEBATE_RED"
+        status_icon="✗"
+    fi
+
+    local ai_label
+    case "$ai_name" in
+        claude) ai_label="Claude" ;;
+        codex)  ai_label="Codex " ;;
+        *)      ai_label="$ai_name" ;;
+    esac
+
+    printf "${color}  %s %s finished in %ds${DEBATE_NC}\n" \
+        "$status_icon" "$ai_label" "$elapsed_sec" >&2
+}
+
+# Run two background processes in parallel and show per-AI timing as each completes
+# Uses a polling loop so timing is shown immediately when an AI finishes.
+# Arguments:
+#   $1 (phase)           - Phase label shown in output (e.g., "Critique", "Defense")
+#   $2 (claude_pid)      - PID of the Claude background process
+#   $3 (codex_pid)       - PID of the Codex background process
+#   $4 (start_time)      - Unix epoch when parallel execution started
+# Sets globals:
+#   PARALLEL_CLAUDE_EXIT - Exit code of the Claude process
+#   PARALLEL_CODEX_EXIT  - Exit code of the Codex process
+#   PARALLEL_ELAPSED     - Total elapsed seconds (time of last finish)
+run_parallel_critiques_with_timing() {
+    local phase="$1"
+    local claude_pid="$2"
+    local codex_pid="$3"
+    local start_time="$4"
+
+    PARALLEL_CLAUDE_EXIT=-1
+    PARALLEL_CODEX_EXIT=-1
+    PARALLEL_ELAPSED=0
+
+    local claude_done=0
+    local codex_done=0
+    local claude_finish_time=0
+    local codex_finish_time=0
+
+    # Poll until both processes finish
+    while [[ $claude_done -eq 0 || $codex_done -eq 0 ]]; do
+        local now
+        now=$(date +%s)
+
+        if [[ $claude_done -eq 0 ]] && ! kill -0 "$claude_pid" 2>/dev/null; then
+            wait "$claude_pid" || PARALLEL_CLAUDE_EXIT=$?
+            [[ $PARALLEL_CLAUDE_EXIT -eq -1 ]] && PARALLEL_CLAUDE_EXIT=0
+            claude_finish_time=$now
+            claude_done=1
+            local claude_elapsed=$(( now - start_time ))
+            display_parallel_timing "claude" "$claude_elapsed" "$PARALLEL_CLAUDE_EXIT"
+        fi
+
+        if [[ $codex_done -eq 0 ]] && ! kill -0 "$codex_pid" 2>/dev/null; then
+            wait "$codex_pid" || PARALLEL_CODEX_EXIT=$?
+            [[ $PARALLEL_CODEX_EXIT -eq -1 ]] && PARALLEL_CODEX_EXIT=0
+            codex_finish_time=$now
+            codex_done=1
+            local codex_elapsed=$(( now - start_time ))
+            display_parallel_timing "codex" "$codex_elapsed" "$PARALLEL_CODEX_EXIT"
+        fi
+
+        [[ $claude_done -eq 0 || $codex_done -eq 0 ]] && sleep 0.5
+    done
+
+    local last_finish
+    if [[ $claude_finish_time -ge $codex_finish_time ]]; then
+        last_finish=$claude_finish_time
+    else
+        last_finish=$codex_finish_time
+    fi
+    PARALLEL_ELAPSED=$(( last_finish - start_time ))
+}
+
 export -f get_phase_icon
 export -f show_debate_progress
 export -f show_debate_round_progress
@@ -968,3 +1063,5 @@ export -f calculate_coverage
 export -f calculate_verdict_confidence
 export -f calculate_debate_quality
 export -f record_debate_quality
+export -f display_parallel_timing
+export -f run_parallel_critiques_with_timing

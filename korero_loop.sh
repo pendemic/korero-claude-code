@@ -22,6 +22,7 @@ source "$SCRIPT_DIR/lib/codex_adapter.sh"
 source "$SCRIPT_DIR/lib/cross_ai_debate.sh"
 source "$SCRIPT_DIR/lib/debate_transcript.sh"
 source "$SCRIPT_DIR/lib/cost_estimator.sh"
+source "$SCRIPT_DIR/lib/signal_handler.sh"
 
 # Validate bash version before anything else
 if ! check_bash_version; then
@@ -821,6 +822,87 @@ wait_for_reset() {
     RATE_WARNED_95=false
     LOOPS_THIS_HOUR=0
     log_status "SUCCESS" "Rate limit reset! Ready for new calls."
+}
+
+# =============================================================================
+# RATE LIMIT VISUALIZATION (Loop 33)
+# =============================================================================
+
+# Return seconds until the current hourly window resets
+# The window resets on the clock hour (e.g., at :00 minutes)
+# Usage: get_time_until_reset
+# Returns: integer seconds on stdout
+get_time_until_reset() {
+    local current_minute
+    local current_second
+    current_minute=$(date +%M | sed 's/^0*//' || echo "0")
+    current_second=$(date +%S | sed 's/^0*//' || echo "0")
+    current_minute="${current_minute:-0}"
+    current_second="${current_second:-0}"
+    local seconds_until_reset=$(( (60 - current_minute - 1) * 60 + (60 - current_second) ))
+    # Guard against negative values (edge case at :00:00)
+    [[ $seconds_until_reset -lt 0 ]] && seconds_until_reset=0
+    echo "$seconds_until_reset"
+}
+
+# Display a visual rate limit status dashboard
+# Shows current call count, bar fill, time until reset, and suggestions
+# Usage: show_rate_status
+show_rate_status() {
+    local calls_made
+    calls_made=$(cat "$CALL_COUNT_FILE" 2>/dev/null | tr -d '[:space:]' || echo "0")
+    calls_made="${calls_made:-0}"
+    local max_calls="${MAX_CALLS_PER_HOUR:-100}"
+
+    local remaining=$(( max_calls - calls_made ))
+    [[ $remaining -lt 0 ]] && remaining=0
+
+    local usage_pct=$(( calls_made * 100 / max_calls ))
+    [[ $usage_pct -gt 100 ]] && usage_pct=100
+
+    # Build ASCII bar (20 chars wide)
+    local bar_width=20
+    local filled=$(( usage_pct * bar_width / 100 ))
+    local empty=$(( bar_width - filled ))
+    local bar=""
+    local i
+    for (( i=0; i<filled; i++ )); do bar="${bar}█"; done
+    for (( i=0; i<empty; i++ ));  do bar="${bar}░"; done
+
+    # Choose color based on usage
+    local color="$GREEN"
+    if [[ $usage_pct -ge 95 ]]; then
+        color="$RED"
+    elif [[ $usage_pct -ge 80 ]]; then
+        color="$YELLOW"
+    fi
+
+    local seconds_left
+    seconds_left=$(get_time_until_reset)
+    local mins_left=$(( seconds_left / 60 ))
+    local secs_left=$(( seconds_left % 60 ))
+
+    echo ""
+    echo "══════════════════════════════════════════════════════════"
+    echo "RATE LIMIT STATUS"
+    echo "══════════════════════════════════════════════════════════"
+    printf "  Calls used:   %d / %d  (%d%%)\n" "$calls_made" "$max_calls" "$usage_pct"
+    printf "  Progress:     ${color}[%s]${NC}\n" "$bar"
+    printf "  Remaining:    %d calls\n" "$remaining"
+    printf "  Resets in:    %02d:%02d (mm:ss)\n" "$mins_left" "$secs_left"
+    echo "──────────────────────────────────────────────────────────"
+
+    if [[ $usage_pct -ge 95 ]]; then
+        echo "  Status:  ⛔ Rate limit nearly exhausted"
+        echo "  Tip:     Wait for reset or reduce loop frequency"
+    elif [[ $usage_pct -ge 80 ]]; then
+        echo "  Status:  ⚠️  Approaching rate limit"
+        echo "  Tip:     korero --calls $((max_calls + 50)) to increase limit"
+    else
+        echo "  Status:  ✅ Healthy"
+    fi
+    echo "══════════════════════════════════════════════════════════"
+    echo ""
 }
 
 # =============================================================================
@@ -2154,16 +2236,18 @@ IDEA_EOF
     return 0
 }
 
-# Cleanup function
+# Cleanup function (invoked by portable signal handler)
 cleanup() {
-    log_status "INFO" "Korero loop interrupted. Cleaning up..."
+    local reason="${1:-manual}"
+    local lc="${2:-$loop_count}"
+    log_status "INFO" "Korero loop interrupted ($reason). Cleaning up..."
     reset_session "manual_interrupt"
-    update_status "$loop_count" "$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")" "interrupted" "stopped"
+    update_status "$lc" "$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")" "interrupted" "stopped"
     exit 0
 }
 
-# Set up signal handlers
-trap cleanup SIGINT SIGTERM
+# Set up portable signal handlers (records each signal to .korero/.signal_log.json)
+install_signal_handlers "cleanup" "loop_count"
 
 # Global variable for loop count (needed by cleanup function)
 loop_count=0
@@ -2258,6 +2342,7 @@ main() {
         if [[ "$max_loops" != "continuous" && "$max_loops" =~ ^[0-9]+$ ]]; then
             if [[ $loop_count -gt $max_loops ]]; then
                 log_status "INFO" "Reached configured loop limit ($max_loops loops)"
+                record_shutdown_signal "$SHUTDOWN_REASON_LIMIT" "$loop_count" "max_loops=$max_loops"
                 update_status "$loop_count" "$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo 0)" "loop_limit_reached" "completed" "loop_limit"
                 break
             fi
@@ -2287,6 +2372,7 @@ main() {
         # Check circuit breaker before attempting execution
         if should_halt_execution; then
             reset_session "circuit_breaker_open"
+            record_shutdown_signal "$SHUTDOWN_REASON_CIRCUIT" "$loop_count" "circuit_breaker_open"
             update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "circuit_breaker_open" "halted" "stagnation_detected"
             log_status "ERROR" "🛑 Circuit breaker has opened - execution halted"
             break
@@ -2307,6 +2393,7 @@ main() {
                 current_cost=$(jq -r '.session_total_usd // 0' "$KORERO_DIR/cost_history.json" 2>/dev/null || echo "0")
                 if ! prompt_budget_exceeded "$current_cost" "$KORERO_BUDGET_USD"; then
                     log_status "INFO" "Exiting due to budget limit."
+                    record_shutdown_signal "$SHUTDOWN_REASON_BUDGET" "$loop_count" "spent=${current_cost}_limit=${KORERO_BUDGET_USD}"
                     break
                 fi
             fi
@@ -2387,6 +2474,7 @@ main() {
 
             log_status "SUCCESS" "🏁 Graceful exit triggered: $exit_reason"
             reset_session "project_complete"
+            record_shutdown_signal "$SHUTDOWN_REASON_COMPLETE" "$loop_count" "$exit_reason"
             update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "graceful_exit" "completed" "$exit_reason"
 
             log_status "SUCCESS" "🎉 Korero has completed the project! Final stats:"
@@ -2513,6 +2601,8 @@ Options:
     --cost-history          Show per-loop cost breakdown with session totals
     --debate-stats          Show debate quality statistics (heavy modes)
     --search-ideas KEYWORD  Search past ideas by keyword (case-insensitive)
+    --shutdown-history      Show history of past shutdowns (signals, budget, circuit)
+    --rate-status / --rate / -r  Show visual rate limit status dashboard
     --troubleshoot          Show troubleshooting quick reference for common issues
     --diagnose              Interactive troubleshooting wizard (guided diagnosis)
     --start-idea N          Create branch from winning idea N and start coding loop
@@ -3712,6 +3802,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --debate-stats|--quality)
             show_debate_stats
+            exit $?
+            ;;
+        --shutdown-history)
+            show_shutdown_history "${2:-20}"
+            exit $?
+            ;;
+        --rate-status|--rate|-r)
+            show_rate_status
             exit $?
             ;;
         --search-ideas|--find-ideas)

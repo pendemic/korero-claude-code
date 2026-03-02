@@ -174,6 +174,8 @@ The system uses a modular architecture with reusable components in the `lib/` di
     - `calculate_verdict_confidence(judgment_file)` - Confidence score from judgment language (0-100)
     - `calculate_debate_quality(claude, codex, claude_crit, codex_crit, judgment)` - Composite quality score (0-100); 30% length + 40% coverage + 30% confidence
     - `record_debate_quality(loop_num, quality, ratio, coverage, confidence)` - Appends metrics to `.korero/.debate_quality.json`
+    - `display_parallel_timing(ai_name, elapsed_sec, exit_code)` — Prints per-AI timing line to stderr as each parallel process finishes; suppressed if `KORERO_QUIET=1`
+    - `run_parallel_critiques_with_timing(phase, claude_pid, codex_pid, start_time)` — Polls both background PIDs and calls `display_parallel_timing` as each finishes; sets globals `PARALLEL_CLAUDE_EXIT`, `PARALLEL_CODEX_EXIT`, `PARALLEL_ELAPSED`
 
 13. **lib/cost_estimator.sh** - API cost estimation from loop logs
     - `estimate_tokens_from_file(file_path)` - Estimates token count from file size (4 chars/token)
@@ -181,6 +183,14 @@ The system uses a modular architecture with reusable components in the `lib/` di
     - `estimate_api_costs(log_dir)` - Scans log directory and returns JSON cost breakdown (input/output tokens, costs, files analyzed)
     - `display_cost_report(log_dir)` - Displays formatted cost dashboard with token usage, cost breakdown, and pricing info
     - `record_loop_cost(loop_num, output_file, duration_sec)` - Records per-loop cost to `.korero/cost_history.json` (tokens, cost_usd, duration, timestamp); accumulates session totals
+
+14. **lib/signal_handler.sh** - Portable signal handling and shutdown history (Loop 31)
+    - `record_shutdown_signal(reason, loop_count, detail)` - Appends a shutdown event to `.korero/.signal_log.json`; works without jq (creates single-entry fallback)
+    - `show_shutdown_history([limit])` - Displays tabular shutdown history from `.signal_log.json` (default: last 20 events)
+    - `get_shutdown_count()` - Returns total number of recorded shutdown events
+    - `get_last_shutdown_reason()` - Returns the most recent shutdown reason string
+    - `install_signal_handlers(callback, loop_count_var)` - Registers SIGINT/SIGTERM traps; each signal is auto-recorded before calling `callback`
+    - Predefined reason constants: `SHUTDOWN_REASON_SIGINT`, `SHUTDOWN_REASON_SIGTERM`, `SHUTDOWN_REASON_BUDGET`, `SHUTDOWN_REASON_CIRCUIT`, `SHUTDOWN_REASON_COMPLETE`, `SHUTDOWN_REASON_LIMIT`, `SHUTDOWN_REASON_MANUAL`, `SHUTDOWN_REASON_ERROR`
 
 ## Key Commands
 
@@ -298,6 +308,12 @@ korero --debate-stats            # Show debate quality statistics across loops
 # Idea search
 korero --search-ideas "caching"  # Search past ideas by keyword
 
+# Signal / shutdown history
+korero --shutdown-history        # Show past shutdown events (signals, budget, circuit)
+
+# Rate limit visualization
+korero --rate-status             # Show visual rate limit status dashboard (alias: --rate, -r)
+
 # Troubleshooting
 korero --troubleshoot            # Quick reference for common issues and fixes
 korero --diagnose                # Interactive troubleshooting wizard (guided diagnosis)
@@ -408,6 +424,8 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--cost-history` / `--costs` - Show per-loop cost breakdown with session totals from `cost_history.json`
 - `--debate-stats` / `--quality` - Show debate quality statistics (heavy modes); reads from `.korero/.debate_quality.json`
 - `--search-ideas KEYWORD` / `--find-ideas KEYWORD` - Search past ideas by keyword (case-insensitive), shows metadata and matching context
+- `--shutdown-history [N]` - Show history of past shutdown events (SIGINT, SIGTERM, budget, circuit); reads `.korero/.signal_log.json` (default: last 20)
+- `--rate-status` / `--rate` / `-r` - Show visual rate limit status dashboard: call count, ASCII bar, remaining calls, time until reset
 - `--troubleshoot` / `--troubleshooting` - Show categorized troubleshooting quick reference with common issues and fix commands
 - `--diagnose` - Interactive troubleshooting wizard with guided yes/no decision tree for diagnosing issues
 - `--codex-timeout NUM` - Set Codex execution timeout in minutes (1-120, heavy modes only)
@@ -516,10 +534,19 @@ A round-level progress bar also updates in-place showing overall debate completi
 ╚══════════════════════════════════════════════════╝
 ```
 
+**Parallel Critique Timing Display (Loop 32):**
+As each AI finishes its parallel critique or defense phase, a per-AI timing line is streamed to stderr immediately:
+```
+  ✓ Claude  finished in 42s
+  ✓ Codex   finished in 67s
+```
+Set `KORERO_QUIET=1` in environment to suppress these timing lines.
+
 **Key Files:**
 - `.korero/.debate_result` — JSON with winner, title, confidence, rationale
 - `.korero/debates/loop_N.md` — Full debate transcript per loop
 - `.korero/.debate_quality.json` — Per-loop quality metrics (length ratio, coverage, verdict confidence, composite score)
+- `.korero/.signal_log.json` — Shutdown event history (reason, loop number, detail, timestamp)
 - `templates/heavy_debate_prompts/` — Critique, defense, and judge prompt templates
 
 **Debate Quality Metrics** (calculated after each debate, stored in `.korero/.debate_quality.json`):
@@ -623,7 +650,7 @@ Korero installs to:
 - **Commands**: `~/.local/bin/` (korero, korero-monitor, korero-setup, korero-import, korero-migrate, korero-enable, korero-enable-ci)
 - **Templates**: `~/.korero/templates/`
 - **Scripts**: `~/.korero/` (korero_loop.sh, korero_monitor.sh, setup.sh, korero_import.sh, migrate_to_korero_folder.sh, korero_enable.sh, korero_enable_ci.sh)
-- **Libraries**: `~/.korero/lib/` (circuit_breaker.sh, response_analyzer.sh, date_utils.sh, timeout_utils.sh, enable_core.sh, wizard_utils.sh, task_sources.sh, permission_presets.sh, codex_adapter.sh, cross_ai_debate.sh, debate_transcript.sh, cost_estimator.sh)
+- **Libraries**: `~/.korero/lib/` (circuit_breaker.sh, response_analyzer.sh, date_utils.sh, timeout_utils.sh, enable_core.sh, wizard_utils.sh, task_sources.sh, permission_presets.sh, codex_adapter.sh, cross_ai_debate.sh, debate_transcript.sh, cost_estimator.sh, signal_handler.sh)
 
 After installation, the following global commands are available:
 - `korero` - Start the autonomous development loop
@@ -787,13 +814,13 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (996 tests across 29 files)
+### Test Files (1034 tests across 30 files)
 
-**Unit Tests (860 tests):**
+**Unit Tests (898 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
-| `test_cli_parsing.bats` | 86 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea, quickstart, validate-config, examples, show-debate, troubleshoot, diagnose, fix-config, search-ideas, cost-history |
+| `test_cli_parsing.bats` | 94 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea, quickstart, validate-config, examples, show-debate, troubleshoot, diagnose, fix-config, search-ideas, cost-history, shutdown-history, rate-status |
 | `test_cli_modern.bats` | 33 | Modern CLI commands (Phase 1.1) + build_claude_command fix |
 | `test_json_parsing.bats` | 74 | JSON output format parsing + Claude CLI format + session management + permission suggestions + visual config diff |
 | `test_session_continuity.bats` | 49 | Session lifecycle management + circuit breaker integration + issue #91 fix + session age warning |
@@ -810,7 +837,8 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_health_check.bats` | 28 | Health check: tool detection, git config, permissions, network, config, CLI flag, bash version guard |
 | `test_codex_adapter.bats` | 35 | Codex CLI adapter: command building, auth checks, response parsing, proposal extraction, fallback detection |
 | `test_circuit_breaker.bats` | 16 | Budget Alert System: check_budget_threshold, get_budget_percentage, prompt_budget_exceeded |
-| `test_cross_ai_debate.bats` | 69 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling, progress indicators, round progress bar, codex fallback integration, debate quality metrics |
+| `test_cross_ai_debate.bats` | 75 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling, progress indicators, round progress bar, codex fallback integration, debate quality metrics, parallel critique timing |
+| `test_signal_handling.bats` | 23 | Portable signal handling: record_shutdown_signal, show_shutdown_history, get_shutdown_count, get_last_shutdown_reason, install_signal_handlers, reason constants |
 | `test_heavy_mode.bats` | 31 | Heavy mode integration: .korerorc validation, CLI flags, health checks, circuit breaker, enable, CODEX_FALLBACK validation |
 | `test_agent_protocol.bats` | 21 | Agent protocol tests |
 | `test_duration_tracking.bats` | 16 | Loop duration tracking |
@@ -848,6 +876,7 @@ bats tests/unit/test_codex_adapter.bats
 bats tests/unit/test_cross_ai_debate.bats
 bats tests/unit/test_heavy_mode.bats
 bats tests/unit/test_cost_estimator.bats
+bats tests/unit/test_signal_handling.bats
 ```
 
 ## Feature Development Quality Standards

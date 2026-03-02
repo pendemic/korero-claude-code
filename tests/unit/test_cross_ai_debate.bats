@@ -594,3 +594,86 @@ EOF
     # Silent mode should not show the CODEX FALLBACK banner
     [[ "$output" != *"CODEX FALLBACK"* ]]
 }
+
+# ===== display_parallel_timing (Loop 32) =====
+
+@test "display_parallel_timing outputs success line for exit 0" {
+    run bash -c "
+        source \"$REPO_ROOT/lib/codex_adapter.sh\"
+        source \"$REPO_ROOT/lib/cross_ai_debate.sh\"
+        display_parallel_timing 'claude' 42 0
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Claude"* ]]
+    [[ "$output" == *"42"* ]]
+}
+
+@test "display_parallel_timing outputs failure line for non-zero exit" {
+    run bash -c "
+        source \"$REPO_ROOT/lib/codex_adapter.sh\"
+        source \"$REPO_ROOT/lib/cross_ai_debate.sh\"
+        display_parallel_timing 'codex' 15 1
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Codex"* ]]
+    [[ "$output" == *"15"* ]]
+}
+
+@test "display_parallel_timing suppresses output when KORERO_QUIET=1" {
+    run bash -c "
+        export KORERO_QUIET=1
+        source \"$REPO_ROOT/lib/codex_adapter.sh\"
+        source \"$REPO_ROOT/lib/cross_ai_debate.sh\"
+        display_parallel_timing 'claude' 10 0
+    "
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "display_parallel_timing shows elapsed seconds" {
+    run bash -c "
+        source \"$REPO_ROOT/lib/codex_adapter.sh\"
+        source \"$REPO_ROOT/lib/cross_ai_debate.sh\"
+        display_parallel_timing 'claude' 73 0
+    "
+    [[ "$output" == *"73s"* ]]
+}
+
+# ===== run_parallel_critiques_with_timing (Loop 32) =====
+
+@test "run_parallel_critiques_with_timing sets PARALLEL_CLAUDE_EXIT and PARALLEL_CODEX_EXIT" {
+    run bash -c "
+        source \"$REPO_ROOT/lib/date_utils.sh\" 2>/dev/null || true
+        source \"$REPO_ROOT/lib/timeout_utils.sh\" 2>/dev/null || true
+        source \"$REPO_ROOT/lib/codex_adapter.sh\"
+        source \"$REPO_ROOT/lib/cross_ai_debate.sh\"
+        sleep 0.1 &
+        p1=\$!
+        sleep 0.1 &
+        p2=\$!
+        start=\$(date +%s)
+        run_parallel_critiques_with_timing 'Critique' \$p1 \$p2 \$start
+        echo \"claude_exit=\$PARALLEL_CLAUDE_EXIT codex_exit=\$PARALLEL_CODEX_EXIT\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"claude_exit=0"* ]]
+    [[ "$output" == *"codex_exit=0"* ]]
+}
+
+@test "run_parallel_critiques_with_timing sets PARALLEL_ELAPSED" {
+    run bash -c "
+        source \"$REPO_ROOT/lib/date_utils.sh\" 2>/dev/null || true
+        source \"$REPO_ROOT/lib/timeout_utils.sh\" 2>/dev/null || true
+        source \"$REPO_ROOT/lib/codex_adapter.sh\"
+        source \"$REPO_ROOT/lib/cross_ai_debate.sh\"
+        sleep 0.1 &
+        p1=\$!
+        sleep 0.1 &
+        p2=\$!
+        start=\$(date +%s)
+        run_parallel_critiques_with_timing 'Critique' \$p1 \$p2 \$start
+        echo \"elapsed=\$PARALLEL_ELAPSED\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"elapsed="* ]]
+}

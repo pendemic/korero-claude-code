@@ -899,3 +899,67 @@ IDEA_EOF
     run bash "$KORERO_SCRIPT" --costs
     [ "$status" -ne 0 ]
 }
+
+# ===== --shutdown-history flag (Loop 31) =====
+
+@test "--shutdown-history is listed in help text" {
+    run bash "$KORERO_SCRIPT" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--shutdown-history"* ]]
+}
+
+@test "--shutdown-history returns 0 with no history file" {
+    run bash "$KORERO_SCRIPT" --shutdown-history
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No shutdown history"* ]]
+}
+
+# ===== --rate-status flag (Loop 33) =====
+
+@test "--rate-status is listed in help text" {
+    run bash "$KORERO_SCRIPT" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--rate-status"* ]]
+}
+
+@test "--rate-status shows RATE LIMIT STATUS header" {
+    echo "5" > "$CALL_COUNT_FILE"
+    run bash "$KORERO_SCRIPT" --rate-status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"RATE LIMIT STATUS"* ]]
+}
+
+@test "--rate-status shows calls used" {
+    echo "25" > "$CALL_COUNT_FILE"
+    run bash "$KORERO_SCRIPT" --rate-status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"25"* ]]
+}
+
+@test "--rate-status shows remaining calls" {
+    echo "10" > "$CALL_COUNT_FILE"
+    run bash "$KORERO_SCRIPT" --rate-status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Remaining"* ]]
+}
+
+@test "--rate-status shows reset time" {
+    echo "0" > "$CALL_COUNT_FILE"
+    run bash "$KORERO_SCRIPT" --rate-status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Resets in"* ]]
+}
+
+@test "--rate is an alias for --rate-status" {
+    echo "0" > "$CALL_COUNT_FILE"
+    run bash "$KORERO_SCRIPT" --rate
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"RATE LIMIT STATUS"* ]]
+}
+
+@test "-r is an alias for --rate-status" {
+    echo "0" > "$CALL_COUNT_FILE"
+    run bash "$KORERO_SCRIPT" -r
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"RATE LIMIT STATUS"* ]]
+}
