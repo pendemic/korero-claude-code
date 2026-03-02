@@ -2600,6 +2600,7 @@ Options:
     --cost-estimate         Estimate API costs from loop logs and display report
     --cost-history          Show per-loop cost breakdown with session totals
     --debate-stats          Show debate quality statistics + win distribution (heavy modes)
+    --debate-health         Analyze debate fatigue metrics (last 10 debates) for heavy modes
     --implementation-status / --impl-status  Show winning idea implementation progress
     --search-ideas KEYWORD  Search past ideas by keyword (case-insensitive)
     --shutdown-history      Show history of past shutdowns (signals, budget, circuit)
@@ -3919,6 +3920,19 @@ while [[ $# -gt 0 ]]; do
         --debate-stats|--quality)
             show_debate_stats
             exit $?
+            ;;
+        --debate-health)
+            source "$SCRIPT_DIR/lib/cross_ai_debate.sh" 2>/dev/null || true
+            echo "Analyzing debate health (last 10 debates)..."
+            analyze_debate_fatigue 10
+            local _dh_rc=$?
+            if [[ $_dh_rc -eq 0 ]]; then
+                local _metrics_file="${KORERO_DIR:-.korero}/.debate_metrics"
+                if [[ ! -f "$_metrics_file" ]] || [[ $(wc -l < "$_metrics_file" 2>/dev/null || echo 0) -lt 3 ]]; then
+                    echo "No debate metrics found. Run heavy mode loops to collect data."
+                fi
+            fi
+            exit 0
             ;;
         --implementation-status|--impl-status)
             show_implementation_status

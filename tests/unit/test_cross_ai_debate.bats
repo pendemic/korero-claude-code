@@ -677,3 +677,203 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"elapsed="* ]]
 }
+
+# ===== track_debate_metrics (Loop 45) =====
+
+@test "track_debate_metrics creates metrics file" {
+    track_debate_metrics 75 false false
+    [ -f "$KORERO_DIR/.debate_metrics" ]
+}
+
+@test "track_debate_metrics appends JSON entry with confidence" {
+    track_debate_metrics 80 false true
+    grep -q '"confidence":80' "$KORERO_DIR/.debate_metrics"
+}
+
+@test "track_debate_metrics records timed_out field" {
+    track_debate_metrics 60 true false
+    grep -q '"timed_out":true' "$KORERO_DIR/.debate_metrics"
+}
+
+@test "track_debate_metrics records agreed field" {
+    track_debate_metrics 70 false true
+    grep -q '"agreed":true' "$KORERO_DIR/.debate_metrics"
+}
+
+@test "track_debate_metrics keeps only last 20 entries" {
+    for i in $(seq 1 25); do
+        track_debate_metrics 70 false false
+    done
+    local count
+    count=$(wc -l < "$KORERO_DIR/.debate_metrics")
+    [ "$count" -le 20 ]
+}
+
+# ===== analyze_debate_fatigue (Loop 45) =====
+
+@test "analyze_debate_fatigue returns 0 when no metrics file" {
+    run analyze_debate_fatigue 5
+    [ "$status" -eq 0 ]
+}
+
+@test "analyze_debate_fatigue returns 0 with fewer than 3 entries" {
+    track_debate_metrics 70 false false
+    track_debate_metrics 70 false false
+    run analyze_debate_fatigue 5
+    [ "$status" -eq 0 ]
+}
+
+@test "analyze_debate_fatigue detects low confidence" {
+    for i in 1 2 3 4 5; do
+        echo '{"timestamp":"t","confidence":50,"timed_out":false,"agreed":false}' >> "$KORERO_DIR/.debate_metrics"
+    done
+    run analyze_debate_fatigue 5
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DEBATE FATIGUE DETECTED"* ]]
+}
+
+@test "analyze_debate_fatigue detects high timeout rate" {
+    echo '{"timestamp":"t","confidence":75,"timed_out":true,"agreed":false}' >> "$KORERO_DIR/.debate_metrics"
+    echo '{"timestamp":"t","confidence":75,"timed_out":true,"agreed":false}' >> "$KORERO_DIR/.debate_metrics"
+    echo '{"timestamp":"t","confidence":75,"timed_out":false,"agreed":false}' >> "$KORERO_DIR/.debate_metrics"
+    run analyze_debate_fatigue 3
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DEBATE FATIGUE DETECTED"* ]]
+    [[ "$output" == *"CODEX_TIMEOUT"* ]]
+}
+
+@test "analyze_debate_fatigue detects high consensus" {
+    for i in 1 2 3 4 5; do
+        echo '{"timestamp":"t","confidence":75,"timed_out":false,"agreed":true}' >> "$KORERO_DIR/.debate_metrics"
+    done
+    run analyze_debate_fatigue 5
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DEBATE FATIGUE DETECTED"* ]]
+    [[ "$output" == *"DEBATE_ROUNDS"* ]]
+}
+
+@test "analyze_debate_fatigue produces no output for healthy metrics" {
+    for i in 1 2 3 4 5; do
+        echo '{"timestamp":"t","confidence":80,"timed_out":false,"agreed":false}' >> "$KORERO_DIR/.debate_metrics"
+    done
+    run analyze_debate_fatigue 5
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"FATIGUE"* ]]
+}
+
+# ===== display_fatigue_warning (Loop 45) =====
+
+@test "display_fatigue_warning shows DEBATE FATIGUE DETECTED header" {
+    run display_fatigue_warning 50 30 60 "Increase CODEX_TIMEOUT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DEBATE FATIGUE DETECTED"* ]]
+}
+
+@test "display_fatigue_warning shows warning icon for low confidence" {
+    run display_fatigue_warning 50 10 60
+    [[ "$output" == *"50%"* ]]
+    [[ "$output" == *"⚠"* ]]
+}
+
+@test "display_fatigue_warning shows recommendation text" {
+    run display_fatigue_warning 50 30 60 "Reduce DEBATE_ROUNDS" "Increase timeout"
+    [[ "$output" == *"Recommendations:"* ]]
+    [[ "$output" == *"Reduce DEBATE_ROUNDS"* ]]
+}
+
+# ===== display_verdict_explanation (Loop 47) =====
+
+@test "display_verdict_explanation returns 1 when no result file" {
+    run display_verdict_explanation "$TEST_DIR/nonexistent.json"
+    [ "$status" -eq 1 ]
+}
+
+@test "display_verdict_explanation shows DEBATE VERDICT EXPLANATION header" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "confidence": 78,
+  "title": "Test Proposal",
+  "rationale": "Claude won because the proposal was better.",
+  "runner_up_insight": "N/A"
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DEBATE VERDICT EXPLANATION"* ]]
+}
+
+@test "display_verdict_explanation shows winner and confidence" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "confidence": 78,
+  "title": "Test Proposal",
+  "rationale": "Claude won.",
+  "runner_up_insight": "N/A"
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [[ "$output" == *"CLAUDE"* ]]
+    [[ "$output" == *"78%"* ]]
+}
+
+@test "display_verdict_explanation shows title" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "codex",
+  "confidence": 65,
+  "title": "Portable Signal Handling",
+  "rationale": "Codex had better implementation.",
+  "runner_up_insight": "N/A"
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [[ "$output" == *"Portable Signal Handling"* ]]
+}
+
+@test "display_verdict_explanation shows rationale section" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "confidence": 80,
+  "title": "Test",
+  "rationale": "Claude demonstrated concrete implementation knowledge.",
+  "runner_up_insight": "N/A"
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [[ "$output" == *"RATIONALE:"* ]]
+    [[ "$output" == *"concrete implementation"* ]]
+}
+
+@test "display_verdict_explanation shows runner-up insight when present" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "confidence": 80,
+  "title": "Test",
+  "rationale": "Claude won.",
+  "runner_up_insight": "Codex had a creative approach worth exploring."
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [[ "$output" == *"RUNNER-UP INSIGHT:"* ]]
+    [[ "$output" == *"creative approach"* ]]
+}
+
+@test "display_verdict_explanation works for codex winner" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "codex",
+  "confidence": 72,
+  "title": "Better Algorithm",
+  "rationale": "Codex proposed a more efficient solution.",
+  "runner_up_insight": "N/A"
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CODEX"* ]]
+    [[ "$output" == *"72%"* ]]
+}

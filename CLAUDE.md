@@ -185,6 +185,12 @@ The system uses a modular architecture with reusable components in the `lib/` di
     - `record_debate_quality(loop_num, quality, ratio, coverage, confidence)` - Appends metrics to `.korero/.debate_quality.json`
     - `display_parallel_timing(ai_name, elapsed_sec, exit_code)` — Prints per-AI timing line to stderr as each parallel process finishes; suppressed if `KORERO_QUIET=1`
     - `run_parallel_critiques_with_timing(phase, claude_pid, codex_pid, start_time)` — Polls both background PIDs and calls `display_parallel_timing` as each finishes; sets globals `PARALLEL_CLAUDE_EXIT`, `PARALLEL_CODEX_EXIT`, `PARALLEL_ELAPSED`
+    - **Debate Fatigue Detection** (Loop 45): Tracks debate effectiveness across loops; warns when metrics cross thresholds
+      - `track_debate_metrics(confidence, timed_out, agreed)` — Appends one debate's metrics to `.korero/.debate_metrics`; rotates to keep last 20 entries
+      - `analyze_debate_fatigue([window])` — Reads rolling metrics, checks thresholds (confidence <60%, timeout rate >20%, consensus >80%); calls `display_fatigue_warning` if triggered; runs every 3 loops automatically
+      - `display_fatigue_warning(avg_conf, timeout_rate, consensus_rate, rec...)` — Displays `DEBATE FATIGUE DETECTED` box with per-metric status (✓/⚠) and recommendations
+    - **Verdict Explanation** (Loop 47): Shows structured explanation of why the winner was selected after each debate
+      - `display_verdict_explanation([result_file])` — Reads `.korero/.debate_result`, displays winner/confidence/title/rationale/runner-up insight in formatted box; called automatically after each debate
 
 13. **lib/cost_estimator.sh** - API cost estimation from loop logs
     - `estimate_tokens_from_file(file_path)` - Estimates token count from file size (4 chars/token)
@@ -322,8 +328,9 @@ korero --health-check || exit 1  # Use in CI to fail fast
 korero --cost-estimate           # Show estimated API costs from logs
 korero --cost-history            # Show per-loop cost breakdown with session totals
 
-# Debate quality (heavy modes)
+# Debate quality and health (heavy modes)
 korero --debate-stats            # Show win distribution + quality statistics across loops
+korero --debate-health           # Analyze debate fatigue metrics (last 10 debates)
 
 # Implementation status
 korero --implementation-status   # Show which winning ideas are implemented vs pending
@@ -447,6 +454,7 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--cost-estimate` - Estimate API costs from loop log files and display formatted report
 - `--cost-history` / `--costs` - Show per-loop cost breakdown with session totals from `cost_history.json`
 - `--debate-stats` / `--quality` - Show win distribution dashboard (from `.korero/debates/` transcripts) + quality metrics (from `.korero/.debate_quality.json`)
+- `--debate-health` - Analyze debate fatigue across last 10 debates; checks confidence, timeout rate, consensus rate against thresholds; displays `DEBATE FATIGUE DETECTED` box with recommendations if triggered
 - `--implementation-status` / `--impl-status` - Show winning idea implementation progress: summary, progress bar, implemented vs pending lists, next-up suggestion; parses fix_plan.md
 - `--search-ideas KEYWORD` / `--find-ideas KEYWORD` - Search past ideas by keyword (case-insensitive), shows metadata and matching context
 - `--shutdown-history [N]` - Show history of past shutdown events (SIGINT, SIGTERM, budget, circuit); reads `.korero/.signal_log.json` (default: last 20)
@@ -581,6 +589,21 @@ Set `KORERO_QUIET=1` in environment to suppress these timing lines.
 - **Quality Score** — Composite 0–100 (30% length + 40% coverage + 30% confidence); ≥70 indicates high-quality debates
 
 View with `korero --debate-stats` (alias: `--quality`).
+
+**Debate Fatigue Detection** (Loop 45, runs every 3 loops automatically):
+After each heavy mode loop, metrics are appended to `.korero/.debate_metrics`. Every 3 loops, Korero analyzes the last 5 debates:
+- **Low confidence** (<60%): Debates aren't producing decisive winners → suggest reducing `DEBATE_ROUNDS`
+- **High timeout rate** (>20%): `CODEX_TIMEOUT` is too low → suggest increasing it
+- **High consensus** (>80%): AIs agree too much → suggest reducing `DEBATE_ROUNDS`
+
+Check manually: `korero --debate-health` (analyzes last 10 debates).
+
+**Verdict Explanation** (Loop 47, shown after each debate):
+After each debate judgment, a formatted explanation box is displayed showing:
+- Winner name and confidence %
+- Idea title
+- Rationale: why the winner was selected
+- Runner-up insight: what was valuable from the losing proposal
 
 ### Intelligent Exit Detection
 The loop uses a dual-condition check to prevent premature exits during productive iterations:
@@ -839,9 +862,9 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (1115 tests across 31 files)
+### Test Files (1136 tests across 31 files)
 
-**Unit Tests (979 tests):**
+**Unit Tests (1000 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
@@ -862,7 +885,7 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_health_check.bats` | 28 | Health check: tool detection, git config, permissions, network, config, CLI flag, bash version guard |
 | `test_codex_adapter.bats` | 35 | Codex CLI adapter: command building, auth checks, response parsing, proposal extraction, fallback detection |
 | `test_circuit_breaker.bats` | 16 | Budget Alert System: check_budget_threshold, get_budget_percentage, prompt_budget_exceeded |
-| `test_cross_ai_debate.bats` | 75 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling, progress indicators, round progress bar, codex fallback integration, debate quality metrics, parallel critique timing |
+| `test_cross_ai_debate.bats` | 96 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling, progress indicators, round progress bar, codex fallback integration, debate quality metrics, parallel critique timing, debate fatigue tracking and analysis, verdict explanation display |
 | `test_signal_handling.bats` | 23 | Portable signal handling: record_shutdown_signal, show_shutdown_history, get_shutdown_count, get_last_shutdown_reason, install_signal_handlers, reason constants |
 | `test_prompt_templates.bats` | 44 | Template validation: existence, structure (KORERO_STATUS, EXIT_SIGNAL), shell variable escaping, markdown code block balance, heavy mode placeholders ({AI_NAME}, {OWN_PROPOSAL}, {CRITIQUE}, {CLAUDE_PROPOSAL}, {CODEX_PROPOSAL}), korerorc.template fields |
 | `test_heavy_mode.bats` | 31 | Heavy mode integration: .korerorc validation, CLI flags, health checks, circuit breaker, enable, CODEX_FALLBACK validation |

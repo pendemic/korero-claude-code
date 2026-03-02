@@ -911,6 +911,26 @@ JUDGE_FAIL_EOF
     # Parse verdict (|| true prevents set -e exit on parse failure — default verdict written)
     parse_debate_verdict "$judge_file" "$DEBATE_RESULT_FILE" || true
 
+    # Display verdict explanation (Loop 47)
+    display_verdict_explanation "$DEBATE_RESULT_FILE" 2>/dev/null || true
+
+    # Track debate metrics for fatigue detection (Loop 45)
+    local debate_confidence
+    if command -v jq &>/dev/null; then
+        debate_confidence=$(jq -r '.confidence // 50' "$DEBATE_RESULT_FILE" 2>/dev/null || echo 50)
+    else
+        debate_confidence=50
+    fi
+    local codex_timed_out="false"
+    if command -v jq &>/dev/null; then
+        codex_timed_out=$(jq -r '.codex_timed_out // false' "$DEBATE_RESULT_FILE" 2>/dev/null || echo false)
+    fi
+    track_debate_metrics "$debate_confidence" "$codex_timed_out" "false" 2>/dev/null || true
+    # Check for fatigue every 3 loops
+    if [[ $(( loop_num % 3 )) -eq 0 ]]; then
+        analyze_debate_fatigue 5 2>/dev/null || true
+    fi
+
     # Calculate and record debate quality metrics
     local quality_score length_ratio coverage verdict_conf_score
     quality_score=$(calculate_debate_quality \
@@ -1047,6 +1067,209 @@ run_parallel_critiques_with_timing() {
     PARALLEL_ELAPSED=$(( last_finish - start_time ))
 }
 
+# ===== Debate Fatigue Indicator (Loop 45) =====
+
+# Append one debate's metrics to the rolling metrics log
+# Arguments: confidence (0-100), timed_out (true|false), agreed (true|false)
+track_debate_metrics() {
+    local confidence="${1:-50}"
+    local timed_out="${2:-false}"
+    local agreed="${3:-false}"
+    local metrics_file="${KORERO_DIR:-.korero}/.debate_metrics"
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "unknown")
+
+    mkdir -p "$(dirname "$metrics_file")"
+    echo "{\"timestamp\":\"$timestamp\",\"confidence\":$confidence,\"timed_out\":$timed_out,\"agreed\":$agreed}" >> "$metrics_file"
+
+    # Keep only last 20 entries
+    local line_count
+    line_count=$(wc -l < "$metrics_file" 2>/dev/null || echo 0)
+    if [[ "$line_count" -gt 20 ]]; then
+        tail -20 "$metrics_file" > "${metrics_file}.tmp" && mv "${metrics_file}.tmp" "$metrics_file"
+    fi
+}
+
+# Display fatigue warning box with per-metric status and recommendations
+# Arguments: avg_conf, timeout_rate, consensus_rate, rec1 [rec2 ...]
+display_fatigue_warning() {
+    local avg_conf="$1"
+    local timeout_rate="$2"
+    local consensus_rate="$3"
+    shift 3
+    local recommendations=("$@")
+
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════╗"
+    echo "║  DEBATE FATIGUE DETECTED                                   ║"
+    echo "╚════════════════════════════════════════════════════════════╝"
+    echo ""
+    printf "Recent debate metrics (last 5 loops):\n"
+
+    if [[ "$avg_conf" -lt 60 ]]; then
+        printf "  Average confidence: %d%% ⚠ (threshold: 60%%)\n" "$avg_conf"
+    else
+        printf "  Average confidence: %d%% ✓\n" "$avg_conf"
+    fi
+
+    if [[ "$timeout_rate" -gt 20 ]]; then
+        printf "  Timeout rate: %d%% ⚠ (threshold: 20%%)\n" "$timeout_rate"
+    else
+        printf "  Timeout rate: %d%% ✓\n" "$timeout_rate"
+    fi
+
+    printf "  Consensus rate: %d%%\n" "$consensus_rate"
+    echo ""
+
+    if [[ ${#recommendations[@]} -gt 0 ]]; then
+        echo "Recommendations:"
+        local i=1
+        for rec in "${recommendations[@]}"; do
+            printf "  %d. %s\n" "$i" "$rec"
+            i=$(( i + 1 ))
+        done
+        echo ""
+    fi
+}
+
+# Analyze rolling debate metrics and display fatigue warning if thresholds exceeded
+# Arguments: window (default 5) — number of recent debates to analyze
+# Returns: 0 always (non-blocking)
+analyze_debate_fatigue() {
+    local window="${1:-5}"
+    local metrics_file="${KORERO_DIR:-.korero}/.debate_metrics"
+
+    if [[ ! -f "$metrics_file" ]]; then
+        return 0
+    fi
+
+    local line_count
+    line_count=$(wc -l < "$metrics_file" 2>/dev/null || echo 0)
+    if [[ "$line_count" -lt 3 ]]; then
+        return 0  # Not enough data for meaningful analysis
+    fi
+
+    local total=0 timeout_count=0 agree_count=0 conf_sum=0
+
+    while IFS= read -r line; do
+        local conf timed agreed
+        if command -v jq &>/dev/null; then
+            conf=$(echo "$line" | jq -r '.confidence // 0' 2>/dev/null || echo 0)
+            timed=$(echo "$line" | jq -r '.timed_out // false' 2>/dev/null || echo false)
+            agreed=$(echo "$line" | jq -r '.agreed // false' 2>/dev/null || echo false)
+        else
+            conf=$(echo "$line" | sed 's/.*"confidence":\([0-9]*\).*/\1/' | grep -E '^[0-9]+$' || echo 0)
+            timed=$(echo "$line" | grep -o '"timed_out":true' && echo true || echo false)
+            agreed=$(echo "$line" | grep -o '"agreed":true' && echo true || echo false)
+        fi
+        conf="${conf:-0}"
+        conf_sum=$(( conf_sum + conf ))
+        [[ "$timed" == "true" ]] && timeout_count=$(( timeout_count + 1 ))
+        [[ "$agreed" == "true" ]] && agree_count=$(( agree_count + 1 ))
+        total=$(( total + 1 ))
+    done < <(tail -"$window" "$metrics_file" 2>/dev/null)
+
+    [[ $total -eq 0 ]] && return 0
+
+    local avg_confidence timeout_rate consensus_rate
+    avg_confidence=$(( conf_sum / total ))
+    timeout_rate=$(( timeout_count * 100 / total ))
+    consensus_rate=$(( agree_count * 100 / total ))
+
+    local fatigue_detected=false
+    local recommendations=()
+
+    if [[ $avg_confidence -lt 60 ]]; then
+        fatigue_detected=true
+        recommendations+=("Low confidence (${avg_confidence}%): debates aren't decisive — try reducing DEBATE_ROUNDS or switching modes")
+    fi
+
+    if [[ $timeout_rate -gt 20 ]]; then
+        fatigue_detected=true
+        recommendations+=("High timeout rate (${timeout_rate}%): increase CODEX_TIMEOUT from ${CODEX_TIMEOUT:-15} to $(( ${CODEX_TIMEOUT:-15} + 10 )) minutes")
+    fi
+
+    if [[ $consensus_rate -gt 80 ]]; then
+        fatigue_detected=true
+        recommendations+=("High consensus rate (${consensus_rate}%): reduce DEBATE_ROUNDS — extra rounds add little value when AIs agree")
+    fi
+
+    if [[ "$fatigue_detected" == "true" ]]; then
+        display_fatigue_warning "$avg_confidence" "$timeout_rate" "$consensus_rate" "${recommendations[@]}"
+    fi
+
+    return 0
+}
+
+# ===== Cross-AI Verdict Explanation (Loop 47) =====
+
+# Display a formatted verdict explanation from the debate result file
+# Reads .korero/.debate_result and shows winner, confidence, summary
+# Arguments: result_file (optional, defaults to $DEBATE_RESULT_FILE)
+display_verdict_explanation() {
+    local result_file="${1:-${DEBATE_RESULT_FILE:-${KORERO_DIR:-.korero}/.debate_result}}"
+
+    if [[ ! -f "$result_file" ]]; then
+        echo "No debate result found." >&2
+        return 1
+    fi
+
+    local winner confidence title summary rationale
+    if command -v jq &>/dev/null; then
+        winner=$(jq -r '.winner // "unknown"' "$result_file" 2>/dev/null || echo "unknown")
+        confidence=$(jq -r '.confidence // 0' "$result_file" 2>/dev/null || echo 0)
+        title=$(jq -r '.title // ""' "$result_file" 2>/dev/null || echo "")
+        summary=$(jq -r '.summary // .rationale // ""' "$result_file" 2>/dev/null || echo "")
+        rationale=$(jq -r '.rationale // ""' "$result_file" 2>/dev/null || echo "")
+    else
+        winner=$(sed 's/.*"winner":[[:space:]]*"\([^"]*\)".*/\1/' "$result_file" | head -1)
+        confidence=$(sed 's/.*"confidence":[[:space:]]*\([0-9]*\).*/\1/' "$result_file" | head -1)
+        title=$(sed 's/.*"title":[[:space:]]*"\([^"]*\)".*/\1/' "$result_file" | head -1)
+        summary=$(sed 's/.*"summary":[[:space:]]*"\([^"]*\)".*/\1/' "$result_file" | head -1)
+        rationale=$(sed 's/.*"rationale":[[:space:]]*"\([^"]*\)".*/\1/' "$result_file" | head -1)
+    fi
+
+    # Use rationale as fallback for summary
+    [[ -z "$summary" ]] && summary="$rationale"
+    local winner_display
+    winner_display=$(echo "$winner" | tr '[:lower:]' '[:upper:]')
+
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════╗"
+    echo "║  DEBATE VERDICT EXPLANATION                                ║"
+    echo "╚════════════════════════════════════════════════════════════╝"
+    echo ""
+    printf "Winner: %s (%s%% confidence)\n" "$winner_display" "$confidence"
+    if [[ -n "$title" ]]; then
+        printf "Title:  \"%s\"\n" "$title"
+    fi
+    echo ""
+
+    if [[ -n "$summary" ]]; then
+        echo "RATIONALE:"
+        # Word-wrap at ~60 chars
+        echo "$summary" | fold -s -w 60 | sed 's/^/  /'
+        echo ""
+    fi
+
+    # Show runner-up insight if present
+    local runner_up
+    if command -v jq &>/dev/null; then
+        runner_up=$(jq -r '.runner_up_insight // ""' "$result_file" 2>/dev/null || echo "")
+    else
+        runner_up=$(sed 's/.*"runner_up_insight":[[:space:]]*"\([^"]*\)".*/\1/' "$result_file" | head -1)
+    fi
+    if [[ -n "$runner_up" && "$runner_up" != "N/A" ]]; then
+        echo "RUNNER-UP INSIGHT:"
+        echo "$runner_up" | fold -s -w 60 | sed 's/^/  /'
+        echo ""
+    fi
+
+    echo "════════════════════════════════════════════════════════════"
+    echo ""
+    return 0
+}
+
 export -f get_phase_icon
 export -f show_debate_progress
 export -f show_debate_round_progress
@@ -1065,3 +1288,7 @@ export -f calculate_debate_quality
 export -f record_debate_quality
 export -f display_parallel_timing
 export -f run_parallel_critiques_with_timing
+export -f track_debate_metrics
+export -f display_fatigue_warning
+export -f analyze_debate_fatigue
+export -f display_verdict_explanation
