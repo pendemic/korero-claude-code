@@ -107,6 +107,13 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - **Diversity tracking**: `generate_diversity_stats(ideas_dir)` - Scans idea files for `**Category:**` fields, produces compact text summary with per-category counts, overrepresentation warnings, and diversity alerts
    - **Config fix commands**: `get_config_fix(field, korerorc)` - Returns copy-paste shell command to fix a missing/invalid field
    - **Config validation with fixes**: `validate_korerorc_with_fixes(korerorc)` - Validates config and outputs actionable fix commands for each error
+   - **Quick Reference Card**: `generate_quick_reference(mode)` - Generates `.korero/QUICK_REFERENCE.md` with mode-specific commands, troubleshooting, and tips; called automatically at end of `korero-enable`
+     - `_format_mode_name(mode)` - Returns display name for mode (e.g., `heavy-coding` → `Heavy Coding (Claude + Codex)`)
+     - `_qr_essential_commands(mode)` - Mode-specific essential commands section
+     - `_qr_status_commands()` - Status & monitoring commands section
+     - `_qr_troubleshooting()` - Troubleshooting table section
+     - `_qr_keyboard_shortcuts()` - Keyboard shortcuts section
+     - `_qr_mode_tips(mode)` - Mode-specific tips section
 
 6. **lib/wizard_utils.sh** - Interactive prompt utilities for enable wizard
    - User prompts: `confirm()`, `prompt_text()`, `prompt_number()`
@@ -251,6 +258,17 @@ korero-enable-ci --from github               # With task source
 korero-enable-ci --project-type typescript   # Override detection
 korero-enable-ci --json                      # Machine-readable output
 ```
+
+### Quick Reference Card
+
+After running `korero-enable`, a mode-specific quick reference card is automatically generated at `.korero/QUICK_REFERENCE.md`. This single-page document contains:
+- Essential commands for your selected mode
+- Status and monitoring commands
+- Troubleshooting table (circuit breaker, rate limits, permissions)
+- Keyboard shortcuts
+- Mode-specific tips (ideas browsing, commit workflow, Codex auth, etc.)
+
+Print or bookmark `.korero/QUICK_REFERENCE.md` for easy command lookup.
 
 ### Running the Korero Loop
 ```bash
@@ -821,9 +839,9 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (1056 tests across 30 files)
+### Test Files (1115 tests across 31 files)
 
-**Unit Tests (920 tests):**
+**Unit Tests (979 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
@@ -833,7 +851,7 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_session_continuity.bats` | 49 | Session lifecycle management + circuit breaker integration + issue #91 fix + session age warning |
 | `test_exit_detection.bats` | 58 | Exit signal detection + EXIT_SIGNAL-based completion indicators + progress detection |
 | `test_rate_limiting.bats` | 34 | Rate limiting behavior + predictive rate limit warnings |
-| `test_enable_core.bats` | 64 | Enable core library (idempotency, project detection, template generation, config validation, quickstart, verbose validation, config preview, diversity stats, config fix commands) |
+| `test_enable_core.bats` | 79 | Enable core library (idempotency, project detection, template generation, config validation, quickstart, verbose validation, config preview, diversity stats, config fix commands, quick reference card) |
 | `test_task_sources.bats` | 23 | Task sources (beads, GitHub, PRD extraction, normalization) |
 | `test_korero_enable.bats` | 22 | Korero enable integration tests (wizard, CI version, JSON output) |
 | `test_wizard_utils.bats` | 20 | Wizard utility functions (stdout/stderr separation, prompt functions) |
@@ -846,6 +864,7 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_circuit_breaker.bats` | 16 | Budget Alert System: check_budget_threshold, get_budget_percentage, prompt_budget_exceeded |
 | `test_cross_ai_debate.bats` | 75 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling, progress indicators, round progress bar, codex fallback integration, debate quality metrics, parallel critique timing |
 | `test_signal_handling.bats` | 23 | Portable signal handling: record_shutdown_signal, show_shutdown_history, get_shutdown_count, get_last_shutdown_reason, install_signal_handlers, reason constants |
+| `test_prompt_templates.bats` | 44 | Template validation: existence, structure (KORERO_STATUS, EXIT_SIGNAL), shell variable escaping, markdown code block balance, heavy mode placeholders ({AI_NAME}, {OWN_PROPOSAL}, {CRITIQUE}, {CLAUDE_PROPOSAL}, {CODEX_PROPOSAL}), korerorc.template fields |
 | `test_heavy_mode.bats` | 31 | Heavy mode integration: .korerorc validation, CLI flags, health checks, circuit breaker, enable, CODEX_FALLBACK validation |
 | `test_agent_protocol.bats` | 21 | Agent protocol tests |
 | `test_duration_tracking.bats` | 16 | Loop duration tracking |
@@ -884,6 +903,8 @@ bats tests/unit/test_cross_ai_debate.bats
 bats tests/unit/test_heavy_mode.bats
 bats tests/unit/test_cost_estimator.bats
 bats tests/unit/test_signal_handling.bats
+bats tests/unit/test_prompt_templates.bats
+npm run test:templates
 ```
 
 ## Feature Development Quality Standards

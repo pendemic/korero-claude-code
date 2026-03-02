@@ -741,3 +741,114 @@ EOF
     [ "$status" -eq 1 ]
     [[ "$output" == *"error(s) found"* ]]
 }
+
+# =============================================================================
+# QUICK REFERENCE CARD (Loop 43)
+# =============================================================================
+
+@test "generate_quick_reference creates file for idea mode" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    run generate_quick_reference "idea"
+    [ "$status" -eq 0 ]
+    [ -f "$KORERO_DIR/QUICK_REFERENCE.md" ]
+}
+
+@test "generate_quick_reference creates file for coding mode" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    run generate_quick_reference "coding"
+    [ "$status" -eq 0 ]
+    [ -f "$KORERO_DIR/QUICK_REFERENCE.md" ]
+}
+
+@test "generate_quick_reference creates file for heavy-coding mode" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    run generate_quick_reference "heavy-coding"
+    [ "$status" -eq 0 ]
+    [ -f "$KORERO_DIR/QUICK_REFERENCE.md" ]
+}
+
+@test "generate_quick_reference creates file for heavy-idea mode" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    run generate_quick_reference "heavy-idea"
+    [ "$status" -eq 0 ]
+    [ -f "$KORERO_DIR/QUICK_REFERENCE.md" ]
+}
+
+@test "generate_quick_reference idea mode contains Idea Generation header" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    generate_quick_reference "idea"
+    grep -q "Idea Generation" "$KORERO_DIR/QUICK_REFERENCE.md"
+}
+
+@test "generate_quick_reference idea mode contains ideas command" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    generate_quick_reference "idea"
+    grep -q "korero --ideas" "$KORERO_DIR/QUICK_REFERENCE.md"
+}
+
+@test "generate_quick_reference heavy-coding mode contains Codex reference" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    generate_quick_reference "heavy-coding"
+    grep -q "Codex" "$KORERO_DIR/QUICK_REFERENCE.md"
+}
+
+@test "generate_quick_reference includes troubleshooting table" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    generate_quick_reference "coding"
+    grep -q "Circuit breaker open" "$KORERO_DIR/QUICK_REFERENCE.md"
+    grep -q "Permission denied" "$KORERO_DIR/QUICK_REFERENCE.md"
+}
+
+@test "generate_quick_reference includes keyboard shortcuts section" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    generate_quick_reference "coding"
+    grep -q "Keyboard Shortcuts" "$KORERO_DIR/QUICK_REFERENCE.md"
+    grep -q "Ctrl+C" "$KORERO_DIR/QUICK_REFERENCE.md"
+}
+
+@test "generate_quick_reference includes status commands" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    generate_quick_reference "coding"
+    grep -q "korero --circuit-status" "$KORERO_DIR/QUICK_REFERENCE.md"
+}
+
+@test "generate_quick_reference output message mentions file path" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    run generate_quick_reference "idea"
+    [[ "$output" == *"QUICK_REFERENCE.md"* ]]
+}
+
+@test "_format_mode_name returns correct name for idea" {
+    run _format_mode_name "idea"
+    [ "$status" -eq 0 ]
+    [[ "$output" == "Idea Generation" ]]
+}
+
+@test "_format_mode_name returns correct name for heavy-coding" {
+    run _format_mode_name "heavy-coding"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Heavy Coding"* ]]
+}
+
+@test "_format_mode_name returns correct name for heavy-idea" {
+    run _format_mode_name "heavy-idea"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Heavy Idea"* ]]
+}
+
+@test "_format_mode_name handles unknown mode gracefully" {
+    run _format_mode_name "unknown-mode"
+    [ "$status" -eq 0 ]
+    [[ "$output" == "unknown-mode" ]]
+}

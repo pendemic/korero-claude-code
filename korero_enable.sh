@@ -830,6 +830,9 @@ phase_verification() {
     echo ""
 
     if [[ "$all_good" == "true" ]]; then
+        # Generate quick reference card (Loop 43)
+        generate_quick_reference "${KORERO_MODE:-coding}" 2>/dev/null || true
+
         print_success "Korero enabled successfully!"
         echo ""
         echo "Next steps:"
@@ -843,6 +846,8 @@ phase_verification() {
             print_bullet "Start Korero: korero --monitor" "3."
             print_bullet "Ideas will be saved to .korero/ideas/IDEAS.md" "4."
         fi
+        echo ""
+        print_info "TIP: Quick reference card saved to .korero/QUICK_REFERENCE.md"
         echo ""
 
         if [[ "$NON_INTERACTIVE" != "true" ]]; then
