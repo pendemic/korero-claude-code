@@ -2603,6 +2603,7 @@ Options:
     --debate-health         Analyze debate fatigue metrics (last 10 debates) for heavy modes
     --implementation-status / --impl-status  Show winning idea implementation progress
     --search-ideas KEYWORD  Search past ideas by keyword (case-insensitive)
+    --consolidate-ideas     Generate consolidation report: quick wins, clusters, priority matrix
     --shutdown-history      Show history of past shutdowns (signals, budget, circuit)
     --rate-status / --rate / -r  Show visual rate limit status dashboard
     --troubleshoot          Show troubleshooting quick reference for common issues
@@ -3076,6 +3077,272 @@ search_ideas() {
         echo "Found $matches idea files matching, $index_matches lines in IDEAS.md"
     fi
     echo ""
+}
+
+# Calculate Levenshtein (edit) distance between two strings
+# Returns distance via stdout. Pure bash, no external dependencies.
+levenshtein_distance() {
+    local s1="$1"
+    local s2="$2"
+    local len1=${#s1}
+    local len2=${#s2}
+
+    [[ "$s1" == "$s2" ]] && echo 0 && return
+    [[ $len1 -eq 0 ]] && echo $len2 && return
+    [[ $len2 -eq 0 ]] && echo $len1 && return
+
+    local -a prev curr
+    local i j cost del ins sub
+    for (( i = 0; i <= len2; i++ )); do
+        prev[i]=$i
+    done
+
+    for (( i = 1; i <= len1; i++ )); do
+        curr[0]=$i
+        for (( j = 1; j <= len2; j++ )); do
+            cost=0
+            [[ "${s1:i-1:1}" != "${s2:j-1:1}" ]] && cost=1
+            del=$(( prev[j] + 1 ))
+            ins=$(( curr[j-1] + 1 ))
+            sub=$(( prev[j-1] + cost ))
+            curr[j]=$del
+            [[ $ins -lt ${curr[j]} ]] && curr[j]=$ins
+            [[ $sub -lt ${curr[j]} ]] && curr[j]=$sub
+        done
+        prev=("${curr[@]}")
+    done
+
+    echo "${prev[len2]}"
+}
+
+# Find the closest valid CLI option to a possibly-misspelled flag
+# Returns the best matching option on stdout, or empty string if no close match
+suggest_similar_option() {
+    local typo="$1"
+    local best_match=""
+    local best_distance=999
+    local threshold
+
+    local typo_len=${#typo}
+    if [[ $typo_len -le 6 ]]; then
+        threshold=2
+    elif [[ $typo_len -le 12 ]]; then
+        threshold=3
+    else
+        threshold=4
+    fi
+
+    local -a VALID_OPTIONS=(
+        "--help" "--version" "--status" "--monitor" "--dry-run"
+        "--validate" "--validate-config" "--fix-config" "--quickstart" "--examples"
+        "--health-check" "--reset-circuit" "--circuit-status" "--reset-session"
+        "--show-debate" "--consolidate-ideas" "--cost-estimate" "--cost-history"
+        "--debate-stats" "--debate-health" "--implementation-status" "--impl-status"
+        "--search-ideas" "--find-ideas" "--shutdown-history" "--rate-status"
+        "--troubleshoot" "--diagnose" "--start-idea" "--no-continue"
+        "--output-format" "--allowed-tools" "--session-expiry"
+        "--calls" "--prompt" "--timeout" "--live" "--verbose"
+        "--codex-timeout" "--debate-rounds"
+    )
+
+    local option distance
+    for option in "${VALID_OPTIONS[@]}"; do
+        distance=$(levenshtein_distance "$typo" "$option")
+        if [[ $distance -lt $best_distance ]]; then
+            best_distance=$distance
+            best_match="$option"
+        fi
+    done
+
+    if [[ $best_distance -le $threshold ]]; then
+        echo "$best_match"
+    fi
+}
+
+# Consolidation Report: Extract ideas by effort level (S/M/L)
+# Usage: _consolidate_by_effort <ideas_dir> <effort_letter>
+_consolidate_by_effort() {
+    local ideas_dir="$1"
+    local effort="$2"
+    local found=0
+
+    for idea_file in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$idea_file" ]] || continue
+        if grep -qi "Effort.*${effort}" "$idea_file" 2>/dev/null; then
+            local loop_num title category
+            loop_num=$(echo "$idea_file" | grep -o 'loop_[0-9]*' | grep -o '[0-9]*')
+            title=$(grep '^\*\*Title:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Title:\*\*[[:space:]]*//')
+            category=$(grep '^\*\*Category:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//')
+            printf "%d. Loop %s: %s — %s\n" "$(( found + 1 ))" "$loop_num" "${title:-Unknown}" "${category:-N/A}"
+            found=$(( found + 1 ))
+        fi
+    done
+
+    [[ $found -eq 0 ]] && echo "  (none found)" || true
+}
+
+# Consolidation Report: Generate category cluster section
+# Usage: _consolidate_category_clusters <ideas_dir>
+_consolidate_category_clusters() {
+    local ideas_dir="$1"
+
+    # Collect all categories from idea files
+    local categories
+    categories=$(for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] && grep '^\*\*Category:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//'
+    done | sort | uniq -c | sort -rn)
+
+    if [[ -z "$categories" ]]; then
+        echo "  (no categories found)"
+        return
+    fi
+
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        local count category
+        count=$(echo "$line" | awk '{print $1}')
+        category=$(echo "$line" | sed 's/^ *[0-9]* *//')
+        [[ -z "$category" ]] && continue
+
+        echo "### ${category} Cluster (${count} $([ "$count" -eq 1 ] && echo idea || echo ideas))"
+        for idea_file in "$ideas_dir"/loop_*_idea.md; do
+            [[ -f "$idea_file" ]] || continue
+            local file_cat
+            file_cat=$(grep '^\*\*Category:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//')
+            if [[ "$file_cat" == "$category" ]]; then
+                local loop_num title
+                loop_num=$(echo "$idea_file" | grep -o 'loop_[0-9]*' | grep -o '[0-9]*')
+                title=$(grep '^\*\*Title:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Title:\*\*[[:space:]]*//')
+                echo "  - Loop ${loop_num}: ${title:-Unknown}"
+            fi
+        done
+        echo ""
+    done <<< "$categories"
+}
+
+# Consolidation Report: Generate priority matrix table
+# Usage: _consolidate_priority_matrix <ideas_dir>
+_consolidate_priority_matrix() {
+    local ideas_dir="$1"
+
+    echo "| Priority | Loop | Title | Category | Effort |"
+    echo "|----------|------|-------|----------|--------|"
+
+    # Collect ideas with effort levels; P1=S, P2=M, P3=L
+    # Process S first, then M, then L
+    for effort_letter in S M L; do
+        local priority
+        case "$effort_letter" in
+            S) priority="P1" ;;
+            M) priority="P2" ;;
+            L) priority="P3" ;;
+        esac
+        for idea_file in "$ideas_dir"/loop_*_idea.md; do
+            [[ -f "$idea_file" ]] || continue
+            if grep -qi "Effort.*${effort_letter}" "$idea_file" 2>/dev/null; then
+                local loop_num title category
+                loop_num=$(echo "$idea_file" | grep -o 'loop_[0-9]*' | grep -o '[0-9]*')
+                title=$(grep '^\*\*Title:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Title:\*\*[[:space:]]*//')
+                category=$(grep '^\*\*Category:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//')
+                printf "| %-8s | %-4s | %-50s | %-30s | %-6s |\n" \
+                    "$priority" "$loop_num" "${title:-Unknown}" "${category:-N/A}" "$effort_letter"
+            fi
+        done
+    done
+}
+
+# Consolidation Report: Display category distribution bar chart
+# Usage: _consolidate_category_distribution <ideas_dir>
+_consolidate_category_distribution() {
+    local ideas_dir="$1"
+
+    for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] && grep '^\*\*Category:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//'
+    done | sort | uniq -c | sort -rn | \
+    while read -r count category; do
+        [[ -z "$category" ]] && continue
+        local bar=""
+        local i
+        for (( i=0; i<count; i++ )); do bar+="█"; done
+        printf "  %-32s %s (%d)\n" "$category" "$bar" "$count"
+    done
+}
+
+# Generate Idea Consolidation Report from IDEAS.md and per-loop idea files
+# Usage: consolidate_ideas [--output FILE]
+# Outputs structured report: quick wins, theme clusters, priority matrix, category distribution
+consolidate_ideas() {
+    local output_file=""
+    if [[ "${1:-}" == "--output" && -n "${2:-}" ]]; then
+        output_file="$2"
+    fi
+
+    local korero_dir="${KORERO_DIR:-.korero}"
+    local ideas_dir="$korero_dir/ideas"
+    local ideas_file="$ideas_dir/IDEAS.md"
+
+    if [[ ! -f "$ideas_file" ]]; then
+        echo "Error: No IDEAS.md found at $ideas_file" >&2
+        echo "Run ideation loops first to generate ideas." >&2
+        return 1
+    fi
+
+    # Count total ideas from individual loop files
+    local total_ideas=0
+    for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] && total_ideas=$(( total_ideas + 1 ))
+    done
+
+    # Count unique categories and types
+    local total_categories total_types
+    total_categories=$(for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] && grep '^\*\*Category:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//'
+    done | sort -u | grep -c . 2>/dev/null || echo 0)
+
+    total_types=$(for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] && grep '^\*\*Type:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Type:\*\*[[:space:]]*//'
+    done | sort -u | grep -c . 2>/dev/null || echo 0)
+
+    local _report_body
+    _report_body=$(
+        echo "═══════════════════════════════════════════════════════════"
+        echo "IDEA CONSOLIDATION REPORT"
+        echo "Generated: $(date +%Y-%m-%d)"
+        echo "Total Ideas: ${total_ideas} | Categories: ${total_categories} | Types: ${total_types}"
+        echo "═══════════════════════════════════════════════════════════"
+        echo ""
+
+        echo "## Quick Wins (S effort)"
+        _consolidate_by_effort "$ideas_dir" "S"
+        echo ""
+
+        echo "## Medium Effort (M effort)"
+        _consolidate_by_effort "$ideas_dir" "M"
+        echo ""
+
+        echo "## Theme Clusters"
+        _consolidate_category_clusters "$ideas_dir"
+
+        echo "## Implementation Priority Matrix"
+        _consolidate_priority_matrix "$ideas_dir"
+        echo ""
+
+        echo "## Category Distribution"
+        _consolidate_category_distribution "$ideas_dir"
+        echo ""
+
+        echo "═══════════════════════════════════════════════════════════"
+        echo "Tip: Use 'korero --search-ideas KEYWORD' to find specific ideas."
+        echo "     Use 'korero --start-idea N' to begin implementing idea N."
+        echo "═══════════════════════════════════════════════════════════"
+    )
+
+    if [[ -n "$output_file" ]]; then
+        echo "$_report_body" > "$output_file"
+        echo "Consolidation report written to: $output_file"
+    else
+        echo "$_report_body"
+    fi
 }
 
 # Show per-loop cost history from cost_history.json
@@ -3765,12 +4032,36 @@ Create via:
   korero-enable-ci               Non-interactive (CI/scripts)
 TOPICEOF
             ;;
+        consolidate-ideas|consolidation)
+            cat << 'TOPICEOF'
+IDEA CONSOLIDATION REPORT
+==========================
+
+Generate a structured summary report from accumulated IDEAS.md:
+
+  korero --consolidate-ideas
+
+The report includes:
+  Quick Wins      S-effort ideas for immediate implementation
+  Medium Effort   M-effort ideas
+  Theme Clusters  Ideas grouped by category with loop references
+  Priority Matrix Table sorted P1 (S) → P2 (M) → P3 (L)
+  Distribution    Bar chart of ideas per category
+
+Save to a file:
+  korero --consolidate-ideas --output sprint-plan.md
+
+Use alongside:
+  korero --search-ideas KEYWORD   Find ideas by keyword
+  korero --start-idea N           Start implementing idea N
+TOPICEOF
+            ;;
         *)
             echo "Unknown help topic: $topic"
             echo ""
             echo "Available topics:"
             echo "  presets, circuit-breaker, session, tools,"
-            echo "  modes, exit-detection, rate-limiting, config"
+            echo "  modes, exit-detection, rate-limiting, config, consolidate-ideas"
             echo ""
             echo "Usage: korero --help <topic>"
             return 1
@@ -3951,6 +4242,14 @@ while [[ $# -gt 0 ]]; do
             search_ideas "$1"
             exit $?
             ;;
+        --consolidate-ideas)
+            if [[ "${2:-}" == "--output" && -n "${3:-}" ]]; then
+                consolidate_ideas --output "$3"
+            else
+                consolidate_ideas
+            fi
+            exit $?
+            ;;
         --troubleshoot|--troubleshooting)
             show_troubleshoot_reference
             exit 0
@@ -4034,8 +4333,14 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         *)
-            echo "Unknown option: $1"
-            show_help
+            echo "Unknown option: $1" >&2
+            _unknown_suggestion=$(suggest_similar_option "$1")
+            if [[ -n "$_unknown_suggestion" ]]; then
+                echo "" >&2
+                echo "Did you mean: ${_unknown_suggestion}?" >&2
+            fi
+            echo "" >&2
+            echo "Run 'korero --help' for usage information." >&2
             exit 1
             ;;
     esac

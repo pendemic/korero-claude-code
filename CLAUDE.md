@@ -336,8 +336,9 @@ korero --debate-health           # Analyze debate fatigue metrics (last 10 debat
 korero --implementation-status   # Show which winning ideas are implemented vs pending
 korero --impl-status             # Short alias
 
-# Idea search
+# Idea search and consolidation
 korero --search-ideas "caching"  # Search past ideas by keyword
+korero --consolidate-ideas       # Generate consolidation report: quick wins, clusters, priority matrix
 
 # Signal / shutdown history
 korero --shutdown-history        # Show past shutdown events (signals, budget, circuit)
@@ -443,7 +444,7 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--output-format json|text` - Set Claude output format (default: json)
 - `--allowed-tools "Write,Read,Bash(git *)"` - Restrict allowed tools
 - `--no-continue` - Disable session continuity, start fresh each loop
-- `--help <topic>` - Show detailed help on a specific topic (presets, circuit-breaker, session, tools, modes, exit-detection, rate-limiting, config)
+- `--help <topic>` - Show detailed help on a specific topic (presets, circuit-breaker, session, tools, modes, exit-detection, rate-limiting, config, consolidate-ideas)
 - `--start-idea N` - Create a feature branch from winning idea N and start coding loop
 - `--quickstart` - Quick 3-question setup wizard for new users (mode, project description, permissions)
 - `--validate-config` - Verbose configuration validation with per-field success/error checkmarks
@@ -457,12 +458,26 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--debate-health` - Analyze debate fatigue across last 10 debates; checks confidence, timeout rate, consensus rate against thresholds; displays `DEBATE FATIGUE DETECTED` box with recommendations if triggered
 - `--implementation-status` / `--impl-status` - Show winning idea implementation progress: summary, progress bar, implemented vs pending lists, next-up suggestion; parses fix_plan.md
 - `--search-ideas KEYWORD` / `--find-ideas KEYWORD` - Search past ideas by keyword (case-insensitive), shows metadata and matching context
+- `--consolidate-ideas [--output FILE]` - Generate structured consolidation report from IDEAS.md: Quick Wins (S effort), Medium Effort (M), Theme Clusters by category, Priority Matrix (P1/P2/P3), Category Distribution bar chart; optionally write to file
 - `--shutdown-history [N]` - Show history of past shutdown events (SIGINT, SIGTERM, budget, circuit); reads `.korero/.signal_log.json` (default: last 20)
 - `--rate-status` / `--rate` / `-r` - Show visual rate limit status dashboard: call count, ASCII bar, remaining calls, time until reset
 - `--troubleshoot` / `--troubleshooting` - Show categorized troubleshooting quick reference with common issues and fix commands
 - `--diagnose` - Interactive troubleshooting wizard with guided yes/no decision tree for diagnosing issues
 - `--codex-timeout NUM` - Set Codex execution timeout in minutes (1-120, heavy modes only)
 - `--debate-rounds NUM` - Set number of cross-AI debate rounds (1-3, heavy modes only)
+
+**Typo Correction:**
+When an unknown flag is passed, Korero uses `levenshtein_distance()` to find the closest valid option and suggests it:
+```
+$ korero --stauts
+Unknown option: --stauts
+
+Did you mean: --status?
+
+Run 'korero --help' for usage information.
+```
+Suggestions only appear when edit distance ≤ threshold (2 for short flags, 3 for medium, 4 for long).
+Functions: `levenshtein_distance(s1, s2)`, `suggest_similar_option(flag)` — pure bash, no external dependencies.
 
 **Loop Context:**
 Each loop iteration injects context via `build_loop_context()`:
@@ -862,9 +877,9 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (1136 tests across 31 files)
+### Test Files (1192 tests across 33 files)
 
-**Unit Tests (1000 tests):**
+**Unit Tests (1056 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
@@ -894,6 +909,8 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_korero_config.bats` | 9 | Configuration management |
 | `test_korero_status.bats` | 11 | Status reporting |
 | `test_cost_estimator.bats` | 30 | API cost estimation: token estimation, cost calculation, log scanning, report display, per-loop cost recording |
+| `test_consolidation.bats` | 31 | Idea consolidation report: consolidate_ideas, _consolidate_by_effort, _consolidate_category_clusters, _consolidate_priority_matrix, _consolidate_category_distribution; no-IDEAS.md error, --output flag, empty states |
+| `test_typo_suggestion.bats` | 25 | Typo correction: levenshtein_distance (identical/substitution/transposition/empty/different), suggest_similar_option (status, monitor, help, validate, unrelated), CLI integration (Did you mean, exit code, help hint) |
 
 **Integration Tests (136 tests):**
 
@@ -927,6 +944,8 @@ bats tests/unit/test_heavy_mode.bats
 bats tests/unit/test_cost_estimator.bats
 bats tests/unit/test_signal_handling.bats
 bats tests/unit/test_prompt_templates.bats
+bats tests/unit/test_consolidation.bats
+bats tests/unit/test_typo_suggestion.bats
 npm run test:templates
 ```
 
