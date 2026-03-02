@@ -31,7 +31,7 @@ fi
 
 # Configuration
 # Korero-specific files live in .korero/ subfolder
-KORERO_DIR=".korero"
+KORERO_DIR="${KORERO_DIR:-.korero}"
 PROMPT_FILE="$KORERO_DIR/PROMPT.md"
 LOG_DIR="$KORERO_DIR/logs"
 DOCS_DIR="$KORERO_DIR/docs/generated"
@@ -2599,7 +2599,8 @@ Options:
     --health-check          Validate environment prerequisites (Claude CLI, jq, git, network)
     --cost-estimate         Estimate API costs from loop logs and display report
     --cost-history          Show per-loop cost breakdown with session totals
-    --debate-stats          Show debate quality statistics (heavy modes)
+    --debate-stats          Show debate quality statistics + win distribution (heavy modes)
+    --implementation-status / --impl-status  Show winning idea implementation progress
     --search-ideas KEYWORD  Search past ideas by keyword (case-insensitive)
     --shutdown-history      Show history of past shutdowns (signals, budget, circuit)
     --rate-status / --rate / -r  Show visual rate limit status dashboard
@@ -3127,9 +3128,14 @@ show_cost_history() {
 }
 
 # Show debate quality statistics from .korero/.debate_quality.json
+# Also displays aggregate win distribution via display_debate_stats() (Loop 35)
 show_debate_stats() {
     local korero_dir="${KORERO_DIR:-.korero}"
     local quality_file="$korero_dir/.debate_quality.json"
+
+    # Show transcript-based aggregate stats first (Loop 35)
+    source "$SCRIPT_DIR/lib/debate_transcript.sh" 2>/dev/null || true
+    display_debate_stats
 
     if [[ ! -f "$quality_file" ]]; then
         echo "No debate quality data found. Run heavy mode loops first."
@@ -3137,7 +3143,7 @@ show_debate_stats() {
     fi
 
     if ! command -v jq &>/dev/null; then
-        echo "jq is required to display debate statistics."
+        echo "jq is required to display quality metrics."
         return 1
     fi
 
@@ -3186,6 +3192,116 @@ show_debate_stats() {
     echo ""
     echo "╚════════════════════════════════════════════════════════════╝"
     echo ""
+}
+
+# =============================================================================
+# IDEA IMPLEMENTATION STATUS (Loop 37)
+# =============================================================================
+
+# Display idea implementation status dashboard
+# Parses fix_plan.md's Loop Checkpoints section and Winning Ideas Tracker table
+# Usage: show_implementation_status
+show_implementation_status() {
+    local fix_plan="${KORERO_DIR:-.korero}/fix_plan.md"
+
+    if [[ ! -f "$fix_plan" ]]; then
+        echo "No fix_plan.md found. Run korero-enable first."
+        return 1
+    fi
+
+    # Parse winning ideas tracker: rows like | NN | Title | Type | Category | Agent | Status |
+    declare -A idea_titles
+    declare -A idea_categories
+    while IFS='|' read -r _ loop title _ category _; do
+        loop=$(echo "$loop" | tr -d '[:space:]')
+        title=$(echo "$title" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+        category=$(echo "$category" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+        [[ "$loop" =~ ^[0-9]+$ ]] || continue
+        idea_titles["$loop"]="$title"
+        idea_categories["$loop"]="$category"
+    done < <(grep -E '^\| *[0-9]+ *\|' "$fix_plan" 2>/dev/null)
+
+    # Parse Loop Checkpoint checkboxes
+    # Format:
+    #   ### Loop N
+    #   - [x] Implementation   (completed)
+    #   - [ ] Implementation   (pending)
+    local implemented=()
+    local pending=()
+    local current_loop=""
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^###[[:space:]]Loop[[:space:]]([0-9]+) ]]; then
+            current_loop="${BASH_REMATCH[1]}"
+        elif [[ -n "$current_loop" && "$line" =~ [Ii]mplementation ]]; then
+            if [[ "$line" =~ \[x\] ]]; then
+                implemented+=("$current_loop")
+            else
+                pending+=("$current_loop")
+            fi
+            current_loop=""
+        fi
+    done < "$fix_plan"
+
+    local total=$(( ${#implemented[@]} + ${#pending[@]} ))
+    local impl_count=${#implemented[@]}
+    local pct=0
+    [[ $total -gt 0 ]] && pct=$(( impl_count * 100 / total ))
+
+    # Build progress bar (20 chars wide)
+    local filled=$(( pct / 5 ))
+    local empty=$(( 20 - filled ))
+    local bar=""
+    local i
+    for (( i=0; i<filled; i++ )); do bar="${bar}█"; done
+    for (( i=0; i<empty; i++ ));  do bar="${bar}░"; done
+
+    echo ""
+    echo "═══════════════════════════════════════════════════════════"
+    echo "           IDEA IMPLEMENTATION STATUS"
+    echo "═══════════════════════════════════════════════════════════"
+    echo ""
+    printf "SUMMARY: %d/%d implemented (%d%%)\n" "$impl_count" "$total" "$pct"
+    echo ""
+    printf "PROGRESS BAR: [%s] %d%%\n" "$bar" "$pct"
+    echo ""
+
+    # Implemented ideas
+    if [[ ${#implemented[@]} -gt 0 ]]; then
+        printf "IMPLEMENTED (%d):\n" "${#implemented[@]}"
+        for loop in "${implemented[@]}"; do
+            printf "  ✓ Loop %s: %s\n" "$loop" "${idea_titles[$loop]:-Unknown}"
+        done
+        echo ""
+    fi
+
+    # Pending ideas (show first 5, summarise rest)
+    if [[ ${#pending[@]} -gt 0 ]]; then
+        printf "PENDING (%d):\n" "${#pending[@]}"
+        local count=0
+        for loop in "${pending[@]}"; do
+            printf "  ○ Loop %s: %s\n" "$loop" "${idea_titles[$loop]:-Unknown}"
+            count=$(( count + 1 ))
+            [[ $count -ge 5 ]] && break
+        done
+        if [[ ${#pending[@]} -gt 5 ]]; then
+            printf "  ... (%d more)\n" "$(( ${#pending[@]} - 5 ))"
+        fi
+        echo ""
+    fi
+
+    # Next up
+    if [[ ${#pending[@]} -gt 0 ]]; then
+        local next_loop="${pending[0]}"
+        echo "NEXT UP (oldest pending):"
+        printf "  → Loop %s: %s\n" "$next_loop" "${idea_titles[$next_loop]:-Unknown}"
+        printf "    Category: %s\n" "${idea_categories[$next_loop]:-Unknown}"
+    fi
+
+    echo ""
+    echo "═══════════════════════════════════════════════════════════"
+    echo ""
+    return 0
 }
 
 # Example Gallery — curated workflow examples for new users
@@ -3802,6 +3918,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --debate-stats|--quality)
             show_debate_stats
+            exit $?
+            ;;
+        --implementation-status|--impl-status)
+            show_implementation_status
             exit $?
             ;;
         --shutdown-history)

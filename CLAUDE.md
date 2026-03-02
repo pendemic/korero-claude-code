@@ -133,6 +133,8 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - `get_latest_debate_loop()` - Returns highest loop number from debates directory
    - `show_debate_transcript(loop_num|"latest")` - Displays transcript content; resolves "latest" automatically
    - `list_debate_transcripts()` - Lists all available transcripts with status indicators
+   - `get_debate_stats()` — Scans `.korero/debates/loop_*.md` and returns compact JSON: total, completed, timed_out, claude_wins, codex_wins, claude_pct, codex_pct, avg_confidence, high_conf_count, low_conf_count (Loop 35)
+   - `display_debate_stats()` — Renders formatted dashboard from `get_debate_stats()`: win distribution bars, confidence analysis; called by `--debate-stats` alongside quality metrics (Loop 35)
 
 10. **lib/health_check.sh** - Environment prerequisite validation
     - `check_bash_version()` - Validates Bash 4.0+ requirement; shows platform-specific upgrade instructions; returns 3 on failure
@@ -303,7 +305,11 @@ korero --cost-estimate           # Show estimated API costs from logs
 korero --cost-history            # Show per-loop cost breakdown with session totals
 
 # Debate quality (heavy modes)
-korero --debate-stats            # Show debate quality statistics across loops
+korero --debate-stats            # Show win distribution + quality statistics across loops
+
+# Implementation status
+korero --implementation-status   # Show which winning ideas are implemented vs pending
+korero --impl-status             # Short alias
 
 # Idea search
 korero --search-ideas "caching"  # Search past ideas by keyword
@@ -422,7 +428,8 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--health-check` - Validate all prerequisites (Claude CLI, jq, git, permissions, network, config)
 - `--cost-estimate` - Estimate API costs from loop log files and display formatted report
 - `--cost-history` / `--costs` - Show per-loop cost breakdown with session totals from `cost_history.json`
-- `--debate-stats` / `--quality` - Show debate quality statistics (heavy modes); reads from `.korero/.debate_quality.json`
+- `--debate-stats` / `--quality` - Show win distribution dashboard (from `.korero/debates/` transcripts) + quality metrics (from `.korero/.debate_quality.json`)
+- `--implementation-status` / `--impl-status` - Show winning idea implementation progress: summary, progress bar, implemented vs pending lists, next-up suggestion; parses fix_plan.md
 - `--search-ideas KEYWORD` / `--find-ideas KEYWORD` - Search past ideas by keyword (case-insensitive), shows metadata and matching context
 - `--shutdown-history [N]` - Show history of past shutdown events (SIGINT, SIGTERM, budget, circuit); reads `.korero/.signal_log.json` (default: last 20)
 - `--rate-status` / `--rate` / `-r` - Show visual rate limit status dashboard: call count, ASCII bar, remaining calls, time until reset
@@ -814,9 +821,9 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (1034 tests across 30 files)
+### Test Files (1056 tests across 30 files)
 
-**Unit Tests (898 tests):**
+**Unit Tests (920 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
@@ -830,10 +837,10 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_task_sources.bats` | 23 | Task sources (beads, GitHub, PRD extraction, normalization) |
 | `test_korero_enable.bats` | 22 | Korero enable integration tests (wizard, CI version, JSON output) |
 | `test_wizard_utils.bats` | 20 | Wizard utility functions (stdout/stderr separation, prompt functions) |
-| `test_ideation_mode.bats` | 66 | Multi-agent ideation: agent generation, context-aware templates, idea storage, integration |
+| `test_ideation_mode.bats` | 75 | Multi-agent ideation: agent generation, context-aware templates, idea storage, integration, implementation status |
 | `test_permission_presets.bats` | 16 | Permission presets: expansion, mixed tools, integration with CLI args |
 | `test_korero_ideas.bats` | 31 | Ideas browsing, search, get_idea_title, sanitize_branch_name |
-| `test_debate_transcript.bats` | 18 | Debate transcript: init, append, finalize, get_latest, show, list |
+| `test_debate_transcript.bats` | 31 | Debate transcript: init, append, finalize, get_latest, show, list, get_debate_stats, display_debate_stats |
 | `test_health_check.bats` | 28 | Health check: tool detection, git config, permissions, network, config, CLI flag, bash version guard |
 | `test_codex_adapter.bats` | 35 | Codex CLI adapter: command building, auth checks, response parsing, proposal extraction, fallback detection |
 | `test_circuit_breaker.bats` | 16 | Budget Alert System: check_budget_threshold, get_budget_percentage, prompt_budget_exceeded |
