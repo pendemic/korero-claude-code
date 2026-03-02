@@ -435,7 +435,32 @@ format_duration() {
 }
 
 # Print visual progress indicator
+# Get API call budget status color based on current usage vs limit
+# Usage: get_budget_status <current_calls> <max_calls>
+# Returns: "green", "yellow", or "red" on stdout
+# Threshold configurable via KORERO_BUDGET_ALERT (default 80)
+get_budget_status() {
+    local current_calls="$1"
+    local max_calls="$2"
+    local alert_threshold="${KORERO_BUDGET_ALERT:-80}"
+
+    [[ $max_calls -le 0 ]] && echo "green" && return
+
+    local percentage=$(( current_calls * 100 / max_calls ))
+    if [[ $percentage -ge 95 ]]; then
+        echo "red"
+    elif [[ $percentage -ge $alert_threshold ]]; then
+        echo "yellow"
+    else
+        echo "green"
+    fi
+}
+
 # Usage: print_progress <loop_number> <phase_name> <phase_percentage>
+# Colors the progress bar based on API call budget consumption:
+#   green  = normal (0-79% of KORERO_BUDGET_ALERT threshold)
+#   yellow = alert  (≥KORERO_BUDGET_ALERT%, default 80%)
+#   red    = critical (≥95% of max calls)
 print_progress() {
     local loop_num=$1
     local phase_name=$2
@@ -454,8 +479,32 @@ print_progress() {
     for ((i=0; i<filled; i++)); do bar+="█"; done
     for ((i=0; i<empty; i++)); do bar+="░"; done
 
+    # Determine color based on API call budget usage (graceful if vars not set)
+    local current_calls=0
+    local max_calls="${MAX_CALLS_PER_HOUR:-100}"
+    if [[ -n "${CALL_COUNT_FILE:-}" ]]; then
+        current_calls=$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")
+    fi
+
+    local budget_color="green"
+    if declare -f get_budget_status > /dev/null 2>&1; then
+        budget_color=$(get_budget_status "$current_calls" "$max_calls")
+    fi
+
+    local bar_color="${BLUE:-}"
+    case "$budget_color" in
+        red)    bar_color="${RED:-}" ;;
+        yellow) bar_color="${YELLOW:-}" ;;
+    esac
+
+    # Append call usage to phase name when at alert level
+    local phase_display="$phase_name"
+    if [[ "$budget_color" != "green" ]]; then
+        phase_display="${phase_name} | Calls: ${current_calls}/${max_calls}"
+    fi
+
     # Print with colors
-    echo -e "${BLUE}[${bar}] ${percent}%${NC} | Loop ${loop_num} | Phase: ${phase_name}"
+    echo -e "${bar_color}[${bar}] ${percent}%${NC:-} | Loop ${loop_num} | Phase: ${phase_display}"
 }
 
 # Record loop duration and compute rolling average
@@ -795,6 +844,7 @@ show_rate_limit_prediction() {
 wait_for_reset() {
     local calls_made=$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")
     log_status "WARN" "Rate limit reached ($calls_made/$MAX_CALLS_PER_HOUR). Waiting for reset..."
+    suggest_help_for_error "rate_limit"
     
     # Calculate time until next hour
     local current_minute=$(date +%M)
@@ -2375,6 +2425,7 @@ main() {
             record_shutdown_signal "$SHUTDOWN_REASON_CIRCUIT" "$loop_count" "circuit_breaker_open"
             update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "circuit_breaker_open" "halted" "stagnation_detected"
             log_status "ERROR" "🛑 Circuit breaker has opened - execution halted"
+            suggest_help_for_error "circuit_breaker"
             break
         fi
 
@@ -2466,6 +2517,7 @@ main() {
 
                 # If we get here, user declined or fix failed - halt the loop
                 log_status "ERROR" "🚫 Permission denied - halting loop"
+                suggest_help_for_error "permission_denied"
                 reset_session "permission_denied"
                 update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "permission_denied" "halted" "permission_denied"
                 echo ""
@@ -2520,7 +2572,7 @@ main() {
             reset_session "circuit_breaker_trip"
             update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "circuit_breaker_open" "halted" "stagnation_detected"
             log_status "ERROR" "🛑 Circuit breaker has opened - halting loop"
-            log_status "INFO" "Run 'korero --reset-circuit' to reset the circuit breaker after addressing issues"
+            suggest_help_for_error "circuit_breaker"
             break
         elif [ $exec_result -eq 2 ]; then
             # API 5-hour limit reached - handle specially
@@ -3077,6 +3129,45 @@ search_ideas() {
         echo "Found $matches idea files matching, $index_matches lines in IDEAS.md"
     fi
     echo ""
+}
+
+# Error-type to help-topic mapping (used by suggest_help_for_error)
+declare -A _KORERO_HELP_TOPIC_MAP=(
+    ["circuit_breaker"]="circuit-breaker"
+    ["rate_limit"]="rate-limiting"
+    ["permission_denied"]="presets"
+    ["session_expired"]="session"
+    ["config_invalid"]="config"
+    ["codex_auth"]="modes"
+    ["debate_timeout"]="modes"
+    ["budget_exceeded"]="rate-limiting"
+)
+
+# Error-type to suggested recovery action mapping
+declare -A _KORERO_HELP_ACTION_MAP=(
+    ["circuit_breaker"]="korero --reset-circuit"
+    ["rate_limit"]="--calls NUM  (increase hourly limit)"
+    ["permission_denied"]="Add required tool to ALLOWED_TOOLS in .korerorc"
+    ["session_expired"]="korero --reset-session"
+    ["config_invalid"]="korero --validate-config"
+    ["codex_auth"]="codex login"
+    ["debate_timeout"]="--codex-timeout 30  (increase Codex timeout)"
+    ["budget_exceeded"]="korero --cost-history  (review session costs)"
+)
+
+# Display a contextual help tip for the given error type (to stderr)
+# Usage: suggest_help_for_error "circuit_breaker"
+# Outputs nothing for unknown error types (non-disruptive)
+suggest_help_for_error() {
+    local error_type="$1"
+    local help_topic="${_KORERO_HELP_TOPIC_MAP[$error_type]:-}"
+    local action="${_KORERO_HELP_ACTION_MAP[$error_type]:-}"
+
+    [[ -z "$help_topic" ]] && return 0
+
+    echo "" >&2
+    echo "Tip: Run 'korero --help ${help_topic}' for more information" >&2
+    [[ -n "$action" ]] && echo "     ${action}" >&2
 }
 
 # Calculate Levenshtein (edit) distance between two strings

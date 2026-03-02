@@ -529,6 +529,7 @@ KORERO_MODE="idea"               # Loop mode: coding, idea, heavy-coding, or hea
 PROJECT_SUBJECT="data analysis"  # Subject for agent generation
 DOMAIN_AGENT_COUNT=3             # Number of domain agents
 MAX_LOOPS="continuous"           # Loop limit: number or continuous
+KORERO_BUDGET_ALERT=80           # API call % threshold for yellow progress bar (default 80)
 ```
 
 **`.korerorc` Heavy Mode Fields** (only used for `heavy-coding` / `heavy-idea`):
@@ -779,6 +780,44 @@ fi
 - `CB_PERMISSION_DENIAL_THRESHOLD=2` - Open circuit after 2 loops with permission denials (Issue #101)
 - `CB_CODEX_FAILURE_THRESHOLD=3` - Open circuit after 3 consecutive Codex failures (heavy modes only)
 
+### Contextual Help Suggestions
+
+When an error halts the loop, Korero appends a relevant `--help` topic tip to stderr:
+
+```
+Error: Circuit breaker opened due to stagnation
+
+Tip: Run 'korero --help circuit-breaker' for more information
+     korero --reset-circuit
+```
+
+Error types and their help topics:
+| Error type | Help topic | Recovery action |
+|---|---|---|
+| `circuit_breaker` | `circuit-breaker` | `korero --reset-circuit` |
+| `rate_limit` | `rate-limiting` | `--calls NUM` |
+| `permission_denied` | `presets` | Edit `ALLOWED_TOOLS` in `.korerorc` |
+| `session_expired` | `session` | `korero --reset-session` |
+| `config_invalid` | `config` | `korero --validate-config` |
+| `codex_auth` | `modes` | `codex login` |
+| `budget_exceeded` | `rate-limiting` | `korero --cost-history` |
+
+**Key function** (in `korero_loop.sh`): `suggest_help_for_error(error_type)` — looks up topic/action from `_KORERO_HELP_TOPIC_MAP` / `_KORERO_HELP_ACTION_MAP`; outputs nothing for unknown types (non-disruptive).
+
+### API Call Budget Alert Progress Bar
+
+The `print_progress()` bar changes color based on API call usage:
+- **Blue** (0-79%): normal operation
+- **Yellow** (≥`KORERO_BUDGET_ALERT`%, default 80%): alert — calls count appended
+- **Red** (≥95%): critical — calls count appended
+
+```bash
+# .korerorc
+KORERO_BUDGET_ALERT=80  # percentage threshold for yellow warning (default 80)
+```
+
+**Key function**: `get_budget_status(current_calls, max_calls)` — returns `green`, `yellow`, or `red`; reads `KORERO_BUDGET_ALERT` (default 80); red threshold fixed at 95%.
+
 ### Budget Alert System
 
 Prevents unexpected API bills by pausing when estimated costs exceed a configurable threshold:
@@ -877,9 +916,9 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (1192 tests across 33 files)
+### Test Files (1227 tests across 35 files)
 
-**Unit Tests (1056 tests):**
+**Unit Tests (1091 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
@@ -911,6 +950,8 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_cost_estimator.bats` | 30 | API cost estimation: token estimation, cost calculation, log scanning, report display, per-loop cost recording |
 | `test_consolidation.bats` | 31 | Idea consolidation report: consolidate_ideas, _consolidate_by_effort, _consolidate_category_clusters, _consolidate_priority_matrix, _consolidate_category_distribution; no-IDEAS.md error, --output flag, empty states |
 | `test_typo_suggestion.bats` | 25 | Typo correction: levenshtein_distance (identical/substitution/transposition/empty/different), suggest_similar_option (status, monitor, help, validate, unrelated), CLI integration (Did you mean, exit code, help hint) |
+| `test_contextual_help.bats` | 17 | Contextual help: suggest_help_for_error for circuit_breaker/rate_limit/permission_denied/session_expired/config_invalid/codex_auth/budget_exceeded; empty output for unknown types; exit 0 always |
+| `test_budget_alert.bats` | 18 | API call budget alerts: get_budget_status (green/yellow/red thresholds, custom KORERO_BUDGET_ALERT, zero max), print_progress with budget coloring (Calls appended at alert/critical, hidden at normal) |
 
 **Integration Tests (136 tests):**
 
@@ -946,6 +987,8 @@ bats tests/unit/test_signal_handling.bats
 bats tests/unit/test_prompt_templates.bats
 bats tests/unit/test_consolidation.bats
 bats tests/unit/test_typo_suggestion.bats
+bats tests/unit/test_contextual_help.bats
+bats tests/unit/test_budget_alert.bats
 npm run test:templates
 ```
 
