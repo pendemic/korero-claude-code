@@ -191,6 +191,9 @@ The system uses a modular architecture with reusable components in the `lib/` di
       - `display_fatigue_warning(avg_conf, timeout_rate, consensus_rate, rec...)` — Displays `DEBATE FATIGUE DETECTED` box with per-metric status (✓/⚠) and recommendations
     - **Verdict Explanation** (Loop 47): Shows structured explanation of why the winner was selected after each debate
       - `display_verdict_explanation([result_file])` — Reads `.korero/.debate_result`, displays winner/confidence/title/rationale/runner-up insight in formatted box; called automatically after each debate
+    - **Verdict Confidence Scoring** (Loop 60): Structured confidence rubric in judge prompt + runtime confidence accessor
+      - `get_debate_confidence()` — Returns 0-100 integer confidence from `.korero/.debate_result` (jq with sed fallback); defaults to 50 if missing
+      - Low-confidence warning (≤50%) automatically displayed after verdict explanation: warns user to review both proposals manually
 
 13. **lib/cost_estimator.sh** - API cost estimation from loop logs
     - `estimate_tokens_from_file(file_path)` - Estimates token count from file size (4 chars/token)
@@ -339,6 +342,7 @@ korero --impl-status             # Short alias
 # Idea search and consolidation
 korero --search-ideas "caching"  # Search past ideas by keyword
 korero --consolidate-ideas       # Generate consolidation report: quick wins, clusters, priority matrix
+korero --idea-stats              # Ideation quality retrospective: type balance, agents, categories
 
 # Signal / shutdown history
 korero --shutdown-history        # Show past shutdown events (signals, budget, circuit)
@@ -444,7 +448,7 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--output-format json|text` - Set Claude output format (default: json)
 - `--allowed-tools "Write,Read,Bash(git *)"` - Restrict allowed tools
 - `--no-continue` - Disable session continuity, start fresh each loop
-- `--help <topic>` - Show detailed help on a specific topic (presets, circuit-breaker, session, tools, modes, exit-detection, rate-limiting, config, consolidate-ideas)
+- `--help <topic>` - Show detailed help on a specific topic (presets, circuit-breaker, session, tools, modes, exit-detection, rate-limiting, config, consolidate-ideas, idea-stats)
 - `--start-idea N` - Create a feature branch from winning idea N and start coding loop
 - `--quickstart` - Quick 3-question setup wizard for new users (mode, project description, permissions)
 - `--validate-config` - Verbose configuration validation with per-field success/error checkmarks
@@ -459,6 +463,7 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--implementation-status` / `--impl-status` - Show winning idea implementation progress: summary, progress bar, implemented vs pending lists, next-up suggestion; parses fix_plan.md
 - `--search-ideas KEYWORD` / `--find-ideas KEYWORD` - Search past ideas by keyword (case-insensitive), shows metadata and matching context
 - `--consolidate-ideas [--output FILE]` - Generate structured consolidation report from IDEAS.md: Quick Wins (S effort), Medium Effort (M), Theme Clusters by category, Priority Matrix (P1/P2/P3), Category Distribution bar chart; optionally write to file
+- `--idea-stats` - Show ideation quality retrospective: type balance (UI vs NF with 60/40 target), most productive agents (top 5 by wins), category coverage, recent trends (last 10 loops)
 - `--shutdown-history [N]` - Show history of past shutdown events (SIGINT, SIGTERM, budget, circuit); reads `.korero/.signal_log.json` (default: last 20)
 - `--rate-status` / `--rate` / `-r` - Show visual rate limit status dashboard: call count, ASCII bar, remaining calls, time until reset
 - `--troubleshoot` / `--troubleshooting` - Show categorized troubleshooting quick reference with common issues and fix commands
@@ -550,6 +555,8 @@ Heavy modes run Claude Code and OpenAI Codex CLI in parallel each loop, then orc
 3. **Round 3: Judgment** (Claude only) — Claude evaluates all 6 artifacts and selects a winner
 
 **Scoring Rubric:** User Impact (30%), Technical Feasibility (25%), Debate Performance (20%), Implementation Clarity (15%), Risk Management (10%)
+
+**Verdict Confidence Rubric:** The judge rates confidence on a 0-100 scale: 90-100 (decisive victory), 70-89 (solid win), 50-69 (close call), 0-49 (very close / human review recommended). Low confidence (≤50%) triggers an automatic warning suggesting manual review of both proposals.
 
 **Fallback Behavior:**
 - If one AI fails, the surviving AI's proposal is used directly (debate skipped)
@@ -916,9 +923,9 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (1227 tests across 35 files)
+### Test Files (1259 tests across 36 files)
 
-**Unit Tests (1091 tests):**
+**Unit Tests (1124 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
@@ -939,7 +946,7 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_health_check.bats` | 28 | Health check: tool detection, git config, permissions, network, config, CLI flag, bash version guard |
 | `test_codex_adapter.bats` | 35 | Codex CLI adapter: command building, auth checks, response parsing, proposal extraction, fallback detection |
 | `test_circuit_breaker.bats` | 16 | Budget Alert System: check_budget_threshold, get_budget_percentage, prompt_budget_exceeded |
-| `test_cross_ai_debate.bats` | 96 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling, progress indicators, round progress bar, codex fallback integration, debate quality metrics, parallel critique timing, debate fatigue tracking and analysis, verdict explanation display |
+| `test_cross_ai_debate.bats` | 104 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling, progress indicators, round progress bar, codex fallback integration, debate quality metrics, parallel critique timing, debate fatigue tracking and analysis, verdict explanation display, confidence scoring, low-confidence warning |
 | `test_signal_handling.bats` | 23 | Portable signal handling: record_shutdown_signal, show_shutdown_history, get_shutdown_count, get_last_shutdown_reason, install_signal_handlers, reason constants |
 | `test_prompt_templates.bats` | 44 | Template validation: existence, structure (KORERO_STATUS, EXIT_SIGNAL), shell variable escaping, markdown code block balance, heavy mode placeholders ({AI_NAME}, {OWN_PROPOSAL}, {CRITIQUE}, {CLAUDE_PROPOSAL}, {CODEX_PROPOSAL}), korerorc.template fields |
 | `test_heavy_mode.bats` | 31 | Heavy mode integration: .korerorc validation, CLI flags, health checks, circuit breaker, enable, CODEX_FALLBACK validation |
@@ -952,6 +959,7 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_typo_suggestion.bats` | 25 | Typo correction: levenshtein_distance (identical/substitution/transposition/empty/different), suggest_similar_option (status, monitor, help, validate, unrelated), CLI integration (Did you mean, exit code, help hint) |
 | `test_contextual_help.bats` | 17 | Contextual help: suggest_help_for_error for circuit_breaker/rate_limit/permission_denied/session_expired/config_invalid/codex_auth/budget_exceeded; empty output for unknown types; exit 0 always |
 | `test_budget_alert.bats` | 18 | API call budget alerts: get_budget_status (green/yellow/red thresholds, custom KORERO_BUDGET_ALERT, zero max), print_progress with budget coloring (Calls appended at alert/critical, hidden at normal) |
+| `test_idea_stats.bats` | 25 | Idea quality retrospective: show_idea_stats (type balance, agent productivity, category coverage, recent trends), --idea-stats CLI flag, --help idea-stats topic, edge cases (single idea, missing fields) |
 
 **Integration Tests (136 tests):**
 
@@ -989,6 +997,7 @@ bats tests/unit/test_consolidation.bats
 bats tests/unit/test_typo_suggestion.bats
 bats tests/unit/test_contextual_help.bats
 bats tests/unit/test_budget_alert.bats
+bats tests/unit/test_idea_stats.bats
 npm run test:templates
 ```
 

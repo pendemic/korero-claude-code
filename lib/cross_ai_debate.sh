@@ -621,6 +621,25 @@ get_debate_winner() {
     echo "${winner:-claude}"
 }
 
+# Get the confidence score from the last debate result
+# Returns: 0-100 integer on stdout (default 50 if missing)
+get_debate_confidence() {
+    local result_file="${DEBATE_RESULT_FILE:-${KORERO_DIR:-.korero}/.debate_result}"
+    if [[ ! -f "$result_file" ]]; then
+        echo "50"
+        return 1
+    fi
+
+    local confidence
+    if command -v jq &>/dev/null; then
+        confidence=$(jq -r '.confidence // 50' "$result_file" 2>/dev/null || echo "50")
+    else
+        confidence=$(grep -o '"confidence"[[:space:]]*:[[:space:]]*[0-9]*' "$result_file" | head -1 | grep -oE '[0-9]+$')
+        confidence="${confidence:-50}"
+    fi
+    echo "$confidence"
+}
+
 # Orchestrate a full cross-AI debate
 # Runs all 3 rounds: mutual critique, defense, final judgment
 # Arguments:
@@ -1265,6 +1284,14 @@ display_verdict_explanation() {
         echo ""
     fi
 
+    # Low confidence warning (Loop 60)
+    local conf_num="${confidence:-0}"
+    if [[ "$conf_num" =~ ^[0-9]+$ ]] && [[ "$conf_num" -le 50 ]]; then
+        echo "WARNING: Low confidence (${conf_num}%) — This was a close debate."
+        echo "  Consider reviewing both proposals manually."
+        echo ""
+    fi
+
     echo "════════════════════════════════════════════════════════════"
     echo ""
     return 0
@@ -1280,6 +1307,7 @@ export -f build_defense_prompt
 export -f build_judge_prompt
 export -f parse_debate_verdict
 export -f get_debate_winner
+export -f get_debate_confidence
 export -f run_cross_ai_debate
 export -f calculate_length_ratio
 export -f calculate_coverage

@@ -2656,6 +2656,7 @@ Options:
     --implementation-status / --impl-status  Show winning idea implementation progress
     --search-ideas KEYWORD  Search past ideas by keyword (case-insensitive)
     --consolidate-ideas     Generate consolidation report: quick wins, clusters, priority matrix
+    --idea-stats            Show ideation quality retrospective: type balance, agents, categories
     --shutdown-history      Show history of past shutdowns (signals, budget, circuit)
     --rate-status / --rate / -r  Show visual rate limit status dashboard
     --troubleshoot          Show troubleshooting quick reference for common issues
@@ -3229,7 +3230,7 @@ suggest_similar_option() {
         "--health-check" "--reset-circuit" "--circuit-status" "--reset-session"
         "--show-debate" "--consolidate-ideas" "--cost-estimate" "--cost-history"
         "--debate-stats" "--debate-health" "--implementation-status" "--impl-status"
-        "--search-ideas" "--find-ideas" "--shutdown-history" "--rate-status"
+        "--search-ideas" "--find-ideas" "--idea-stats" "--shutdown-history" "--rate-status"
         "--troubleshoot" "--diagnose" "--start-idea" "--no-continue"
         "--output-format" "--allowed-tools" "--session-expiry"
         "--calls" "--prompt" "--timeout" "--live" "--verbose"
@@ -3434,6 +3435,116 @@ consolidate_ideas() {
     else
         echo "$_report_body"
     fi
+}
+
+# Display ideation quality statistics from individual idea files
+# Analyzes: type balance, category coverage, agent productivity, recent trends
+# Usage: show_idea_stats
+show_idea_stats() {
+    local korero_dir="${KORERO_DIR:-.korero}"
+    local ideas_dir="$korero_dir/ideas"
+
+    if [[ ! -d "$ideas_dir" ]]; then
+        echo "No ideas directory found. Run ideation loops first." >&2
+        return 1
+    fi
+
+    # Count total ideas
+    local total=0
+    for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] && total=$(( total + 1 ))
+    done
+
+    if [[ $total -eq 0 ]]; then
+        echo "No idea files found in $ideas_dir." >&2
+        return 1
+    fi
+
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════╗"
+    echo "║  KORERO IDEATION STATISTICS                                ║"
+    echo "╚════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "Total Ideas Generated: $total"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    # Type balance
+    echo "TYPE BALANCE"
+    local ui_count=0 nf_count=0
+    for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] || continue
+        local ftype
+        ftype=$(grep '^\*\*Type:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Type:\*\*[[:space:]]*//')
+        case "$ftype" in
+            *Usability*) ui_count=$(( ui_count + 1 )) ;;
+            *Feature*)   nf_count=$(( nf_count + 1 )) ;;
+        esac
+    done
+    local ui_pct=0 nf_pct=0
+    if [[ $total -gt 0 ]]; then
+        ui_pct=$(( ui_count * 100 / total ))
+        nf_pct=$(( nf_count * 100 / total ))
+    fi
+    printf "  Usability Improvement: %d (%d%%)\n" "$ui_count" "$ui_pct"
+    printf "  New Feature:           %d (%d%%)\n" "$nf_count" "$nf_pct"
+    echo "  Target:                60% / 40%"
+    echo ""
+
+    # Agent productivity
+    echo "MOST PRODUCTIVE AGENTS"
+    for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] && grep '^\*\*Proposed by:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Proposed by:\*\*[[:space:]]*//'
+    done | sort | uniq -c | sort -rn | head -5 | \
+    while read -r count agent; do
+        [[ -z "$agent" ]] && continue
+        printf "  %-35s %d wins\n" "$agent" "$count"
+    done
+    echo ""
+
+    # Category coverage
+    echo "CATEGORY COVERAGE"
+    for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] && grep '^\*\*Category:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//'
+    done | sort | uniq -c | sort -rn | \
+    while read -r count category; do
+        [[ -z "$category" ]] && continue
+        printf "  %-35s %d wins\n" "$category" "$count"
+    done
+    echo ""
+
+    # Recent trends (last 10 loops)
+    local recent_files
+    recent_files=$(ls -1 "$ideas_dir"/loop_*_idea.md 2>/dev/null | sort -t_ -k2 -n | tail -10)
+    local recent_count=0
+    local recent_ui=0 recent_nf=0 recent_cats_unique
+    for f in $recent_files; do
+        [[ -f "$f" ]] || continue
+        recent_count=$(( recent_count + 1 ))
+        local ftype
+        ftype=$(grep '^\*\*Type:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Type:\*\*[[:space:]]*//')
+        case "$ftype" in
+            *Usability*) recent_ui=$(( recent_ui + 1 )) ;;
+            *Feature*)   recent_nf=$(( recent_nf + 1 )) ;;
+        esac
+    done
+    recent_cats_unique=$(for f in $recent_files; do
+        [[ -f "$f" ]] && grep '^\*\*Category:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//'
+    done | sort -u | grep -c . 2>/dev/null || echo 0)
+
+    local total_cats
+    total_cats=$(for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] && grep '^\*\*Category:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//'
+    done | sort -u | grep -c . 2>/dev/null || echo 0)
+
+    echo "RECENT TRENDS (last ${recent_count} loops)"
+    printf "  Category diversity: %d/%d unique categories\n" "$recent_cats_unique" "$total_cats"
+    printf "  Type balance:       %d UI / %d NF\n" "$recent_ui" "$recent_nf"
+    echo ""
+
+    echo "════════════════════════════════════════════════════════════"
+    echo "Tip: Use 'korero --consolidate-ideas' for implementation planning."
+    echo "════════════════════════════════════════════════════════════"
 }
 
 # Show per-loop cost history from cost_history.json
@@ -4123,6 +4234,26 @@ Create via:
   korero-enable-ci               Non-interactive (CI/scripts)
 TOPICEOF
             ;;
+        idea-stats)
+            cat << 'TOPICEOF'
+IDEA QUALITY RETROSPECTIVE
+===========================
+
+Show statistics about your ideation sessions:
+
+  korero --idea-stats
+
+The report includes:
+  Type Balance      UI vs New Feature ratio (target: 60%/40%)
+  Top Agents        Most productive agents by win count (top 5)
+  Category Coverage All categories with win counts
+  Recent Trends     Last 10 loops: diversity and type balance
+
+Use alongside:
+  korero --consolidate-ideas    Group ideas for sprint planning
+  korero --search-ideas KEYWORD Find ideas by keyword
+TOPICEOF
+            ;;
         consolidate-ideas|consolidation)
             cat << 'TOPICEOF'
 IDEA CONSOLIDATION REPORT
@@ -4151,8 +4282,8 @@ TOPICEOF
             echo "Unknown help topic: $topic"
             echo ""
             echo "Available topics:"
-            echo "  presets, circuit-breaker, session, tools,"
-            echo "  modes, exit-detection, rate-limiting, config, consolidate-ideas"
+            echo "  presets, circuit-breaker, session, tools, modes,"
+            echo "  exit-detection, rate-limiting, config, consolidate-ideas, idea-stats"
             echo ""
             echo "Usage: korero --help <topic>"
             return 1
@@ -4339,6 +4470,10 @@ while [[ $# -gt 0 ]]; do
             else
                 consolidate_ideas
             fi
+            exit $?
+            ;;
+        --idea-stats)
+            show_idea_stats
             exit $?
             ;;
         --troubleshoot|--troubleshooting)

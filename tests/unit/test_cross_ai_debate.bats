@@ -877,3 +877,106 @@ EOF
     [[ "$output" == *"CODEX"* ]]
     [[ "$output" == *"72%"* ]]
 }
+
+# ===== Loop 60: get_debate_confidence =====
+
+@test "get_debate_confidence returns 50 when no result file" {
+    rm -f "$KORERO_DIR/.debate_result"
+    run get_debate_confidence
+    [[ "$output" == "50" ]]
+}
+
+@test "get_debate_confidence reads confidence from result file" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "confidence": 85,
+  "title": "Test Idea"
+}
+EOF
+    run get_debate_confidence
+    [[ "$output" == "85" ]]
+}
+
+@test "get_debate_confidence defaults to 50 when field missing" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "title": "Test Idea"
+}
+EOF
+    run get_debate_confidence
+    [[ "$output" == "50" ]]
+}
+
+@test "get_debate_confidence returns low value correctly" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "codex",
+  "confidence": 30,
+  "title": "Close Call"
+}
+EOF
+    run get_debate_confidence
+    [[ "$output" == "30" ]]
+}
+
+# ===== Loop 60: display_verdict_explanation low confidence warning =====
+
+@test "display_verdict_explanation shows warning for low confidence (30%)" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "confidence": 30,
+  "title": "Close Call",
+  "rationale": "Very close debate.",
+  "runner_up_insight": "Both good"
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"WARNING"* ]]
+    [[ "$output" == *"close debate"* ]]
+}
+
+@test "display_verdict_explanation shows warning at confidence 50%" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "confidence": 50,
+  "title": "Borderline",
+  "rationale": "Barely won."
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"WARNING"* ]]
+}
+
+@test "display_verdict_explanation shows no warning at confidence 60%" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "confidence": 60,
+  "title": "Solid Win",
+  "rationale": "Clear advantage."
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"WARNING"* ]]
+}
+
+@test "display_verdict_explanation shows no warning at confidence 85%" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "confidence": 85,
+  "title": "Decisive Win",
+  "rationale": "Strong advantages."
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"WARNING"* ]]
+}
