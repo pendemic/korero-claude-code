@@ -811,3 +811,91 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"--fix-config"* ]]
 }
+
+# ===== --search-ideas flag =====
+
+@test "--search-ideas is listed in help text" {
+    run bash "$KORERO_SCRIPT" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--search-ideas"* ]]
+}
+
+@test "--search-ideas requires a keyword argument" {
+    run bash "$KORERO_SCRIPT" --search-ideas
+    [ "$status" -ne 0 ]
+}
+
+@test "--search-ideas returns 1 when no IDEAS.md exists" {
+    run bash "$KORERO_SCRIPT" --search-ideas "test"
+    [ "$status" -ne 0 ]
+}
+
+@test "--search-ideas shows header with keyword" {
+    # Create minimal ideas structure
+    mkdir -p .korero/ideas
+    echo "# IDEAS" > .korero/ideas/IDEAS.md
+    cat > .korero/ideas/loop_1_idea.md << 'IDEA_EOF'
+**Title:** Add caching layer
+**Type:** Feature
+**Category:** Performance
+**Proposed by:** System Architect
+
+Add a Redis caching layer to improve response times.
+IDEA_EOF
+
+    run bash "$KORERO_SCRIPT" --search-ideas "caching"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"IDEA SEARCH"* ]]
+    [[ "$output" == *"caching"* ]]
+}
+
+@test "--search-ideas finds matching ideas with metadata" {
+    mkdir -p .korero/ideas
+    echo "# IDEAS" > .korero/ideas/IDEAS.md
+    cat > .korero/ideas/loop_3_idea.md << 'IDEA_EOF'
+**Title:** Implement dark mode
+**Type:** Feature
+**Category:** UX
+**Proposed by:** UX Designer
+
+Add dark mode toggle for better user experience.
+IDEA_EOF
+
+    run bash "$KORERO_SCRIPT" --search-ideas "dark"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"LOOP 3"* ]]
+    [[ "$output" == *"Implement dark mode"* ]]
+}
+
+@test "--search-ideas reports no matches for non-existent keyword" {
+    mkdir -p .korero/ideas
+    echo "# IDEAS" > .korero/ideas/IDEAS.md
+    echo "Some content" > .korero/ideas/loop_1_idea.md
+
+    run bash "$KORERO_SCRIPT" --search-ideas "zzzznonexistent"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No matches found"* ]]
+}
+
+@test "--find-ideas is an alias for --search-ideas" {
+    run bash "$KORERO_SCRIPT" --find-ideas
+    [ "$status" -ne 0 ]
+}
+
+# ===== --cost-history flag =====
+
+@test "--cost-history is listed in help text" {
+    run bash "$KORERO_SCRIPT" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--cost-history"* ]]
+}
+
+@test "--cost-history returns 1 when no cost_history.json exists" {
+    run bash "$KORERO_SCRIPT" --cost-history
+    [ "$status" -ne 0 ]
+}
+
+@test "--costs is an alias for --cost-history" {
+    run bash "$KORERO_SCRIPT" --costs
+    [ "$status" -ne 0 ]
+}

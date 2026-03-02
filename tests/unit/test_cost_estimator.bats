@@ -181,3 +181,88 @@ teardown() {
     run display_cost_report "$KORERO_DIR/logs"
     [[ "$output" == *"Estimates based on log file sizes"* ]]
 }
+
+# ===== record_loop_cost =====
+
+@test "record_loop_cost creates cost_history.json when missing" {
+    rm -f "$KORERO_DIR/cost_history.json"
+    printf '%0.s.' $(seq 1 4000) > "$TEST_DIR/output.log"
+
+    record_loop_cost 1 "$TEST_DIR/output.log" 30
+
+    [ -f "$KORERO_DIR/cost_history.json" ]
+}
+
+@test "record_loop_cost records loop entry with correct fields" {
+    if ! command -v jq &>/dev/null; then
+        skip "jq not available"
+    fi
+    rm -f "$KORERO_DIR/cost_history.json"
+    printf '%0.s.' $(seq 1 4000) > "$TEST_DIR/output.log"
+
+    record_loop_cost 1 "$TEST_DIR/output.log" 45
+
+    local loop_num tokens cost duration
+    loop_num=$(jq '.loops[0].loop' "$KORERO_DIR/cost_history.json")
+    tokens=$(jq '.loops[0].tokens' "$KORERO_DIR/cost_history.json")
+    duration=$(jq '.loops[0].duration_sec' "$KORERO_DIR/cost_history.json")
+
+    [ "$loop_num" -eq 1 ]
+    [ "$tokens" -gt 0 ]
+    [ "$duration" -eq 45 ]
+}
+
+@test "record_loop_cost accumulates session totals across loops" {
+    if ! command -v jq &>/dev/null; then
+        skip "jq not available"
+    fi
+    rm -f "$KORERO_DIR/cost_history.json"
+    printf '%0.s.' $(seq 1 4000) > "$TEST_DIR/output.log"
+
+    record_loop_cost 1 "$TEST_DIR/output.log" 30
+    record_loop_cost 2 "$TEST_DIR/output.log" 25
+
+    local loop_count total_tokens
+    loop_count=$(jq '.loops | length' "$KORERO_DIR/cost_history.json")
+    total_tokens=$(jq '.session_total_tokens' "$KORERO_DIR/cost_history.json")
+
+    [ "$loop_count" -eq 2 ]
+    [ "$total_tokens" -gt 0 ]
+}
+
+@test "record_loop_cost handles missing output file gracefully" {
+    rm -f "$KORERO_DIR/cost_history.json"
+
+    record_loop_cost 1 "/nonexistent/file.log" 10
+
+    [ -f "$KORERO_DIR/cost_history.json" ]
+}
+
+@test "record_loop_cost handles empty output file" {
+    if ! command -v jq &>/dev/null; then
+        skip "jq not available"
+    fi
+    rm -f "$KORERO_DIR/cost_history.json"
+    touch "$TEST_DIR/empty.log"
+
+    record_loop_cost 1 "$TEST_DIR/empty.log" 5
+
+    local tokens
+    tokens=$(jq '.loops[0].tokens' "$KORERO_DIR/cost_history.json")
+    [ "$tokens" -eq 0 ]
+}
+
+@test "record_loop_cost includes timestamp" {
+    if ! command -v jq &>/dev/null; then
+        skip "jq not available"
+    fi
+    rm -f "$KORERO_DIR/cost_history.json"
+    printf '%0.s.' $(seq 1 400) > "$TEST_DIR/output.log"
+
+    record_loop_cost 1 "$TEST_DIR/output.log" 15
+
+    local ts
+    ts=$(jq -r '.loops[0].timestamp' "$KORERO_DIR/cost_history.json")
+    [[ "$ts" == *"T"* ]]
+    [[ "$ts" == *"Z"* ]]
+}

@@ -209,7 +209,60 @@ display_cost_report() {
     echo ""
 }
 
+# Record per-loop cost to cost_history.json
+# Arguments:
+#   $1 (loop_num)     - Current loop number
+#   $2 (output_file)  - Path to the loop's output file (for token estimation)
+#   $3 (duration_sec) - Loop duration in seconds
+# Side effects: Creates/updates .korero/cost_history.json
+record_loop_cost() {
+    local loop_num="$1"
+    local output_file="${2:-}"
+    local duration_sec="${3:-0}"
+    local korero_dir="${KORERO_DIR:-.korero}"
+    local cost_file="$korero_dir/cost_history.json"
+
+    local output_tokens=0
+    if [[ -n "$output_file" && -f "$output_file" ]]; then
+        output_tokens=$(estimate_tokens_from_file "$output_file")
+    fi
+
+    # Estimate input as 2x output (prompts typically larger)
+    local input_tokens=$((output_tokens * 2))
+    local total_tokens=$((input_tokens + output_tokens))
+
+    # Calculate cost
+    local input_cost output_cost cost_usd
+    input_cost=$(calculate_cost "$input_tokens" "$COST_INPUT_PER_1M")
+    output_cost=$(calculate_cost "$output_tokens" "$COST_OUTPUT_PER_1M")
+    cost_usd=$(awk "BEGIN { printf \"%.4f\", $input_cost + $output_cost }" 2>/dev/null || echo "0.0000")
+
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)
+
+    # Initialize file if not exists
+    if [[ ! -f "$cost_file" ]]; then
+        echo '{"loops":[],"session_total_usd":0,"session_total_tokens":0}' > "$cost_file"
+    fi
+
+    # Add new loop entry using jq
+    if command -v jq &>/dev/null; then
+        local tmp_file
+        tmp_file=$(mktemp)
+        jq --argjson loop "$loop_num" \
+           --argjson tokens "$total_tokens" \
+           --argjson cost "$cost_usd" \
+           --argjson duration "$duration_sec" \
+           --arg ts "$timestamp" \
+           '.loops += [{"loop": $loop, "tokens": $tokens, "cost_usd": $cost, "duration_sec": $duration, "timestamp": $ts}] |
+            .session_total_tokens += $tokens |
+            .session_total_usd = (.session_total_usd + $cost)' \
+           "$cost_file" > "$tmp_file" 2>/dev/null && mv "$tmp_file" "$cost_file"
+    fi
+}
+
 export -f estimate_tokens_from_file
 export -f calculate_cost
 export -f estimate_api_costs
 export -f display_cost_report
+export -f record_loop_cost

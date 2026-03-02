@@ -2397,6 +2397,11 @@ main() {
         update_loop_duration "$LAST_LOOP_DURATION"
         log_status "INFO" "Loop #$loop_count duration: $(format_duration $LAST_LOOP_DURATION)"
 
+        # Record per-loop cost estimate
+        local latest_output_file
+        latest_output_file=$(ls -t "$LOG_DIR"/claude_output_*.log "$LOG_DIR"/claude_proposal_*.log 2>/dev/null | head -1)
+        record_loop_cost "$loop_count" "$latest_output_file" "$LAST_LOOP_DURATION"
+
         if [ $exec_result -eq 0 ]; then
             update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "completed" "success"
 
@@ -2485,6 +2490,8 @@ Options:
     --show-debate [N]       Show debate transcript (latest, or loop N)
     --health-check          Validate environment prerequisites (Claude CLI, jq, git, network)
     --cost-estimate         Estimate API costs from loop logs and display report
+    --cost-history          Show per-loop cost breakdown with session totals
+    --search-ideas KEYWORD  Search past ideas by keyword (case-insensitive)
     --troubleshoot          Show troubleshooting quick reference for common issues
     --diagnose              Interactive troubleshooting wizard (guided diagnosis)
     --start-idea N          Create branch from winning idea N and start coding loop
@@ -2885,6 +2892,127 @@ Still stuck? Open an issue:
   https://github.com/pendemic/korero-claude-code/issues
 ═══════════════════════════════════════════════════════════
 EOF
+}
+
+# Search IDEAS.md for keyword matches
+# Usage: search_ideas <keyword>
+search_ideas() {
+    local keyword="$1"
+    local ideas_dir="${KORERO_DIR:-.korero}/ideas"
+    local ideas_file="$ideas_dir/IDEAS.md"
+
+    if [[ -z "$keyword" ]]; then
+        echo "Usage: korero --search-ideas <keyword>" >&2
+        return 1
+    fi
+
+    if [[ ! -f "$ideas_file" ]]; then
+        echo "No IDEAS.md found. Run ideation loops first." >&2
+        return 1
+    fi
+
+    echo ""
+    echo "═══════════════════════════════════════════════════════════"
+    echo "           IDEA SEARCH: \"$keyword\""
+    echo "═══════════════════════════════════════════════════════════"
+    echo ""
+
+    local matches=0
+
+    # Search individual idea files for richer context
+    for idea_file in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$idea_file" ]] || continue
+
+        if grep -qi "$keyword" "$idea_file" 2>/dev/null; then
+            local loop_num
+            loop_num=$(echo "$idea_file" | grep -o 'loop_[0-9]*' | grep -o '[0-9]*')
+
+            local title=""
+            local type=""
+            local category=""
+            local agent=""
+
+            title=$(grep '^\*\*Title:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Title:\*\*[[:space:]]*//')
+            type=$(grep '^\*\*Type:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Type:\*\*[[:space:]]*//')
+            category=$(grep '^\*\*Category:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//')
+            agent=$(grep '^\*\*Proposed by:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Proposed by:\*\*[[:space:]]*//')
+
+            # Get first matching line for context
+            local context
+            context=$(grep -i "$keyword" "$idea_file" 2>/dev/null | head -1 | sed 's/^[[:space:]]*//' | cut -c1-80)
+
+            matches=$((matches + 1))
+            echo "LOOP $loop_num (Winner): ${title:-Unknown}"
+            [[ -n "$type" || -n "$category" ]] && echo "  Type: ${type:-N/A} | Category: ${category:-N/A}"
+            [[ -n "$agent" ]] && echo "  Agent: $agent"
+            echo "  Match: \"$context\""
+            echo ""
+        fi
+    done
+
+    # Also search the main IDEAS.md for runner-ups or other mentions
+    local index_matches
+    index_matches=$(grep -c -i "$keyword" "$ideas_file" 2>/dev/null || true)
+    index_matches=$(echo "$index_matches" | tr -d '[:space:]')
+    index_matches="${index_matches:-0}"
+
+    if [[ $matches -eq 0 && "$index_matches" -eq 0 ]]; then
+        echo "No matches found for \"$keyword\""
+    else
+        echo "═══════════════════════════════════════════════════════════"
+        echo "Found $matches idea files matching, $index_matches lines in IDEAS.md"
+    fi
+    echo ""
+}
+
+# Show per-loop cost history from cost_history.json
+# Reads from .korero/cost_history.json written by record_loop_cost()
+show_cost_history() {
+    local korero_dir="${KORERO_DIR:-.korero}"
+    local cost_file="$korero_dir/cost_history.json"
+
+    if [[ ! -f "$cost_file" ]]; then
+        echo "No cost history found. Run some loops first."
+        return 1
+    fi
+
+    echo ""
+    echo "═══════════════════════════════════════════════════════════"
+    echo "              LOOP COST HISTORY"
+    echo "═══════════════════════════════════════════════════════════"
+    echo ""
+    printf "%-6s| %-10s| %-8s| %-9s| %s\n" "Loop" "Est. Cost" "Tokens" "Duration" "Timestamp"
+    echo "──────|───────────|─────────|──────────|──────────────────"
+
+    # Display each loop entry
+    jq -r '.loops[] | "\(.loop)|\(.cost_usd)|\(.tokens)|\(.duration_sec)|\(.timestamp)"' "$cost_file" 2>/dev/null | \
+    while IFS='|' read -r loop cost tokens duration ts; do
+        local ts_short
+        ts_short=$(echo "$ts" | cut -d'T' -f1,2 | tr 'T' ' ' | cut -c1-16)
+        printf "  %-4s|   \$%-6s |  %6s |   %3ss   | %s\n" "$loop" "$cost" "$tokens" "$duration" "$ts_short"
+    done
+
+    echo ""
+    echo "═══════════════════════════════════════════════════════════"
+    echo "SESSION SUMMARY"
+    echo "═══════════════════════════════════════════════════════════"
+
+    local total_cost total_tokens loop_count avg_cost
+    total_cost=$(jq -r '.session_total_usd' "$cost_file" 2>/dev/null || echo "0")
+    total_tokens=$(jq -r '.session_total_tokens' "$cost_file" 2>/dev/null || echo "0")
+    loop_count=$(jq -r '.loops | length' "$cost_file" 2>/dev/null || echo "0")
+
+    if [[ "$loop_count" -gt 0 ]]; then
+        avg_cost=$(awk "BEGIN { printf \"%.2f\", $total_cost / $loop_count }" 2>/dev/null || echo "0.00")
+    else
+        avg_cost="0.00"
+    fi
+
+    echo "Total estimated cost:  \$${total_cost}"
+    echo "Total tokens:          ${total_tokens}"
+    echo "Average per loop:      \$${avg_cost}"
+    echo "Loops recorded:        ${loop_count}"
+    echo "═══════════════════════════════════════════════════════════"
 }
 
 # Example Gallery — curated workflow examples for new users
@@ -3493,6 +3621,15 @@ while [[ $# -gt 0 ]]; do
             ;;
         --cost-estimate)
             display_cost_report
+            exit $?
+            ;;
+        --cost-history|--costs)
+            show_cost_history
+            exit $?
+            ;;
+        --search-ideas|--find-ideas)
+            shift
+            search_ideas "$1"
             exit $?
             ;;
         --troubleshoot|--troubleshooting)

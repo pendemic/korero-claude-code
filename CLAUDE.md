@@ -172,6 +172,7 @@ The system uses a modular architecture with reusable components in the `lib/` di
     - `calculate_cost(tokens, rate)` - Calculates USD cost for given tokens at per-1M rate
     - `estimate_api_costs(log_dir)` - Scans log directory and returns JSON cost breakdown (input/output tokens, costs, files analyzed)
     - `display_cost_report(log_dir)` - Displays formatted cost dashboard with token usage, cost breakdown, and pricing info
+    - `record_loop_cost(loop_num, output_file, duration_sec)` - Records per-loop cost to `.korero/cost_history.json` (tokens, cost_usd, duration, timestamp); accumulates session totals
 
 ## Key Commands
 
@@ -281,6 +282,10 @@ korero --health-check || exit 1  # Use in CI to fail fast
 
 # API cost estimation
 korero --cost-estimate           # Show estimated API costs from logs
+korero --cost-history            # Show per-loop cost breakdown with session totals
+
+# Idea search
+korero --search-ideas "caching"  # Search past ideas by keyword
 
 # Troubleshooting
 korero --troubleshoot            # Quick reference for common issues and fixes
@@ -389,6 +394,8 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--show-debate [N]` - Display debate transcript from loop N (or latest if N omitted)
 - `--health-check` - Validate all prerequisites (Claude CLI, jq, git, permissions, network, config)
 - `--cost-estimate` - Estimate API costs from loop log files and display formatted report
+- `--cost-history` / `--costs` - Show per-loop cost breakdown with session totals from `cost_history.json`
+- `--search-ideas KEYWORD` / `--find-ideas KEYWORD` - Search past ideas by keyword (case-insensitive), shows metadata and matching context
 - `--troubleshoot` / `--troubleshooting` - Show categorized troubleshooting quick reference with common issues and fix commands
 - `--diagnose` - Interactive troubleshooting wizard with guided yes/no decision tree for diagnosing issues
 - `--codex-timeout NUM` - Set Codex execution timeout in minutes (1-120, heavy modes only)
@@ -738,13 +745,13 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (947 tests across 28 files)
+### Test Files (964 tests across 28 files)
 
-**Unit Tests (811 tests):**
+**Unit Tests (828 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
-| `test_cli_parsing.bats` | 75 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea, quickstart, validate-config, examples, show-debate, troubleshoot, diagnose, fix-config |
+| `test_cli_parsing.bats` | 86 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea, quickstart, validate-config, examples, show-debate, troubleshoot, diagnose, fix-config, search-ideas, cost-history |
 | `test_cli_modern.bats` | 33 | Modern CLI commands (Phase 1.1) + build_claude_command fix |
 | `test_json_parsing.bats` | 74 | JSON output format parsing + Claude CLI format + session management + permission suggestions + visual config diff |
 | `test_session_continuity.bats` | 49 | Session lifecycle management + circuit breaker integration + issue #91 fix + session age warning |
@@ -766,7 +773,7 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 | `test_duration_tracking.bats` | 16 | Loop duration tracking |
 | `test_korero_config.bats` | 9 | Configuration management |
 | `test_korero_status.bats` | 11 | Status reporting |
-| `test_cost_estimator.bats` | 24 | API cost estimation: token estimation, cost calculation, log scanning, report display |
+| `test_cost_estimator.bats` | 30 | API cost estimation: token estimation, cost calculation, log scanning, report display, per-loop cost recording |
 
 **Integration Tests (136 tests):**
 
