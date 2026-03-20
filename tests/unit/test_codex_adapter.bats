@@ -43,6 +43,18 @@ teardown() {
     [ "$found" = "true" ]
 }
 
+@test "build_codex_command includes --skip-git-repo-check" {
+    build_codex_command "test prompt" "heavy-idea" "/tmp/out.log"
+    local found=false
+    for arg in "${CODEX_CMD_ARGS[@]}"; do
+        if [ "$arg" = "--skip-git-repo-check" ]; then
+            found=true
+            break
+        fi
+    done
+    [ "$found" = "true" ]
+}
+
 @test "build_codex_command uses read-only sandbox for heavy-idea" {
     build_codex_command "test prompt" "heavy-idea" "/tmp/out.log"
     local found_sandbox=false
@@ -111,9 +123,10 @@ teardown() {
     CODEX_MODEL="gpt-5.3-codex"
 }
 
-@test "build_codex_command includes prompt as last argument" {
+@test "build_codex_command does not include prompt text in argv" {
     build_codex_command "my test prompt" "heavy-idea" "/tmp/out.log"
-    [ "${CODEX_CMD_ARGS[-1]}" = "my test prompt" ]
+    local cmd_string="${CODEX_CMD_ARGS[*]}"
+    [[ "$cmd_string" != *"my test prompt"* ]]
 }
 
 @test "build_codex_command returns 0" {
@@ -127,6 +140,43 @@ teardown() {
     build_codex_command "prompt2" "heavy-idea" "/tmp/out2.log"
     local count2=${#CODEX_CMD_ARGS[@]}
     [ "$count1" -eq "$count2" ]
+}
+
+@test "run_codex_with_prompt pipes prompt through stdin" {
+    mkdir -p "$TEST_DIR/bin"
+    echo '#!/bin/bash
+cat' > "$TEST_DIR/bin/codex"
+    chmod +x "$TEST_DIR/bin/codex"
+
+    run bash -c 'PATH="'$TEST_DIR/bin':/usr/bin:/bin"; portable_timeout() { local duration=$1; shift; "$@"; }; export -f portable_timeout; source "'$REPO_ROOT'/lib/codex_adapter.sh"; build_codex_command "ignored" "heavy-idea"; run_codex_with_prompt "5s" "stdin prompt" "${CODEX_CMD_ARGS[@]}"'
+    [ "$status" -eq 0 ]
+    [ "$output" = "stdin prompt" ]
+}
+
+@test "resolve_codex_cli prefers codex.cmd on Windows_NT" {
+    mkdir -p "$TEST_DIR/bin"
+    echo '#!/bin/bash
+echo "codex shell shim"' > "$TEST_DIR/bin/codex"
+    echo '#!/bin/bash
+echo "codex cmd shim"' > "$TEST_DIR/bin/codex.cmd"
+    chmod +x "$TEST_DIR/bin/codex" "$TEST_DIR/bin/codex.cmd"
+
+    run bash -c 'PATH="'$TEST_DIR/bin':/usr/bin:/bin"; export OS="Windows_NT"; source "'$REPO_ROOT'/lib/codex_adapter.sh"; resolve_codex_cli'
+    [ "$status" -eq 0 ]
+    [ "$output" = "codex.cmd" ]
+}
+
+@test "build_codex_command prefers codex.cmd on Windows_NT" {
+    mkdir -p "$TEST_DIR/bin"
+    echo '#!/bin/bash
+echo "codex shell shim"' > "$TEST_DIR/bin/codex"
+    echo '#!/bin/bash
+echo "codex cmd shim"' > "$TEST_DIR/bin/codex.cmd"
+    chmod +x "$TEST_DIR/bin/codex" "$TEST_DIR/bin/codex.cmd"
+
+    run bash -c 'PATH="'$TEST_DIR/bin':/usr/bin:/bin"; export OS="Windows_NT"; source "'$REPO_ROOT'/lib/codex_adapter.sh"; build_codex_command "test prompt" "heavy-idea"; printf "%s" "${CODEX_CMD_ARGS[0]}"'
+    [ "$status" -eq 0 ]
+    [ "$output" = "codex.cmd" ]
 }
 
 # ===== extract_codex_proposal =====
@@ -199,6 +249,24 @@ teardown() {
     # Override PATH to exclude codex
     run bash -c 'PATH=/usr/bin:/bin; source "'$REPO_ROOT'/lib/codex_adapter.sh"; check_codex_ready'
     [ "$status" -eq 1 ]
+}
+
+@test "check_codex_ready returns 3 when codex launcher is broken" {
+    mkdir -p "$TEST_DIR/bin"
+    echo '#!/bin/bash
+if [ "$1" = "--version" ]; then
+  echo "MODULE_NOT_FOUND" >&2
+  exit 1
+fi
+exit 0' > "$TEST_DIR/bin/codex"
+    chmod +x "$TEST_DIR/bin/codex"
+
+    export CODEX_HOME="$TEST_DIR/.codex_ok"
+    mkdir -p "$CODEX_HOME"
+    echo '{"token":"test"}' > "$CODEX_HOME/auth.json"
+
+    run bash -c 'PATH="'$TEST_DIR/bin':/usr/bin:/bin"; export CODEX_HOME="'$CODEX_HOME'"; source "'$REPO_ROOT'/lib/codex_adapter.sh"; check_codex_ready'
+    [ "$status" -eq 3 ]
 }
 
 # ===== check_codex_auth =====
@@ -279,6 +347,26 @@ echo "codex mock"' > "$TEST_DIR/bin/codex"
     [ "$status" -eq 1 ]
 }
 
+@test "should_fallback_to_claude returns broken_install when launcher is broken" {
+    export CODEX_FALLBACK="claude-only"
+    mkdir -p "$TEST_DIR/bin"
+    echo '#!/bin/bash
+if [ "$1" = "--version" ]; then
+  echo "MODULE_NOT_FOUND" >&2
+  exit 1
+fi
+exit 0' > "$TEST_DIR/bin/codex"
+    chmod +x "$TEST_DIR/bin/codex"
+
+    export CODEX_HOME="$TEST_DIR/.codex_ok"
+    mkdir -p "$CODEX_HOME"
+    echo '{"token":"test"}' > "$CODEX_HOME/auth.json"
+
+    run bash -c 'PATH="'$TEST_DIR/bin':/usr/bin:/bin"; export CODEX_FALLBACK="claude-only"; export CODEX_HOME="'$CODEX_HOME'"; source "'$REPO_ROOT'/lib/codex_adapter.sh"; should_fallback_to_claude'
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"broken_install"* ]]
+}
+
 @test "should_fallback_to_claude respects silent mode" {
     export CODEX_FALLBACK="silent"
     run bash -c 'PATH=/usr/bin:/bin; export CODEX_FALLBACK="silent"; source "'$REPO_ROOT'/lib/codex_adapter.sh"; should_fallback_to_claude'
@@ -299,6 +387,13 @@ echo "codex mock"' > "$TEST_DIR/bin/codex"
     run display_fallback_warning "not_authenticated" "claude-only"
     [ "$status" -eq 0 ]
     [[ "$output" == *"not authenticated"* ]]
+}
+
+@test "display_fallback_warning shows warning for broken_install" {
+    run display_fallback_warning "broken_install" "claude-only"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"installed but broken"* ]]
+    [[ "$output" == *"@openai/codex@latest"* ]]
 }
 
 @test "display_fallback_warning suppresses output in silent mode" {

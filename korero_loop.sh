@@ -611,7 +611,11 @@ show_dry_run_info() {
             0) echo "Codex CLI:          ready" ;;
             1) echo -e "Codex CLI:          ${RED}not installed${NC}" ;;
             2) echo -e "Codex CLI:          ${YELLOW}not authenticated${NC}" ;;
+            3) echo -e "Codex CLI:          ${RED}installed but broken${NC}" ;;
         esac
+        if [[ $codex_ready_code -eq 3 ]]; then
+            echo "Codex repair:       $(get_codex_error_help)"
+        fi
         echo ""
     fi
 
@@ -627,7 +631,7 @@ show_dry_run_info() {
         echo ""
         echo "  codex exec --model $CODEX_MODEL --json \\"
         echo "    --sandbox read-only \\"
-        echo "    \"<prompt content>\""
+        echo "    --skip-git-repo-check  # prompt via stdin"
     fi
     echo ""
     echo "Run without --dry-run to execute."
@@ -2063,7 +2067,7 @@ execute_heavy_loop() {
 
 $heavy_context"
     build_codex_command "$codex_prompt" "$korero_mode"
-    portable_timeout "${codex_timeout}s" "${CODEX_CMD_ARGS[@]}" > "$codex_output" 2>&1 &
+    run_codex_with_prompt "${codex_timeout}s" "$codex_prompt" "${CODEX_CMD_ARGS[@]}" > "$codex_output" 2>&1 &
     local codex_pid=$!
 
     # Wait for both to complete
@@ -2322,6 +2326,9 @@ main() {
             exit 1
         elif [[ $codex_status -eq 2 ]]; then
             log_status "ERROR" "Codex CLI not authenticated. Run: codex login"
+            exit 1
+        elif [[ $codex_status -eq 3 ]]; then
+            log_status "ERROR" "$(get_codex_error_help)"
             exit 1
         fi
     else

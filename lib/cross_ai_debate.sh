@@ -770,7 +770,7 @@ CLAUDE_WIN_EOF
 
     # Codex critiques Claude (background)
     build_codex_command "$codex_critique_prompt" "$mode"
-    portable_timeout "${timeout_seconds}s" "${CODEX_CMD_ARGS[@]}" > "$codex_critique_file" 2>&1 &
+    run_codex_with_prompt "${timeout_seconds}s" "$codex_critique_prompt" "${CODEX_CMD_ARGS[@]}" > "$codex_critique_file" 2>&1 &
     local codex_crit_pid=$!
 
     # Wait for both critiques with per-AI timing display
@@ -838,7 +838,7 @@ CLAUDE_WIN_EOF
 
         # Codex defends (background)
         build_codex_command "$codex_defense_prompt" "$mode"
-        portable_timeout "${timeout_seconds}s" "${CODEX_CMD_ARGS[@]}" > "$codex_defense_file" 2>&1 &
+        run_codex_with_prompt "${timeout_seconds}s" "$codex_defense_prompt" "${CODEX_CMD_ARGS[@]}" > "$codex_defense_file" 2>&1 &
         local codex_def_pid=$!
 
         # Wait for both defenses with per-AI timing display
