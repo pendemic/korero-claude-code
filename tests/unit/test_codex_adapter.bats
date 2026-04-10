@@ -204,6 +204,49 @@ echo "codex cmd shim"' > "$TEST_DIR/bin/codex.cmd"
     [ "$status" -eq 0 ]
 }
 
+@test "extract_codex_proposal extracts final agent_message text from codex ndjson" {
+    cat > "$TEST_DIR/ndjson.log" <<'EOF'
+Reading prompt from stdin...
+{"type":"thread.started","thread_id":"abc"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"progress update"}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"final codex proposal text"}}
+{"type":"turn.completed","usage":{"input_tokens":123,"output_tokens":456}}
+EOF
+
+    result=$(extract_codex_proposal "$TEST_DIR/ndjson.log")
+    [ "$result" = "final codex proposal text" ]
+}
+
+@test "extract_codex_proposal preserves multiline final agent_message text" {
+    cat > "$TEST_DIR/ndjson.log" <<'EOF'
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"line one\nline two\nline three"}}
+{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":20}}
+EOF
+
+    result=$(extract_codex_proposal "$TEST_DIR/ndjson.log")
+    [ "$result" = $'line one\nline two\nline three' ]
+}
+
+@test "extract_codex_proposal extracts wrapped result payload" {
+    cat > "$TEST_DIR/ndjson.log" <<'EOF'
+{"type":"thread.started","thread_id":"abc"}
+{"type":"result","subtype":"success","result":"wrapped codex proposal body","stop_reason":"end_turn"}
+EOF
+
+    result=$(extract_codex_proposal "$TEST_DIR/ndjson.log")
+    [ "$result" = "wrapped codex proposal body" ]
+}
+
+@test "extract_codex_proposal rejects telemetry-only blobs" {
+    cat > "$TEST_DIR/ndjson.log" <<'EOF'
+{"type":"turn.completed","usage":{"input_tokens":123,"output_tokens":456}}
+EOF
+
+    run extract_codex_proposal "$TEST_DIR/ndjson.log"
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
+}
+
 @test "extract_codex_proposal returns 1 on failure" {
     run extract_codex_proposal "$TEST_DIR/nonexistent.log"
     [ "$status" -eq 1 ]
@@ -227,6 +270,27 @@ echo "codex cmd shim"' > "$TEST_DIR/bin/codex.cmd"
     echo "proposal text" > "$TEST_DIR/ndjson.log"
     parse_codex_response "$TEST_DIR/ndjson.log" "" "$KORERO_DIR/.codex_parse_result"
     grep -q '"status": "success"' "$KORERO_DIR/.codex_parse_result"
+}
+
+@test "parse_codex_response ignores turn.completed usage blobs when agent text exists" {
+    cat > "$TEST_DIR/ndjson.log" <<'EOF'
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"substantive proposal body"}}
+{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":20}}
+EOF
+
+    parse_codex_response "$TEST_DIR/ndjson.log" "" "$KORERO_DIR/.codex_parse_result"
+    grep -q '"status": "success"' "$KORERO_DIR/.codex_parse_result"
+    grep -q '"output_length": 25' "$KORERO_DIR/.codex_parse_result"
+}
+
+@test "parse_codex_response treats telemetry-only output as empty" {
+    cat > "$TEST_DIR/ndjson.log" <<'EOF'
+{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":20}}
+EOF
+
+    run parse_codex_response "$TEST_DIR/ndjson.log" "" "$KORERO_DIR/.codex_parse_result"
+    [ "$status" -eq 1 ]
+    grep -q '"status":"error"' "$KORERO_DIR/.codex_parse_result"
 }
 
 @test "parse_codex_response returns 1 for empty output" {

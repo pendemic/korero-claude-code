@@ -1689,6 +1689,8 @@ generate_ideation_prompt_md() {
     local mode_mission=""
     local mode_constraint=""
     local implementation_section=""
+    local phase4_section=""
+    local current_task_section=""
     local idea_mode_no_implementation=""
     local loop_display="${max_loops}"
 
@@ -1699,6 +1701,14 @@ generate_ideation_prompt_md() {
     else
         mode_mission="Each loop produces exactly ONE best idea through a multi-phase debate process, then implements it with code changes and a git commit."
         mode_constraint="**IDEATION + IMPLEMENTATION** — Generate the best idea through debate, then implement it."
+    fi
+
+    if [[ "$mode" == "heavy-idea" ]]; then
+        mode_mission="Each loop produces exactly ONE best idea for a cross-AI debate. This is proposal generation only. Do NOT implement anything, run tests, or write files. Korero will persist the winning idea after the debate."
+        mode_constraint="**HEAVY IDEA PROPOSAL ONLY** - No code changes, no file edits, no tests, no implementation."
+    elif [[ "$mode" == "heavy-coding" ]]; then
+        mode_mission="Each loop produces exactly ONE best implementation proposal for a cross-AI debate. This is proposal generation only. Do NOT implement anything, run tests, or write files in this phase. Korero will run implementation separately after the debate."
+        mode_constraint="**HEAVY CODING PROPOSAL ONLY** - No code changes, no file edits, no tests, no implementation in this phase."
     fi
 
     # Build context section
@@ -1788,6 +1798,100 @@ After the winning idea is documented in Phase 4:
 See AGENT.md for build, test, and run instructions.'
     fi
 
+    if [[ "$mode" == "idea" ]]; then
+        phase4_section='
+### Phase 4: Winning Idea Documentation (CRITICAL - YOU MUST WRITE TO FILES)
+The winning idea is documented in full detail using the output format below.
+**You MUST perform ALL of these file writes at the end of each loop:**
+
+1. **APPEND the full winning idea to `.korero/IDEAS.md`** - This is the permanent record.
+   Use the output format below. Append it to the end of the file (do not overwrite existing ideas).
+
+2. **UPDATE the Winning Ideas Tracker table in `.korero/fix_plan.md`** - Fill in the row for
+   the current loop number with the winner'"'"'s title, type, category, and proposing agent.
+   Change Status from "Pending" to "Complete".
+
+3. **UPDATE the Category Coverage table in `.korero/fix_plan.md`** - Increment the count for
+   the winning category and add the loop number.
+
+4. **UPDATE the Type Balance table in `.korero/fix_plan.md`** - Increment the count for
+   the winning type (Usability Improvement or New Feature).
+
+5. **CHECK OFF the phase checkboxes in `.korero/fix_plan.md`** - Mark all 5 checkboxes
+   for the current loop as `[x]`.
+
+If you do not write to these files, the ideas are LOST. This is the most important step.'
+
+        current_task_section='## Current Task
+Execute the next uncompleted loop (check fix_plan.md to see which loop is next).
+Follow the 4-phase workflow above. Begin with Phase 1.
+
+**REMINDER:** At the end of Phase 4 you MUST:
+- APPEND the winning idea to `.korero/IDEAS.md`
+- UPDATE the tracker, category, and type tables in `.korero/fix_plan.md`
+- CHECK OFF the checkboxes for the completed loop in `.korero/fix_plan.md`
+If IDEAS.md is not updated, the idea is lost and the loop was wasted.'
+    elif [[ "$mode" == "heavy-idea" ]]; then
+        phase4_section='
+### Phase 4: Winning Idea Documentation
+Document the winning idea in full detail using the output format below.
+In heavy-idea mode, Korero persists the winning idea after the cross-AI debate.
+Do NOT write to `.korero/IDEAS.md`, `.korero/fix_plan.md`, or any other files during proposal generation.'
+
+        current_task_section='## Current Task
+Execute the next uncompleted loop and produce the strongest proposal content for the debate.
+Follow the 4-phase workflow above conceptually, but do NOT write files.
+Korero will save the final winning idea after the debate.'
+    elif [[ "$mode" == "heavy-coding" ]]; then
+        phase4_section='
+### Phase 4: Winning Idea Documentation
+Document the winning idea in full detail using the output format below.
+In heavy-coding mode, Korero runs implementation in a separate phase after the cross-AI debate.
+Do NOT write files or implement changes during proposal generation.'
+
+        current_task_section='## Current Task
+Execute the next uncompleted loop and produce the strongest implementation proposal for the debate.
+Follow the 4-phase workflow above conceptually, but do NOT write files or implement code yet.
+Korero will pass the winning idea to a separate implementation phase after the debate.'
+    else
+        phase4_section='
+### Phase 4: Winning Idea Documentation (CRITICAL - YOU MUST WRITE TO FILES)
+The winning idea is documented in full detail using the output format below.
+**You MUST perform ALL of these file writes at the end of each loop:**
+
+1. **APPEND the full winning idea to `.korero/IDEAS.md`** - This is the permanent record.
+   Use the output format below. Append it to the end of the file (do not overwrite existing ideas).
+
+2. **UPDATE the Winning Ideas Tracker table in `.korero/fix_plan.md`** - Fill in the row for
+   the current loop number with the winner'"'"'s title, type, category, and proposing agent.
+   Change Status from "Pending" to "Complete".
+
+3. **UPDATE the Category Coverage table in `.korero/fix_plan.md`** - Increment the count for
+   the winning category and add the loop number.
+
+4. **UPDATE the Type Balance table in `.korero/fix_plan.md`** - Increment the count for
+   the winning type (Usability Improvement or New Feature).
+
+5. **CHECK OFF the phase checkboxes in `.korero/fix_plan.md`** - Mark all 5 checkboxes
+   for the current loop as `[x]`.
+
+If you do not write to these files, the ideas are LOST. This is the most important step.'
+
+        current_task_section='## Current Task
+Execute the next uncompleted loop (check fix_plan.md to see which loop is next).
+Follow the 4-phase workflow above. Begin with Phase 1.
+
+**REMINDER:** At the end of Phase 4 you MUST:
+- APPEND the winning idea to `.korero/IDEAS.md`
+- UPDATE the tracker, category, and type tables in `.korero/fix_plan.md`
+- CHECK OFF the checkboxes for the completed loop in `.korero/fix_plan.md`
+If IDEAS.md is not updated, the idea is lost and the loop was wasted.'
+    fi
+
+    if [[ "$mode" == "coding" ]]; then
+        phase4_section="${phase4_section}${implementation_section}"
+    fi
+
     # Build anti-repetition rules based on max_loops
     local anti_repetition=""
     if [[ "$max_loops" != "continuous" ]] && [[ "$max_loops" -gt 5 ]]; then
@@ -1825,6 +1929,211 @@ An idea is considered a DUPLICATE if:
 - It is a minor variation of a prior winner
 
 Ensure category diversity across loops. Avoid repeating the same category more than 3 times."
+    fi
+
+    if [[ "$mode" == "heavy-idea" || "$mode" == "heavy-coding" ]]; then
+        cat << IDEATIONEOF
+# Korero Multi-Agent Idea Generation System
+
+## Context
+${context_section}
+
+${mode_constraint}
+
+**Your mission:** Generate ${loop_display} winning improvement ideas across ${loop_display} loops.
+${mode_mission}
+${focus_section}
+
+---
+
+## The ${total_agents}-Agent Team
+
+### Idea Generators (${agent_count} agents - participate in Phase 1 and Phase 3)
+
+${agent_listing}
+
+### Evaluators (3 agents - participate in Phase 2 and Phase 3)
+
+$((agent_count + 1)). **Devil's Advocate** - Pokes holes. Finds risks, scope creep, hidden complexity, low adoption risk.
+    Asks: "Will users actually use this? How often? Is this solving a real pain point or a hypothetical one?
+    Could this confuse existing users? Is the usability gain worth the added complexity?"
+    Scores each idea on:
+    - User Demand (1-5, higher = more likely to be used daily)
+    - Usability Risk (1-5, higher = more likely to confuse existing users)
+    - Complexity Creep (1-5, higher = worse)
+    - Verdict: STRONG / MODERATE / WEAK
+
+$((agent_count + 2)). **Technical Feasibility Agent** - Assesses implementation against project stack.
+    Asks: "How hard is this to build? Does it fit the current architecture? What are the dependencies?
+    Can we ship a useful v1 of this feature in a reasonable sprint?"
+    Scores each idea on:
+    - Implementation Effort (S/M/L/XL)
+    - Architecture Fit (1-5, higher = better fit)
+    - Breaking Change Risk (Low/Medium/High)
+    - Verdict: FEASIBLE / CHALLENGING / IMPRACTICAL
+
+$((agent_count + 3)). **Idea Orchestrator** - Synthesizer and final decision-maker. Weighs all arguments.
+    Selects the single best idea based on the scoring criteria below.
+    Strongly favors ideas that are immediately noticeable to users over invisible backend improvements.
+
+---
+
+## Per-Loop Workflow (4 Phases)
+
+### Phase 1: Idea Generation (Independent Proposals)
+Each of the ${agent_count} idea generator agents independently proposes 1-2 improvement ideas.
+
+Requirements for each idea:
+- Must cite likely affected files, functions, or components
+- Must explain user-visible value
+- Must be grounded in the actual codebase, not generic product advice
+- Must classify itself into one category
+- Must specify whether it is a usability improvement or new feature
+
+### Phase 2: Evaluation (All evaluators score every idea)
+The 3 evaluator agents review every proposed idea.
+
+### Phase 3: Debate (Back-and-forth)
+Structured 2-round debate:
+
+**Round 1 - Defenders respond:**
+The agents who proposed the top 3-5 ideas (per Orchestrator's ranking) each defend their idea
+against the evaluators' critiques. They can:
+- Address specific Devil's Advocate concerns
+- Propose scope reductions to address feasibility concerns
+- Cite specific files/functions in the codebase that support feasibility
+- Strengthen the value proposition
+
+**Round 2 - Evaluators counter:**
+Evaluators respond to the defenses. The Idea Orchestrator announces the FINAL WINNER
+with clear justification for why this idea beat the alternatives, and identifies 2-3
+RUNNER-UPS whose insights should be preserved in the Minority Opinions section.
+
+${phase4_section}
+
+---
+
+## Winning Idea Output Format
+
+For each loop, document the winner as:
+
+\`\`\`
+===========================================================
+LOOP [N] WINNING IDEA
+===========================================================
+
+**Title:** [Idea Title]
+**Type:** [Usability Improvement | New Feature]
+**Category:** [from categories list]
+**Proposed by:** [Agent Name]
+**Loop:** [N] of ${loop_display}
+
+### Description
+[3-5 paragraph detailed description of the idea, what it does, and how it works]
+
+### Implementation Instructions
+Step-by-step guide for a developer to implement this:
+1. [Step with specific file paths, function names, and code patterns from the codebase]
+2. [Step...]
+3. [Step...]
+...
+
+### Value Proposition
+**Business Value:**
+- [Bullet point with concrete benefit]
+- [Bullet point...]
+
+**Technical Value:**
+- [Bullet point with concrete benefit]
+- [Bullet point...]
+
+**User Impact:**
+- [Who benefits and how]
+
+### Evaluator Feedback Summary
+**Devil's Advocate:** [2-3 sentence summary of concerns and how they were addressed]
+**Technical Feasibility:** [2-3 sentence summary of implementation assessment]
+**Idea Orchestrator:** [2-3 sentence summary of why this idea won]
+
+### Files Most Likely Affected
+- `path/to/file` - [what changes]
+- `path/to/file` - [what changes]
+
+### Minority Opinions (Preserved for Future Reference)
+
+The following ideas were strong contenders but not selected.
+Their insights are preserved for potential future consideration.
+
+**Runner-Up 1: [Idea Title]**
+- **Proposed by:** [Agent Name]
+- **Category:** [Category]
+- **Rejection rationale:** [1-2 sentences why not selected]
+- **Core insight to preserve:** [Key value worth remembering]
+- **Reconsider when:** [Conditions that would make this relevant again]
+
+**Runner-Up 2: [Idea Title]**
+- **Proposed by:** [Agent Name]
+- **Category:** [Category]
+- **Rejection rationale:** [1-2 sentences]
+- **Core insight to preserve:** [Key value]
+- **Reconsider when:** [Conditions]
+
+[Optional Runner-Up 3 if relevant]
+
+===========================================================
+\`\`\`
+
+---
+
+${categories_section}
+
+---
+
+${scoring_section}
+
+---
+
+${anti_repetition}
+
+---
+
+${key_files_section}
+
+${notes_section}
+
+---
+
+## Status Reporting (CRITICAL)
+
+At the end of EACH LOOP, include this status block:
+
+\`\`\`
+---KORERO_STATUS---
+STATUS: IN_PROGRESS | COMPLETE
+LOOP: [N] of ${loop_display}
+PHASE_COMPLETED: GENERATION | EVALUATION | DEBATE | DOCUMENTATION
+WINNING_IDEA: [Title of winning idea]
+WINNING_TYPE: [Usability Improvement | New Feature]
+WINNING_CATEGORY: [Category]
+WINNING_AGENT: [Agent name who proposed it]
+CATEGORIES_COVERED: [comma-separated list of unique categories among all winners so far]
+IDEAS_GENERATED_THIS_LOOP: [number of raw ideas in Phase 1]
+PRIOR_WINNERS: [comma-separated titles of all prior winning ideas]
+EXIT_SIGNAL: false | true
+RECOMMENDATION: [What the next loop should focus on for diversity]
+---END_KORERO_STATUS---
+\`\`\`
+
+### EXIT_SIGNAL Guidelines
+- **Idea mode:** Set EXIT_SIGNAL to `true` only when you genuinely cannot think of any more meaningful improvements. This is rare - there is almost always room for improvement.
+- **Coding mode:** Set EXIT_SIGNAL to `true` only when all fix_plan.md items are done AND no more meaningful improvements can be found through ideation.
+- **Default:** Keep EXIT_SIGNAL `false` - the loop should continue running.
+
+---
+
+${current_task_section}
+IDEATIONEOF
+        return 0
     fi
 
     # Output the full PROMPT.md
@@ -2102,7 +2411,7 @@ generate_ideation_agent_md() {
     # Mode description
     local mode_description=""
     local build_section=""
-    if [[ "$mode" == "idea" ]]; then
+    if [[ "$mode" == "idea" || "$mode" == "heavy-idea" ]]; then
         mode_description="**IDEA GENERATION ONLY** — No code changes, no file edits, no tests, no implementation.
 Korero operates as a ${total_agents}-agent debate team generating improvement ideas for ${project_name}."
         build_section="
@@ -2197,10 +2506,100 @@ ${notes_config}"
 
     # No-implementation rule for idea mode
     local idea_mode_rule=""
-    if [[ "$mode" == "idea" ]]; then
+    if [[ "$mode" == "idea" || "$mode" == "heavy-idea" ]]; then
         idea_mode_rule="6. **No Implementation:** Korero must NOT create, edit, or delete any project source files. Pure ideation only. However, Korero MUST write to \`.korero/IDEAS.md\` and \`.korero/fix_plan.md\` to persist winning ideas — these are the only files that should be modified."
     else
         idea_mode_rule="6. **Implementation:** After documenting the winning idea, implement it with code changes, tests, and a git commit."
+    fi
+
+    if [[ "$mode" == "heavy-idea" || "$mode" == "heavy-coding" ]]; then
+        local heavy_mode_description=""
+        local heavy_build_section="
+## Build Instructions
+
+\`\`\`bash
+# No build - this is a proposal generation run, not a code change run.
+echo 'Idea generation mode - no build required'
+\`\`\`
+
+## Test Instructions
+
+\`\`\`bash
+# No tests - this is a proposal generation run.
+echo 'Idea generation mode - no tests required'
+\`\`\`
+
+## Run Instructions
+
+\`\`\`bash
+# No run - this is a proposal generation run.
+echo 'Idea generation mode - no run required'
+\`\`\`"
+        local heavy_rule=""
+        local heavy_output_location=""
+
+        if [[ "$mode" == "heavy-idea" ]]; then
+            heavy_mode_description="**HEAVY IDEA PROPOSAL ONLY** - No code changes, no file edits, no tests, no implementation.
+Korero operates as a ${total_agents}-agent debate team generating competing proposals for ${project_name}. Korero saves the winning idea after the debate."
+            heavy_rule="6. **No Implementation:** During heavy-idea proposal generation, Korero must NOT create, edit, or delete files, run tests, or implement changes."
+            heavy_output_location="## Output Location
+Korero saves the winning idea after the cross-AI debate.
+Proposal generation must NOT write to \`.korero/IDEAS.md\`, \`.korero/fix_plan.md\`, or any other files."
+        else
+            heavy_mode_description="**HEAVY CODING PROPOSAL ONLY** - Generate the best implementation proposal through ${total_agents}-agent debate.
+Korero implements the winning idea in a separate phase after the debate."
+            heavy_rule="6. **Proposal Only:** During heavy-coding proposal generation, Korero must NOT create, edit, or delete files, run tests, or implement changes."
+            heavy_output_location="## Output Location
+Korero carries the winning proposal into a separate implementation phase after the cross-AI debate.
+Proposal generation must NOT write files directly."
+        fi
+
+        cat << AGENTEOF
+# Korero Agent Configuration - Multi-Agent Idea Generation
+
+## Mode
+${heavy_mode_description}
+
+${focus_section}
+
+## Loop Configuration
+- **Total Loops:** ${max_loops}
+- **Output per Loop:** Exactly 1 winning idea (fully documented)
+- **Total Output:** ${max_loops} winning ideas
+${heavy_build_section}
+
+## Agent Team (${total_agents} members)
+
+### Idea Generators (${agent_count})
+
+${domain_agents}
+
+### Evaluators (3)
+
+| # | Agent | Role | Evaluation Focus |
+|---|-------|------|-----------------|
+| $((agent_count + 1)) | Devil's Advocate | Critic | User adoption likelihood, usability risk, complexity creep |
+| $((agent_count + 2)) | Technical Feasibility Agent | Assessor | Effort sizing, architecture fit, breaking change risk |
+| $((agent_count + 3)) | Idea Orchestrator | Decision-maker | Final ranking using weighted scoring criteria |
+
+## Debate Rules
+
+1. **Independence:** In Phase 1, each generator proposes ideas WITHOUT seeing other generators' ideas.
+2. **Transparency:** In Phase 2, evaluators must score EVERY idea - no skipping.
+3. **Defense:** In Phase 3, only the top 3-5 ideas (per Orchestrator) proceed to debate.
+4. **Finality:** The Idea Orchestrator's Phase 3 decision is FINAL. No appeals.
+5. **Specificity:** All ideas must reference actual files, functions, or patterns from the codebase.
+${heavy_rule}
+7. **One Winner:** Exactly one idea wins per loop. No ties. No "honorable mentions."
+8. **Anti-Repetition:** Ideas materially similar to prior winners are automatically disqualified.
+
+${scoring_section}
+
+${heavy_output_location}
+
+${notes_section}
+AGENTEOF
+        return 0
     fi
 
     cat << AGENTEOF

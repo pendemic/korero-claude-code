@@ -18,6 +18,20 @@ teardown() {
     rm -rf "$TEST_DIR"
 }
 
+# ===== Heavy proposal tool filtering =====
+
+@test "filter_heavy_proposal_tools removes write and bash tools" {
+    run bash -c 'source "'$REPO_ROOT'/korero_loop.sh" >/dev/null 2>&1; filter_heavy_proposal_tools "Write,Read,Edit,Bash(git *),WebSearch,TodoWrite"'
+    [ "$status" -eq 0 ]
+    [ "$output" = "Read,WebSearch" ]
+}
+
+@test "filter_heavy_proposal_tools falls back to Read when nothing safe remains" {
+    run bash -c 'source "'$REPO_ROOT'/korero_loop.sh" >/dev/null 2>&1; filter_heavy_proposal_tools "Write,Edit,Bash(git *),TodoWrite"'
+    [ "$status" -eq 0 ]
+    [ "$output" = "Read" ]
+}
+
 # ===== .korerorc validation with heavy modes =====
 
 @test "validate_korerorc accepts heavy-coding mode" {

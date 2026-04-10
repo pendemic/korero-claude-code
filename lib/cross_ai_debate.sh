@@ -514,6 +514,37 @@ JUDGE_EOF
 }
 
 # Parse the judge's verdict output and write structured result
+# Claude's --output-format json wraps the real text in a top-level "result"
+# field. Prefer jq when available, but keep a jq-free fallback so debate
+# parsing still works in lighter Windows environments.
+unwrap_claude_result_payload() {
+    local content="$1"
+
+    if command -v jq &>/dev/null; then
+        local json_result
+        json_result=$(echo "$content" | jq -r '.result // empty' 2>/dev/null || true)
+        if [[ -n "$json_result" ]]; then
+            printf '%s' "$json_result"
+            return 0
+        fi
+    fi
+
+    if [[ "$content" == *'"result":"'*
+        && "$content" == *'"stop_reason"'* ]]; then
+        local escaped_result
+        escaped_result=$(printf '%s' "$content" | sed -n 's/.*"result":"\(.*\)","stop_reason".*/\1/p')
+        if [[ -n "$escaped_result" ]]; then
+            escaped_result=$(printf '%b' "$escaped_result")
+            escaped_result=$(printf '%s' "$escaped_result" | sed 's/\\"/"/g')
+            printf '%s' "$escaped_result"
+            return 0
+        fi
+    fi
+
+    printf '%s' "$content"
+}
+
+# Parse the judge's verdict output and write structured result
 # Arguments:
 #   $1 (judge_output_file) - Path to judge's output
 #   $2 (result_file)       - Path to write result (optional, defaults to .debate_result)
@@ -538,15 +569,7 @@ DEFAULT_EOF
 
     local content
     content=$(cat "$judge_output_file")
-
-    # Handle JSON output from Claude (extract .result field if present)
-    if command -v jq &>/dev/null; then
-        local json_result
-        json_result=$(echo "$content" | jq -r '.result // empty' 2>/dev/null || true)
-        if [[ -n "$json_result" ]]; then
-            content="$json_result"
-        fi
-    fi
+    content=$(unwrap_claude_result_payload "$content")
 
     # Extract verdict block
     local verdict_block
@@ -765,7 +788,7 @@ CLAUDE_WIN_EOF
     # Claude critiques Codex (background)
     local claude_critique_cmd
     declare -a CLAUDE_CRITIQUE_ARGS=("${CLAUDE_CODE_CMD:-claude}" "--output-format" "json" "-p" "$claude_critique_prompt")
-    portable_timeout "${timeout_seconds}s" "${CLAUDE_CRITIQUE_ARGS[@]}" > "$claude_critique_file" 2>&1 &
+    portable_timeout "${timeout_seconds}s" "${CLAUDE_CRITIQUE_ARGS[@]}" < /dev/null > "$claude_critique_file" 2>&1 &
     local claude_crit_pid=$!
 
     # Codex critiques Claude (background)
@@ -833,7 +856,7 @@ CLAUDE_WIN_EOF
 
         # Claude defends (background)
         declare -a CLAUDE_DEFENSE_ARGS=("${CLAUDE_CODE_CMD:-claude}" "--output-format" "json" "-p" "$claude_defense_prompt")
-        portable_timeout "${timeout_seconds}s" "${CLAUDE_DEFENSE_ARGS[@]}" > "$claude_defense_file" 2>&1 &
+        portable_timeout "${timeout_seconds}s" "${CLAUDE_DEFENSE_ARGS[@]}" < /dev/null > "$claude_defense_file" 2>&1 &
         local claude_def_pid=$!
 
         # Codex defends (background)
@@ -902,7 +925,7 @@ CLAUDE_WIN_EOF
         "$project_name")
 
     declare -a CLAUDE_JUDGE_ARGS=("${CLAUDE_CODE_CMD:-claude}" "--output-format" "json" "-p" "$judge_prompt")
-    portable_timeout "${timeout_seconds}s" "${CLAUDE_JUDGE_ARGS[@]}" > "$judge_file" 2>&1
+    portable_timeout "${timeout_seconds}s" "${CLAUDE_JUDGE_ARGS[@]}" < /dev/null > "$judge_file" 2>&1
     local judge_exit=$?
     local round3_elapsed=$(( $(date +%s) - round3_start ))
     log_status "INFO" "  Round 3 complete — Judge exit: $judge_exit"

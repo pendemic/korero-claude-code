@@ -147,6 +147,23 @@ EOF
     grep -q '"confidence": 75' "$KORERO_DIR/.debate_result"
 }
 
+@test "parse_debate_verdict extracts wrapped JSON verdict without working jq" {
+    mkdir -p "$TEST_DIR/bin"
+    echo '#!/bin/bash
+exit 1' > "$TEST_DIR/bin/jq"
+    chmod +x "$TEST_DIR/bin/jq"
+
+    cat > "$TEST_DIR/judge.log" << 'EOF'
+{"type":"result","subtype":"success","result":"\n---DEBATE_VERDICT---\nWINNER: codex\nTITLE: Wrapped verdict survives jq fallback\nCONFIDENCE: 82\nRATIONALE: Codex had the stronger final proposal.\nRUNNER_UP_INSIGHT: Claude still surfaced a useful tradeoff.\n---END_DEBATE_VERDICT---","stop_reason":"end_turn"}
+EOF
+
+    run bash -c 'PATH="'$TEST_DIR/bin':/usr/bin:/bin"; export KORERO_DIR="'$KORERO_DIR'"; source "'$REPO_ROOT'/lib/debate_transcript.sh"; source "'$REPO_ROOT'/lib/codex_adapter.sh"; source "'$REPO_ROOT'/lib/cross_ai_debate.sh"; parse_debate_verdict "'$TEST_DIR'/judge.log" "'$KORERO_DIR'/.debate_result"; cat "'$KORERO_DIR'/.debate_result"'
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"winner": "codex"'* ]]
+    [[ "$output" == *'"confidence": 82'* ]]
+    [[ "$output" == *'Wrapped verdict survives jq fallback'* ]]
+}
+
 @test "parse_debate_verdict defaults to claude on missing verdict block" {
     echo "No verdict here" > "$TEST_DIR/judge.log"
     parse_debate_verdict "$TEST_DIR/judge.log" "$KORERO_DIR/.debate_result" || true

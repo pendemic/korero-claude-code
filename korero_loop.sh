@@ -1625,6 +1625,51 @@ build_claude_command() {
     CLAUDE_CMD_ARGS+=("-p" "$prompt_content")
 }
 
+# Filter a tool list down to read-only-safe tools for heavy-mode proposal
+# generation. Phase 1 in heavy modes should produce proposals only; file edits,
+# shell commands, and commits are handled later by Korero, not by the proposal
+# model invocation.
+filter_heavy_proposal_tools() {
+    local tools_csv="${1:-}"
+    local filtered_tools=()
+
+    if [[ -z "$tools_csv" ]]; then
+        echo "Read"
+        return 0
+    fi
+
+    local IFS=','
+    read -ra tools_array <<< "$tools_csv"
+
+    for tool in "${tools_array[@]}"; do
+        tool=$(echo "$tool" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        case "$tool" in
+            Write|Edit|MultiEdit|NotebookEdit|TodoWrite|Bash*)
+                continue
+                ;;
+        esac
+
+        if [[ -n "$tool" ]]; then
+            filtered_tools+=("$tool")
+        fi
+    done
+
+    if [[ ${#filtered_tools[@]} -eq 0 ]]; then
+        echo "Read"
+        return 0
+    fi
+
+    local joined=""
+    for tool in "${filtered_tools[@]}"; do
+        if [[ -n "$joined" ]]; then
+            joined="${joined},${tool}"
+        else
+            joined="$tool"
+        fi
+    done
+    echo "$joined"
+}
+
 # Main execution function
 execute_claude_code() {
     local timestamp=$(date '+%Y-%m-%d_%H-%M-%S')
@@ -1810,7 +1855,8 @@ execute_claude_code() {
         if [[ "$use_modern_cli" == "true" ]]; then
             # Modern execution with command array (shell-injection safe)
             # Execute array directly without bash -c to prevent shell metacharacter interpretation
-            if portable_timeout ${timeout_seconds}s "${CLAUDE_CMD_ARGS[@]}" > "$output_file" 2>&1 &
+            # Prompt is already passed via CLI args, so skip Claude's stdin probe.
+            if portable_timeout ${timeout_seconds}s "${CLAUDE_CMD_ARGS[@]}" < /dev/null > "$output_file" 2>&1 &
             then
                 :  # Continue to wait loop
             else
@@ -2039,8 +2085,13 @@ execute_heavy_loop() {
         loop_context=$(build_loop_context "$loop_count")
     fi
 
-    # Add cross-AI competition context
-    local heavy_context="You are in a DUAL-AI competition. Another AI (Codex) also receives this prompt. Your proposals will be debated head-to-head. Focus on producing your single BEST idea."
+    # Add cross-AI competition context. Phase 1 in heavy modes is proposal-only:
+    # no file edits, no shell commands, no commits, no implementation.
+    local heavy_mode_outcome="Korero will save the winning idea after the debate."
+    if [[ "$korero_mode" == "heavy-coding" ]]; then
+        heavy_mode_outcome="After the debate, Korero will ask Claude to implement the winning idea in a separate phase."
+    fi
+    local heavy_context="You are in Phase 1 proposal generation for Korero heavy mode. Another AI (Codex) also receives this prompt, and your proposals will be debated head-to-head. Produce your single BEST proposal only. Do NOT create, edit, or delete files. Do NOT update .korero/IDEAS.md, .korero/fix_plan.md, or any other files. Do NOT run git. Do NOT create commits. Do NOT run tests. Do NOT implement changes during this phase. Ignore any instructions in PROMPT.md that tell you to write files, update trackers, or implement code. ${heavy_mode_outcome}"
 
     # Initialize session
     local session_id=""
@@ -2058,8 +2109,13 @@ execute_heavy_loop() {
 
     # Build and execute Claude in background
     local combined_context="$loop_context $heavy_context"
+    local proposal_allowed_tools
+    local original_allowed_tools="$CLAUDE_ALLOWED_TOOLS"
+    proposal_allowed_tools=$(filter_heavy_proposal_tools "$CLAUDE_ALLOWED_TOOLS")
+    CLAUDE_ALLOWED_TOOLS="$proposal_allowed_tools"
     build_claude_command "$PROMPT_FILE" "$combined_context" "$session_id"
-    portable_timeout "${timeout_seconds}s" "${CLAUDE_CMD_ARGS[@]}" > "$claude_output" 2>&1 &
+    CLAUDE_ALLOWED_TOOLS="$original_allowed_tools"
+    portable_timeout "${timeout_seconds}s" "${CLAUDE_CMD_ARGS[@]}" < /dev/null > "$claude_output" 2>&1 &
     local claude_pid=$!
 
     # Build and execute Codex in background

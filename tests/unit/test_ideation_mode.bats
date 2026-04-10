@@ -173,6 +173,16 @@ teardown() {
     echo "$output" | grep -q "do NOT implement"
 }
 
+@test "generate_ideation_prompt_md excludes implementation section for heavy-idea mode" {
+    local output
+    output=$(generate_ideation_prompt_md "test-project" "typescript" "heavy-idea" "web app" "3" "10")
+
+    echo "$output" | grep -q "HEAVY IDEA PROPOSAL ONLY"
+    echo "$output" | grep -q "Do NOT write to"
+    ! echo "$output" | grep -q "Phase 3b: Implementation"
+    ! echo "$output" | grep -q "git commit"
+}
+
 @test "generate_ideation_prompt_md includes loop count and agent count" {
     local output
     output=$(generate_ideation_prompt_md "test-project" "python" "idea" "machine learning pipeline" "5" "20")
@@ -328,6 +338,18 @@ teardown() {
 
     echo "$output" | grep -q "Idea generation mode"
     echo "$output" | grep -q "no build required"
+}
+
+@test "generate_ideation_agent_md heavy-idea mode shows no-build message" {
+    local agents
+    agents=$(_generate_generic_agents 1)
+    local output
+    output=$(generate_ideation_agent_md "$agents" "npm run build" "npm test" "npm start" "heavy-idea" "1" "10" "test-project")
+
+    echo "$output" | grep -q "Idea generation mode"
+    echo "$output" | grep -q "no build required"
+    echo "$output" | grep -q "must NOT write to"
+    ! echo "$output" | grep -q "implement it with code changes and a git commit"
 }
 
 @test "generate_ideation_agent_md includes debate rules" {

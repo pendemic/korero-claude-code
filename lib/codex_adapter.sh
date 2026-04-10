@@ -264,6 +264,213 @@ run_codex_with_prompt() {
     printf '%s' "$prompt_content" | portable_timeout "$timeout_duration" "$@"
 }
 
+# Treat bare protocol/usage objects as telemetry, not substantive Codex output.
+codex_text_is_metadata_blob() {
+    local text="$1"
+
+    [[ -z "$text" ]] && return 1
+
+    local compact="$text"
+    compact="${compact//$'\r'/}"
+    compact="${compact//$'\n'/}"
+
+    if [[ "$compact" != \{*\"type\"* ]]; then
+        return 1
+    fi
+
+    if command -v jq &>/dev/null; then
+        printf '%s' "$compact" | jq -e '
+            type == "object"
+            and (.type? != null)
+            and (
+                (.text? // .content? // .message? // .result? // .output_text?
+                 // .item?.text? // .item?.content? // .item?.message? // .item?.result? // .item?.output_text?) == null
+            )
+        ' >/dev/null 2>&1
+        return $?
+    fi
+
+    [[ "$compact" == *'"type":'* ]] \
+        && [[ "$compact" != *'"text":'* ]] \
+        && [[ "$compact" != *'"content":'* ]] \
+        && [[ "$compact" != *'"message":'* ]] \
+        && [[ "$compact" != *'"result":'* ]] \
+        && [[ "$compact" != *'"output_text":'* ]]
+}
+
+# PowerShell provides a reliable Windows fallback for large NDJSON lines when
+# jq/grep extraction misses the final agent_message.
+extract_codex_text_with_powershell() {
+    local ndjson_file="$1"
+
+    command -v powershell.exe &>/dev/null || return 1
+    [[ ! -f "$ndjson_file" || ! -s "$ndjson_file" ]] && return 1
+
+    local text=""
+    local ps_script=""
+    ps_script=$(cat <<'POWERSHELL'
+$Path = $args[0]
+
+if (-not (Test-Path -LiteralPath $Path)) {
+    exit 1
+}
+
+$candidates = New-Object System.Collections.Generic.List[string]
+
+Get-Content -LiteralPath $Path | ForEach-Object {
+    if ($_ -eq 'Reading prompt from stdin...') {
+        return
+    }
+
+    try {
+        $obj = $_ | ConvertFrom-Json -Depth 100
+    } catch {
+        return
+    }
+
+    $text = $null
+
+    if ($obj.type -in @('item.completed', 'item.started')) {
+        $item = $obj.item
+        if ($null -ne $item -and $item.type -in @('agent_message', 'assistant_message', 'message')) {
+            $text = $item.text
+            if (-not $text) { $text = $item.content }
+            if (-not $text) { $text = $item.message }
+            if (-not $text) { $text = $item.result }
+            if (-not $text) { $text = $item.output_text }
+        }
+    }
+
+    if (-not $text -and $obj.type -in @('message', 'assistant', 'result')) {
+        $text = $obj.text
+        if (-not $text) { $text = $obj.content }
+        if (-not $text) { $text = $obj.message }
+        if (-not $text) { $text = $obj.result }
+        if (-not $text) { $text = $obj.output_text }
+    }
+
+    if (-not $text -and $obj.output_text) {
+        $text = $obj.output_text
+    }
+
+    if (-not $text -and $obj.response -and $obj.response.output_text) {
+        $text = $obj.response.output_text
+    }
+
+    if ($text) {
+        $candidates.Add([string]$text)
+    }
+}
+
+if ($candidates.Count -eq 0) {
+    exit 1
+}
+
+[Console]::Out.Write($candidates[$candidates.Count - 1])
+POWERSHELL
+)
+    text=$(powershell.exe -NoProfile -NonInteractive -Command "$ps_script" -- "$ndjson_file" 2>/dev/null)
+
+    if [[ -n "$text" ]]; then
+        printf '%s' "$text"
+        return 0
+    fi
+
+    return 1
+}
+
+# Extract the final assistant text from Codex NDJSON output.
+# Handles both older top-level message/result records and newer
+# item.completed -> item.type=agent_message records.
+# Arguments:
+#   $1 (ndjson_file) - Path to Codex NDJSON output
+# Returns: extracted text on stdout, 0 if non-empty text found, 1 otherwise
+extract_codex_text_from_ndjson() {
+    local ndjson_file="$1"
+
+    if [[ ! -f "$ndjson_file" || ! -s "$ndjson_file" ]]; then
+        return 1
+    fi
+
+    local text=""
+
+    if command -v jq &>/dev/null; then
+        text=$(jq -rs '
+            def flatten_text:
+                if . == null then empty
+                elif type == "string" then .
+                elif type == "array" then [ .[]? | flatten_text ] | map(select(length > 0)) | join("\n")
+                elif type == "object" then (.text? // .content? // .message? // .result? // .output_text? // empty) | flatten_text
+                else empty
+                end;
+
+            def candidate_texts:
+                [
+                    (.item? | select(.type == "agent_message" or .type == "assistant_message" or .type == "message") | flatten_text),
+                    (select(.type == "message" or .type == "assistant" or .type == "result") | flatten_text),
+                    (.output_text? | flatten_text),
+                    (.response?.output_text? | flatten_text)
+                ]
+                | map(select(type == "string" and length > 0));
+
+            [ .[] | candidate_texts[] ]
+            | last // empty
+        ' "$ndjson_file" 2>/dev/null)
+
+        if codex_text_is_metadata_blob "$text"; then
+            text=""
+        fi
+    fi
+
+    if [[ -z "$text" ]]; then
+        text=$(extract_codex_text_with_powershell "$ndjson_file" 2>/dev/null || echo "")
+        if codex_text_is_metadata_blob "$text"; then
+            text=""
+        fi
+    fi
+
+    if [[ -z "$text" ]]; then
+        local result_line=""
+        result_line=$(grep -a '"type":"result"' "$ndjson_file" 2>/dev/null | tail -1)
+        if [[ -n "$result_line" && "$result_line" == *'"result":"'* ]]; then
+            text=$(printf '%s\n' "$result_line" | sed -n 's/.*"result":"\(.*\)","stop_reason".*/\1/p')
+            text=$(printf '%b' "$(printf '%s' "$text" | sed 's/\\"/"/g; s/\\\\/\x5c/g; s/\\r//g; s/\\n/\\n/g; s/\\t/\\t/g')")
+        fi
+
+        if codex_text_is_metadata_blob "$text"; then
+            text=""
+        fi
+    fi
+
+    if [[ -z "$text" ]]; then
+        local agent_line=""
+        agent_line=$(grep -a '"type":"agent_message"' "$ndjson_file" 2>/dev/null | tail -1)
+        if [[ -n "$agent_line" ]]; then
+            text=$(printf '%s\n' "$agent_line" | sed -E 's/^.*"text":"(.*)".*$/\1/')
+            text=$(printf '%b' "$(printf '%s' "$text" | sed 's/\\"/"/g; s/\\\\/\x5c/g; s/\\r//g; s/\\n/\\n/g; s/\\t/\\t/g')")
+        fi
+
+        if codex_text_is_metadata_blob "$text"; then
+            text=""
+        fi
+    fi
+
+    if [[ -z "$text" ]]; then
+        text=$(grep -a -v '^\s*$' "$ndjson_file" 2>/dev/null | grep -a -v '^Reading prompt from stdin\.\.\.$' | grep -a -v '"type":"turn.completed"' | tail -1)
+    fi
+
+    if codex_text_is_metadata_blob "$text"; then
+        text=""
+    fi
+
+    if [[ -n "$text" ]]; then
+        printf '%s\n' "$text"
+        return 0
+    fi
+
+    return 1
+}
+
 # Parse Codex NDJSON output into normalized analysis format
 # Creates a normalized result file compatible with Korero's analysis pipeline
 # Arguments:
@@ -281,13 +488,7 @@ parse_codex_response() {
 
     # Primary: extract from NDJSON stream (codex exec --json output)
     if [[ -f "$ndjson_file" && -s "$ndjson_file" ]]; then
-        if command -v jq &>/dev/null; then
-            proposal_text=$(jq -r 'select(.type == "message" or .type == "assistant" or .type == "result") | .content // .message // .result // empty' "$ndjson_file" 2>/dev/null | tail -1)
-        fi
-        # Fallback: if jq parsing fails, try reading last non-empty line
-        if [[ -z "$proposal_text" ]]; then
-            proposal_text=$(grep -v '^\s*$' "$ndjson_file" 2>/dev/null | tail -1)
-        fi
+        proposal_text=$(extract_codex_text_from_ndjson "$ndjson_file" 2>/dev/null || echo "")
         output_length=${#proposal_text}
     fi
 
@@ -295,6 +496,11 @@ parse_codex_response() {
     if [[ -z "$proposal_text" && -n "$last_message_file" && -f "$last_message_file" && -s "$last_message_file" ]]; then
         proposal_text=$(cat "$last_message_file")
         output_length=${#proposal_text}
+    fi
+
+    if codex_text_is_metadata_blob "$proposal_text"; then
+        proposal_text=""
+        output_length=0
     fi
 
     if [[ -z "$proposal_text" ]]; then
@@ -332,14 +538,8 @@ extract_codex_proposal() {
     # Primary: parse NDJSON stream from codex exec --json
     if [[ -f "$ndjson_file" && -s "$ndjson_file" ]]; then
         local text=""
-        if command -v jq &>/dev/null; then
-            text=$(jq -r 'select(.type == "message" or .type == "assistant" or .type == "result") | .content // .message // .result // empty' "$ndjson_file" 2>/dev/null | tail -1)
-        fi
-        # Fallback: if jq can't parse, read last non-empty line
-        if [[ -z "$text" ]]; then
-            text=$(grep -v '^\s*$' "$ndjson_file" 2>/dev/null | tail -1)
-        fi
-        if [[ -n "$text" ]]; then
+        text=$(extract_codex_text_from_ndjson "$ndjson_file" 2>/dev/null || echo "")
+        if [[ -n "$text" ]] && ! codex_text_is_metadata_blob "$text"; then
             echo "$text"
             return 0
         fi
@@ -347,8 +547,12 @@ extract_codex_proposal() {
 
     # Secondary: check last_message_file if it exists
     if [[ -n "$last_message_file" && -f "$last_message_file" && -s "$last_message_file" ]]; then
-        cat "$last_message_file"
-        return 0
+        local text=""
+        text=$(cat "$last_message_file")
+        if [[ -n "$text" ]] && ! codex_text_is_metadata_blob "$text"; then
+            printf '%s\n' "$text"
+            return 0
+        fi
     fi
 
     echo ""
@@ -448,6 +652,9 @@ export -f get_codex_error_help
 export -f run_codex_login
 export -f build_codex_command
 export -f run_codex_with_prompt
+export -f codex_text_is_metadata_blob
+export -f extract_codex_text_with_powershell
+export -f extract_codex_text_from_ndjson
 export -f parse_codex_response
 export -f extract_codex_proposal
 export -f should_fallback_to_claude
