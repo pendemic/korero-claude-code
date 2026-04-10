@@ -319,12 +319,16 @@ output_success() {
 }
 EOF
     else
+        # Generate quick reference card (Loop 43)
+        generate_quick_reference "${KORERO_MODE:-coding}" 2>/dev/null || true
+
         echo "Korero enabled successfully for: $project_name ($project_type)"
         echo "Mode: $KORERO_MODE"
         echo "Domain agents: $AGENT_COUNT"
         echo "Max loops: $MAX_LOOPS"
         echo "Files created: ${#CREATED_FILES[@]}"
         echo "Tasks imported: $TASKS_IMPORTED"
+        echo "Quick reference: .korero/QUICK_REFERENCE.md"
     fi
 }
 
@@ -461,6 +465,7 @@ main() {
 
     # Set up enable environment
     export ENABLE_FORCE="$FORCE_OVERWRITE"
+    export ENABLE_INTERACTIVE="false"
     export ENABLE_SKIP_TASKS="false"
     export ENABLE_PROJECT_NAME="$DETECTED_PROJECT_NAME"
     export ENABLE_PROJECT_TYPE="$DETECTED_PROJECT_TYPE"

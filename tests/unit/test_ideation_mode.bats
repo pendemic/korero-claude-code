@@ -173,6 +173,16 @@ teardown() {
     echo "$output" | grep -q "do NOT implement"
 }
 
+@test "generate_ideation_prompt_md excludes implementation section for heavy-idea mode" {
+    local output
+    output=$(generate_ideation_prompt_md "test-project" "typescript" "heavy-idea" "web app" "3" "10")
+
+    echo "$output" | grep -q "HEAVY IDEA PROPOSAL ONLY"
+    echo "$output" | grep -q "Do NOT write to"
+    ! echo "$output" | grep -q "Phase 3b: Implementation"
+    ! echo "$output" | grep -q "git commit"
+}
+
 @test "generate_ideation_prompt_md includes loop count and agent count" {
     local output
     output=$(generate_ideation_prompt_md "test-project" "python" "idea" "machine learning pipeline" "5" "20")
@@ -328,6 +338,18 @@ teardown() {
 
     echo "$output" | grep -q "Idea generation mode"
     echo "$output" | grep -q "no build required"
+}
+
+@test "generate_ideation_agent_md heavy-idea mode shows no-build message" {
+    local agents
+    agents=$(_generate_generic_agents 1)
+    local output
+    output=$(generate_ideation_agent_md "$agents" "npm run build" "npm test" "npm start" "heavy-idea" "1" "10" "test-project")
+
+    echo "$output" | grep -q "Idea generation mode"
+    echo "$output" | grep -q "no build required"
+    echo "$output" | grep -q "must NOT write to"
+    ! echo "$output" | grep -q "implement it with code changes and a git commit"
 }
 
 @test "generate_ideation_agent_md includes debate rules" {
@@ -827,4 +849,131 @@ EOF
     [[ -f ".korero/ideas/IDEAS.md" ]]
     grep -q "Winning Ideas" .korero/ideas/IDEAS.md
     grep -q "10" .korero/ideas/IDEAS.md
+}
+
+# =============================================================================
+# IDEA IMPLEMENTATION STATUS (Loop 37)
+# =============================================================================
+
+_make_fix_plan_with_loops() {
+    local fix_plan_dir="${TEST_DIR}/.korero"
+    mkdir -p "$fix_plan_dir"
+    cat > "$fix_plan_dir/fix_plan.md" << 'FIXPLAN'
+| Loop | Winner Title       | Type        | Category    | Agent   | Status   |
+|------|--------------------|-------------|-------------|---------|----------|
+| 1    | Test Idea One      | Usability   | CLI         | Agent A | Complete |
+| 2    | Test Idea Two      | New Feature | Test        | Agent B | Complete |
+
+## Loop Checkpoints
+
+### Loop 1
+- [x] Implementation complete
+- [x] Tests added
+
+### Loop 2
+- [ ] Implementation complete
+- [ ] Tests added
+FIXPLAN
+}
+
+@test "show_implementation_status shows dashboard header" {
+    _make_fix_plan_with_loops
+    run bash -c "
+        export KORERO_DIR='${TEST_DIR}/.korero'
+        source '$KORERO_LOOP'
+        show_implementation_status
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"IDEA IMPLEMENTATION STATUS"* ]]
+}
+
+@test "show_implementation_status shows correct summary count" {
+    _make_fix_plan_with_loops
+    run bash -c "
+        export KORERO_DIR='${TEST_DIR}/.korero'
+        source '$KORERO_LOOP'
+        show_implementation_status
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"1/2 implemented"* ]]
+}
+
+@test "show_implementation_status shows implemented idea with checkmark" {
+    _make_fix_plan_with_loops
+    run bash -c "
+        export KORERO_DIR='${TEST_DIR}/.korero'
+        source '$KORERO_LOOP'
+        show_implementation_status
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"✓ Loop 1"* ]]
+}
+
+@test "show_implementation_status shows pending idea with circle" {
+    _make_fix_plan_with_loops
+    run bash -c "
+        export KORERO_DIR='${TEST_DIR}/.korero'
+        source '$KORERO_LOOP'
+        show_implementation_status
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"○ Loop 2"* ]]
+}
+
+@test "show_implementation_status shows progress bar" {
+    _make_fix_plan_with_loops
+    run bash -c "
+        export KORERO_DIR='${TEST_DIR}/.korero'
+        source '$KORERO_LOOP'
+        show_implementation_status
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PROGRESS BAR"* ]]
+}
+
+@test "show_implementation_status shows NEXT UP section" {
+    _make_fix_plan_with_loops
+    run bash -c "
+        export KORERO_DIR='${TEST_DIR}/.korero'
+        source '$KORERO_LOOP'
+        show_implementation_status
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NEXT UP"* ]]
+}
+
+@test "show_implementation_status fails when no fix_plan.md" {
+    mkdir -p "${TEST_DIR}/.korero"
+    run bash -c "
+        export KORERO_DIR='${TEST_DIR}/.korero'
+        source '$KORERO_LOOP'
+        show_implementation_status
+    "
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"No fix_plan.md found"* ]]
+}
+
+@test "--implementation-status flag calls show_implementation_status" {
+    _make_fix_plan_with_loops
+    # Need prompt file for korero_loop.sh to not error on sourcing
+    mkdir -p "${TEST_DIR}/.korero/logs"
+    touch "${TEST_DIR}/.korero/PROMPT.md"
+    echo "0" > "${TEST_DIR}/.korero/.call_count"
+    echo "$(date +%Y%m%d%H)" > "${TEST_DIR}/.korero/.last_reset"
+
+    run bash "$KORERO_LOOP" --implementation-status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"IDEA IMPLEMENTATION STATUS"* ]]
+}
+
+@test "--impl-status is an alias for --implementation-status" {
+    _make_fix_plan_with_loops
+    mkdir -p "${TEST_DIR}/.korero/logs"
+    touch "${TEST_DIR}/.korero/PROMPT.md"
+    echo "0" > "${TEST_DIR}/.korero/.call_count"
+    echo "$(date +%Y%m%d%H)" > "${TEST_DIR}/.korero/.last_reset"
+
+    run bash "$KORERO_LOOP" --impl-status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"IDEA IMPLEMENTATION STATUS"* ]]
 }

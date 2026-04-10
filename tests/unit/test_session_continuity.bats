@@ -501,6 +501,55 @@ EOF
 }
 
 # =============================================================================
+# SESSION AGE WARNING TESTS
+# =============================================================================
+
+@test "check_session_age returns empty for missing session file" {
+    rm -f "$KORERO_DIR/.claude_session_id"
+    run check_session_age
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "check_session_age returns empty for fresh session" {
+    touch "$KORERO_DIR/.claude_session_id"
+    run check_session_age
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "check_session_age warns for old session" {
+    touch "$KORERO_DIR/.claude_session_id"
+    # Set modification time to 24 hours ago
+    touch -d "24 hours ago" "$KORERO_DIR/.claude_session_id" 2>/dev/null || \
+        touch -t "$(date -d '24 hours ago' '+%Y%m%d%H%M.%S' 2>/dev/null || date -v-24H '+%Y%m%d%H%M.%S')" "$KORERO_DIR/.claude_session_id"
+    run check_session_age
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"hours old"* ]]
+    [[ "$output" == *"--reset-session"* ]]
+}
+
+@test "check_session_age respects custom threshold" {
+    touch "$KORERO_DIR/.claude_session_id"
+    # Set modification time to 6 hours ago
+    touch -d "6 hours ago" "$KORERO_DIR/.claude_session_id" 2>/dev/null || \
+        touch -t "$(date -d '6 hours ago' '+%Y%m%d%H%M.%S' 2>/dev/null || date -v-6H '+%Y%m%d%H%M.%S')" "$KORERO_DIR/.claude_session_id"
+    SESSION_AGE_WARNING_HOURS=4 run check_session_age
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"hours old"* ]]
+}
+
+@test "check_session_age silent when within threshold" {
+    touch "$KORERO_DIR/.claude_session_id"
+    # Set modification time to 6 hours ago, threshold 12 hours
+    touch -d "6 hours ago" "$KORERO_DIR/.claude_session_id" 2>/dev/null || \
+        touch -t "$(date -d '6 hours ago' '+%Y%m%d%H%M.%S' 2>/dev/null || date -v-6H '+%Y%m%d%H%M.%S')" "$KORERO_DIR/.claude_session_id"
+    SESSION_AGE_WARNING_HOURS=12 run check_session_age
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+# =============================================================================
 # INTEGRATION: FULL SESSION LIFECYCLE
 # =============================================================================
 

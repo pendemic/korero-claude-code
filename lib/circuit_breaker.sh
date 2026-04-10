@@ -423,6 +423,94 @@ format_recovery_suggestion() {
     echo "========================================="
 }
 
+# Check if estimated API costs exceed the configured budget
+# Returns: 0 if under budget (or no budget set), 1 if over budget
+check_budget_threshold() {
+    local budget="${KORERO_BUDGET_USD:-}"
+    [[ -z "$budget" ]] && return 0
+
+    local cost_file="${KORERO_DIR:-.korero}/cost_history.json"
+    [[ ! -f "$cost_file" ]] && return 0
+
+    local current_cost
+    current_cost=$(jq -r '.session_total_usd // 0' "$cost_file" 2>/dev/null || echo "0")
+
+    # Compare using bc for floating point
+    if command -v bc &>/dev/null; then
+        if (( $(echo "$current_cost >= $budget" | bc -l 2>/dev/null || echo 0) )); then
+            return 1
+        fi
+    else
+        # Integer fallback: strip decimals
+        local icost ibudget
+        icost=$(echo "$current_cost" | sed 's/\..*//')
+        ibudget=$(echo "$budget" | sed 's/\..*//')
+        [[ "${icost:-0}" -ge "${ibudget:-0}" ]] && return 1
+    fi
+    return 0
+}
+
+# Get current spend as percentage of budget (0 if no budget set)
+get_budget_percentage() {
+    local budget="${KORERO_BUDGET_USD:-}"
+    [[ -z "$budget" ]] && echo "0" && return
+
+    local cost_file="${KORERO_DIR:-.korero}/cost_history.json"
+    [[ ! -f "$cost_file" ]] && echo "0" && return
+
+    local current_cost
+    current_cost=$(jq -r '.session_total_usd // 0' "$cost_file" 2>/dev/null || echo "0")
+
+    if command -v bc &>/dev/null; then
+        echo "scale=0; ($current_cost * 100) / $budget" | bc -l 2>/dev/null || echo "0"
+    else
+        echo "0"
+    fi
+}
+
+# Show budget alert prompt and handle user choice
+# Arguments:
+#   $1 (current_cost) - Current estimated spend
+#   $2 (budget)       - Configured budget limit
+# Returns: 0 to continue, 1 to exit
+prompt_budget_exceeded() {
+    local current_cost="$1"
+    local budget="$2"
+
+    echo ""
+    echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${RED}║  BUDGET ALERT                                              ║${NC}"
+    echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "  Estimated spending: \$$current_cost"
+    echo "  Budget limit:       \$$budget"
+    echo ""
+    echo "  Options:"
+    echo "    1) Continue anyway (acknowledge overspend)"
+    echo "    2) Reduce rate limit (slow down spending)"
+    echo "    3) Exit and review costs"
+    echo ""
+    read -r -t 30 -p "  Select option [1/2/3]: " choice 2>/dev/null
+    echo ""
+
+    case "${choice:-3}" in
+        1)
+            echo "  Continuing with acknowledged overspend."
+            return 0
+            ;;
+        2)
+            local new_limit=$(( ${MAX_CALLS_PER_HOUR:-100} / 2 ))
+            export MAX_CALLS_PER_HOUR=$new_limit
+            echo "  Rate limit reduced to $new_limit calls/hour. Continuing."
+            return 0
+            ;;
+        *)
+            echo "  Exiting to review costs. Run: korero --cost-history"
+            return 1
+            ;;
+    esac
+}
+
 # Check if loop should halt (used in main loop)
 should_halt_execution() {
     local state=$(get_circuit_state)
@@ -480,3 +568,6 @@ export -f reset_circuit_breaker
 export -f should_halt_execution
 export -f format_recovery_suggestion
 export -f track_codex_failure
+export -f check_budget_threshold
+export -f get_budget_percentage
+export -f prompt_budget_exceeded

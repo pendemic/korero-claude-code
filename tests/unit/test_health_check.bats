@@ -205,3 +205,49 @@ EOF
     # Should show either all-clear or issues-found summary
     [[ "$output" == *"ready to run"* ]] || [[ "$output" == *"found"* ]]
 }
+
+# ===== check_bash_version =====
+
+@test "check_bash_version succeeds on current bash" {
+    run check_bash_version
+    [ "$status" -eq 0 ]
+}
+
+@test "check_bash_version shows upgrade instructions on old bash" {
+    # BASH_VERSINFO is readonly, so override BASH_MIN_VERSION after sourcing
+    run bash -c '
+        source "'"$LIB_DIR"'/health_check.sh"
+        BASH_MIN_VERSION=99
+        check_bash_version
+    '
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"requires Bash"* ]]
+    [[ "$output" == *"UPGRADE INSTRUCTIONS"* ]]
+    [[ "$output" == *"brew install bash"* ]]
+}
+
+@test "check_bash_version returns exit code 3 for old version" {
+    run bash -c '
+        source "'"$LIB_DIR"'/health_check.sh"
+        BASH_MIN_VERSION=99
+        check_bash_version
+    '
+    [ "$status" -eq 3 ]
+}
+
+@test "check_bash_version shows macOS and Linux instructions" {
+    run bash -c '
+        source "'"$LIB_DIR"'/health_check.sh"
+        BASH_MIN_VERSION=99
+        check_bash_version
+    '
+    [[ "$output" == *"Homebrew"* ]]
+    [[ "$output" == *"MacPorts"* ]]
+    [[ "$output" == *"apt install bash"* ]]
+    [[ "$output" == *"dnf install bash"* ]]
+}
+
+@test "run_health_check includes bash version" {
+    run run_health_check
+    [[ "$output" == *"Bash:"* ]]
+}

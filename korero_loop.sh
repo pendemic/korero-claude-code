@@ -21,10 +21,17 @@ source "$SCRIPT_DIR/lib/health_check.sh"
 source "$SCRIPT_DIR/lib/codex_adapter.sh"
 source "$SCRIPT_DIR/lib/cross_ai_debate.sh"
 source "$SCRIPT_DIR/lib/debate_transcript.sh"
+source "$SCRIPT_DIR/lib/cost_estimator.sh"
+source "$SCRIPT_DIR/lib/signal_handler.sh"
+
+# Validate bash version before anything else
+if ! check_bash_version; then
+    exit 3
+fi
 
 # Configuration
 # Korero-specific files live in .korero/ subfolder
-KORERO_DIR=".korero"
+KORERO_DIR="${KORERO_DIR:-.korero}"
 PROMPT_FILE="$KORERO_DIR/PROMPT.md"
 LOG_DIR="$KORERO_DIR/logs"
 DOCS_DIR="$KORERO_DIR/docs/generated"
@@ -47,6 +54,7 @@ MAX_DURATION_ENTRIES=10
 # Rate limit warning flags (reset each hour)
 RATE_WARNED_80=false
 RATE_WARNED_95=false
+LOOPS_THIS_HOUR=0
 
 # Save environment variable state BEFORE setting defaults
 # These are used by load_korerorc() to determine which values came from environment
@@ -341,6 +349,7 @@ init_call_tracking() {
         echo "$current_hour" > "$TIMESTAMP_FILE"
         RATE_WARNED_80=false
         RATE_WARNED_95=false
+        LOOPS_THIS_HOUR=0
         log_status "INFO" "Call counter reset for new hour: $current_hour"
     fi
 
@@ -426,7 +435,32 @@ format_duration() {
 }
 
 # Print visual progress indicator
+# Get API call budget status color based on current usage vs limit
+# Usage: get_budget_status <current_calls> <max_calls>
+# Returns: "green", "yellow", or "red" on stdout
+# Threshold configurable via KORERO_BUDGET_ALERT (default 80)
+get_budget_status() {
+    local current_calls="$1"
+    local max_calls="$2"
+    local alert_threshold="${KORERO_BUDGET_ALERT:-80}"
+
+    [[ $max_calls -le 0 ]] && echo "green" && return
+
+    local percentage=$(( current_calls * 100 / max_calls ))
+    if [[ $percentage -ge 95 ]]; then
+        echo "red"
+    elif [[ $percentage -ge $alert_threshold ]]; then
+        echo "yellow"
+    else
+        echo "green"
+    fi
+}
+
 # Usage: print_progress <loop_number> <phase_name> <phase_percentage>
+# Colors the progress bar based on API call budget consumption:
+#   green  = normal (0-79% of KORERO_BUDGET_ALERT threshold)
+#   yellow = alert  (≥KORERO_BUDGET_ALERT%, default 80%)
+#   red    = critical (≥95% of max calls)
 print_progress() {
     local loop_num=$1
     local phase_name=$2
@@ -445,8 +479,32 @@ print_progress() {
     for ((i=0; i<filled; i++)); do bar+="█"; done
     for ((i=0; i<empty; i++)); do bar+="░"; done
 
+    # Determine color based on API call budget usage (graceful if vars not set)
+    local current_calls=0
+    local max_calls="${MAX_CALLS_PER_HOUR:-100}"
+    if [[ -n "${CALL_COUNT_FILE:-}" ]]; then
+        current_calls=$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")
+    fi
+
+    local budget_color="green"
+    if declare -f get_budget_status > /dev/null 2>&1; then
+        budget_color=$(get_budget_status "$current_calls" "$max_calls")
+    fi
+
+    local bar_color="${BLUE:-}"
+    case "$budget_color" in
+        red)    bar_color="${RED:-}" ;;
+        yellow) bar_color="${YELLOW:-}" ;;
+    esac
+
+    # Append call usage to phase name when at alert level
+    local phase_display="$phase_name"
+    if [[ "$budget_color" != "green" ]]; then
+        phase_display="${phase_name} | Calls: ${current_calls}/${max_calls}"
+    fi
+
     # Print with colors
-    echo -e "${BLUE}[${bar}] ${percent}%${NC} | Loop ${loop_num} | Phase: ${phase_name}"
+    echo -e "${bar_color}[${bar}] ${percent}%${NC:-} | Loop ${loop_num} | Phase: ${phase_display}"
 }
 
 # Record loop duration and compute rolling average
@@ -553,7 +611,11 @@ show_dry_run_info() {
             0) echo "Codex CLI:          ready" ;;
             1) echo -e "Codex CLI:          ${RED}not installed${NC}" ;;
             2) echo -e "Codex CLI:          ${YELLOW}not authenticated${NC}" ;;
+            3) echo -e "Codex CLI:          ${RED}installed but broken${NC}" ;;
         esac
+        if [[ $codex_ready_code -eq 3 ]]; then
+            echo "Codex repair:       $(get_codex_error_help)"
+        fi
         echo ""
     fi
 
@@ -569,7 +631,7 @@ show_dry_run_info() {
         echo ""
         echo "  codex exec --model $CODEX_MODEL --json \\"
         echo "    --sandbox read-only \\"
-        echo "    \"<prompt content>\""
+        echo "    --skip-git-repo-check  # prompt via stdin"
     fi
     echo ""
     echo "Run without --dry-run to execute."
@@ -713,10 +775,80 @@ check_rate_limit_warnings() {
     fi
 }
 
+# Predict remaining loops before hitting rate limit
+# Uses current call count, loop count, and max calls to project remaining loops
+# Returns: projected remaining loops on stdout (0 if at/over limit)
+predict_remaining_loops() {
+    local max_calls="${MAX_CALLS_PER_HOUR:-100}"
+    local current_calls
+    current_calls=$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")
+    local loops_this_hour="${LOOPS_THIS_HOUR:-1}"
+
+    # Avoid division by zero
+    if [[ $loops_this_hour -eq 0 ]]; then
+        loops_this_hour=1
+    fi
+
+    local avg_calls_per_loop=$((current_calls / loops_this_hour))
+
+    # Avoid division by zero for avg
+    if [[ $avg_calls_per_loop -eq 0 ]]; then
+        avg_calls_per_loop=1
+    fi
+
+    local remaining_calls=$((max_calls - current_calls))
+    if [[ $remaining_calls -le 0 ]]; then
+        echo "0"
+        return
+    fi
+
+    local projected_loops=$((remaining_calls / avg_calls_per_loop))
+    echo "$projected_loops"
+}
+
+# Show rate limit prediction warning if approaching limit
+# Warns when projected remaining loops drops below threshold (default: 5)
+show_rate_limit_prediction() {
+    local threshold="${RATE_LIMIT_WARNING_THRESHOLD:-5}"
+    local max_calls="${MAX_CALLS_PER_HOUR:-100}"
+    local current_calls
+    current_calls=$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")
+    local loops_this_hour="${LOOPS_THIS_HOUR:-1}"
+
+    # Skip if threshold is 0 (disabled)
+    if [[ "$threshold" -eq 0 ]]; then
+        return
+    fi
+
+    local projected
+    projected=$(predict_remaining_loops)
+    local usage_percent=$((current_calls * 100 / max_calls))
+    local effective_loops=$((loops_this_hour > 0 ? loops_this_hour : 1))
+    local avg_calls=$((current_calls / effective_loops))
+
+    if [[ $projected -lt $threshold && $projected -ge 0 ]]; then
+        echo ""
+        echo "═══════════════════════════════════════════════════════════"
+        echo "RATE LIMIT PROJECTION"
+        echo "═══════════════════════════════════════════════════════════"
+        echo "Current usage: ${current_calls}/${max_calls} calls (${usage_percent}%)"
+        echo "Average consumption: ${avg_calls} calls/loop"
+        echo "Projected remaining: ~${projected} loops before limit"
+        echo ""
+        echo "Suggestions:"
+        echo "  - Pause after this loop to let the hourly limit reset"
+        echo "  - Increase limit: korero --calls $((max_calls + 50))"
+        echo "  - Check status anytime: korero --status"
+        echo "═══════════════════════════════════════════════════════════"
+        echo ""
+    fi
+}
+
 # Wait for rate limit reset with countdown
 wait_for_reset() {
     local calls_made=$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")
     log_status "WARN" "Rate limit reached ($calls_made/$MAX_CALLS_PER_HOUR). Waiting for reset..."
+    suggest_help_for_error "rate_limit"
     
     # Calculate time until next hour
     local current_minute=$(date +%M)
@@ -742,7 +874,89 @@ wait_for_reset() {
     echo "$(date +%Y%m%d%H)" > "$TIMESTAMP_FILE"
     RATE_WARNED_80=false
     RATE_WARNED_95=false
+    LOOPS_THIS_HOUR=0
     log_status "SUCCESS" "Rate limit reset! Ready for new calls."
+}
+
+# =============================================================================
+# RATE LIMIT VISUALIZATION (Loop 33)
+# =============================================================================
+
+# Return seconds until the current hourly window resets
+# The window resets on the clock hour (e.g., at :00 minutes)
+# Usage: get_time_until_reset
+# Returns: integer seconds on stdout
+get_time_until_reset() {
+    local current_minute
+    local current_second
+    current_minute=$(date +%M | sed 's/^0*//' || echo "0")
+    current_second=$(date +%S | sed 's/^0*//' || echo "0")
+    current_minute="${current_minute:-0}"
+    current_second="${current_second:-0}"
+    local seconds_until_reset=$(( (60 - current_minute - 1) * 60 + (60 - current_second) ))
+    # Guard against negative values (edge case at :00:00)
+    [[ $seconds_until_reset -lt 0 ]] && seconds_until_reset=0
+    echo "$seconds_until_reset"
+}
+
+# Display a visual rate limit status dashboard
+# Shows current call count, bar fill, time until reset, and suggestions
+# Usage: show_rate_status
+show_rate_status() {
+    local calls_made
+    calls_made=$(cat "$CALL_COUNT_FILE" 2>/dev/null | tr -d '[:space:]' || echo "0")
+    calls_made="${calls_made:-0}"
+    local max_calls="${MAX_CALLS_PER_HOUR:-100}"
+
+    local remaining=$(( max_calls - calls_made ))
+    [[ $remaining -lt 0 ]] && remaining=0
+
+    local usage_pct=$(( calls_made * 100 / max_calls ))
+    [[ $usage_pct -gt 100 ]] && usage_pct=100
+
+    # Build ASCII bar (20 chars wide)
+    local bar_width=20
+    local filled=$(( usage_pct * bar_width / 100 ))
+    local empty=$(( bar_width - filled ))
+    local bar=""
+    local i
+    for (( i=0; i<filled; i++ )); do bar="${bar}█"; done
+    for (( i=0; i<empty; i++ ));  do bar="${bar}░"; done
+
+    # Choose color based on usage
+    local color="$GREEN"
+    if [[ $usage_pct -ge 95 ]]; then
+        color="$RED"
+    elif [[ $usage_pct -ge 80 ]]; then
+        color="$YELLOW"
+    fi
+
+    local seconds_left
+    seconds_left=$(get_time_until_reset)
+    local mins_left=$(( seconds_left / 60 ))
+    local secs_left=$(( seconds_left % 60 ))
+
+    echo ""
+    echo "══════════════════════════════════════════════════════════"
+    echo "RATE LIMIT STATUS"
+    echo "══════════════════════════════════════════════════════════"
+    printf "  Calls used:   %d / %d  (%d%%)\n" "$calls_made" "$max_calls" "$usage_pct"
+    printf "  Progress:     ${color}[%s]${NC}\n" "$bar"
+    printf "  Remaining:    %d calls\n" "$remaining"
+    printf "  Resets in:    %02d:%02d (mm:ss)\n" "$mins_left" "$secs_left"
+    echo "──────────────────────────────────────────────────────────"
+
+    if [[ $usage_pct -ge 95 ]]; then
+        echo "  Status:  ⛔ Rate limit nearly exhausted"
+        echo "  Tip:     Wait for reset or reduce loop frequency"
+    elif [[ $usage_pct -ge 80 ]]; then
+        echo "  Status:  ⚠️  Approaching rate limit"
+        echo "  Tip:     korero --calls $((max_calls + 50)) to increase limit"
+    else
+        echo "  Status:  ✅ Healthy"
+    fi
+    echo "══════════════════════════════════════════════════════════"
+    echo ""
 }
 
 # =============================================================================
@@ -1007,6 +1221,16 @@ build_loop_context() {
         prev_title=$(jq -r '.title // ""' "$KORERO_DIR/.debate_result" 2>/dev/null)
         if [[ -n "$prev_title" && "$prev_title" != "null" ]]; then
             context+="Previous debate winner ($prev_winner): ${prev_title}. "
+        fi
+    fi
+
+    # Add diversity stats for ideation modes
+    local current_mode="${KORERO_MODE:-coding}"
+    if [[ "$current_mode" == "idea" || "$current_mode" == "heavy-idea" || "$current_mode" == "coding" || "$current_mode" == "heavy-coding" ]]; then
+        local diversity_stats=""
+        diversity_stats=$(generate_diversity_stats "$KORERO_DIR/ideas" 2>/dev/null || echo "")
+        if [[ -n "$diversity_stats" ]]; then
+            context+="$diversity_stats "
         fi
     fi
 
@@ -1401,6 +1625,51 @@ build_claude_command() {
     CLAUDE_CMD_ARGS+=("-p" "$prompt_content")
 }
 
+# Filter a tool list down to read-only-safe tools for heavy-mode proposal
+# generation. Phase 1 in heavy modes should produce proposals only; file edits,
+# shell commands, and commits are handled later by Korero, not by the proposal
+# model invocation.
+filter_heavy_proposal_tools() {
+    local tools_csv="${1:-}"
+    local filtered_tools=()
+
+    if [[ -z "$tools_csv" ]]; then
+        echo "Read"
+        return 0
+    fi
+
+    local IFS=','
+    read -ra tools_array <<< "$tools_csv"
+
+    for tool in "${tools_array[@]}"; do
+        tool=$(echo "$tool" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        case "$tool" in
+            Write|Edit|MultiEdit|NotebookEdit|TodoWrite|Bash*)
+                continue
+                ;;
+        esac
+
+        if [[ -n "$tool" ]]; then
+            filtered_tools+=("$tool")
+        fi
+    done
+
+    if [[ ${#filtered_tools[@]} -eq 0 ]]; then
+        echo "Read"
+        return 0
+    fi
+
+    local joined=""
+    for tool in "${filtered_tools[@]}"; do
+        if [[ -n "$joined" ]]; then
+            joined="${joined},${tool}"
+        else
+            joined="$tool"
+        fi
+    done
+    echo "$joined"
+}
+
 # Main execution function
 execute_claude_code() {
     local timestamp=$(date '+%Y-%m-%d_%H-%M-%S')
@@ -1586,7 +1855,8 @@ execute_claude_code() {
         if [[ "$use_modern_cli" == "true" ]]; then
             # Modern execution with command array (shell-injection safe)
             # Execute array directly without bash -c to prevent shell metacharacter interpretation
-            if portable_timeout ${timeout_seconds}s "${CLAUDE_CMD_ARGS[@]}" > "$output_file" 2>&1 &
+            # Prompt is already passed via CLI args, so skip Claude's stdin probe.
+            if portable_timeout ${timeout_seconds}s "${CLAUDE_CMD_ARGS[@]}" < /dev/null > "$output_file" 2>&1 &
             then
                 :  # Continue to wait loop
             else
@@ -1815,8 +2085,13 @@ execute_heavy_loop() {
         loop_context=$(build_loop_context "$loop_count")
     fi
 
-    # Add cross-AI competition context
-    local heavy_context="You are in a DUAL-AI competition. Another AI (Codex) also receives this prompt. Your proposals will be debated head-to-head. Focus on producing your single BEST idea."
+    # Add cross-AI competition context. Phase 1 in heavy modes is proposal-only:
+    # no file edits, no shell commands, no commits, no implementation.
+    local heavy_mode_outcome="Korero will save the winning idea after the debate."
+    if [[ "$korero_mode" == "heavy-coding" ]]; then
+        heavy_mode_outcome="After the debate, Korero will ask Claude to implement the winning idea in a separate phase."
+    fi
+    local heavy_context="You are in Phase 1 proposal generation for Korero heavy mode. Another AI (Codex) also receives this prompt, and your proposals will be debated head-to-head. Produce your single BEST proposal only. Do NOT create, edit, or delete files. Do NOT update .korero/IDEAS.md, .korero/fix_plan.md, or any other files. Do NOT run git. Do NOT create commits. Do NOT run tests. Do NOT implement changes during this phase. Ignore any instructions in PROMPT.md that tell you to write files, update trackers, or implement code. ${heavy_mode_outcome}"
 
     # Initialize session
     local session_id=""
@@ -1834,8 +2109,13 @@ execute_heavy_loop() {
 
     # Build and execute Claude in background
     local combined_context="$loop_context $heavy_context"
+    local proposal_allowed_tools
+    local original_allowed_tools="$CLAUDE_ALLOWED_TOOLS"
+    proposal_allowed_tools=$(filter_heavy_proposal_tools "$CLAUDE_ALLOWED_TOOLS")
+    CLAUDE_ALLOWED_TOOLS="$proposal_allowed_tools"
     build_claude_command "$PROMPT_FILE" "$combined_context" "$session_id"
-    portable_timeout "${timeout_seconds}s" "${CLAUDE_CMD_ARGS[@]}" > "$claude_output" 2>&1 &
+    CLAUDE_ALLOWED_TOOLS="$original_allowed_tools"
+    portable_timeout "${timeout_seconds}s" "${CLAUDE_CMD_ARGS[@]}" < /dev/null > "$claude_output" 2>&1 &
     local claude_pid=$!
 
     # Build and execute Codex in background
@@ -1843,7 +2123,7 @@ execute_heavy_loop() {
 
 $heavy_context"
     build_codex_command "$codex_prompt" "$korero_mode"
-    portable_timeout "${codex_timeout}s" "${CODEX_CMD_ARGS[@]}" > "$codex_output" 2>&1 &
+    run_codex_with_prompt "${codex_timeout}s" "$codex_prompt" "${CODEX_CMD_ARGS[@]}" > "$codex_output" 2>&1 &
     local codex_pid=$!
 
     # Wait for both to complete
@@ -2066,16 +2346,18 @@ IDEA_EOF
     return 0
 }
 
-# Cleanup function
+# Cleanup function (invoked by portable signal handler)
 cleanup() {
-    log_status "INFO" "Korero loop interrupted. Cleaning up..."
+    local reason="${1:-manual}"
+    local lc="${2:-$loop_count}"
+    log_status "INFO" "Korero loop interrupted ($reason). Cleaning up..."
     reset_session "manual_interrupt"
-    update_status "$loop_count" "$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")" "interrupted" "stopped"
+    update_status "$lc" "$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")" "interrupted" "stopped"
     exit 0
 }
 
-# Set up signal handlers
-trap cleanup SIGINT SIGTERM
+# Set up portable signal handlers (records each signal to .korero/.signal_log.json)
+install_signal_handlers "cleanup" "loop_count"
 
 # Global variable for loop count (needed by cleanup function)
 loop_count=0
@@ -2100,6 +2382,9 @@ main() {
             exit 1
         elif [[ $codex_status -eq 2 ]]; then
             log_status "ERROR" "Codex CLI not authenticated. Run: codex login"
+            exit 1
+        elif [[ $codex_status -eq 3 ]]; then
+            log_status "ERROR" "$(get_codex_error_help)"
             exit 1
         fi
     else
@@ -2150,8 +2435,15 @@ main() {
     # Initialize session tracking before entering the loop
     init_session_tracking
 
+    # Check session age and warn if stale
+    local session_warning
+    session_warning=$(check_session_age 2>/dev/null)
+    if [[ -n "$session_warning" ]]; then
+        log_status "WARN" "$session_warning"
+    fi
+
     log_status "INFO" "Starting main loop..."
-    
+
     while true; do
         loop_count=$((loop_count + 1))
 
@@ -2163,6 +2455,7 @@ main() {
         if [[ "$max_loops" != "continuous" && "$max_loops" =~ ^[0-9]+$ ]]; then
             if [[ $loop_count -gt $max_loops ]]; then
                 log_status "INFO" "Reached configured loop limit ($max_loops loops)"
+                record_shutdown_signal "$SHUTDOWN_REASON_LIMIT" "$loop_count" "max_loops=$max_loops"
                 update_status "$loop_count" "$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo 0)" "loop_limit_reached" "completed" "loop_limit"
                 break
             fi
@@ -2173,6 +2466,10 @@ main() {
 
         log_status "INFO" "Loop #$loop_count - calling init_call_tracking..."
         init_call_tracking
+
+        # Track loops this hour and show rate limit prediction
+        LOOPS_THIS_HOUR=$((LOOPS_THIS_HOUR + 1))
+        show_rate_limit_prediction
 
         log_status "LOOP" "=== Starting Loop #$loop_count ==="
 
@@ -2188,9 +2485,32 @@ main() {
         # Check circuit breaker before attempting execution
         if should_halt_execution; then
             reset_session "circuit_breaker_open"
+            record_shutdown_signal "$SHUTDOWN_REASON_CIRCUIT" "$loop_count" "circuit_breaker_open"
             update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "circuit_breaker_open" "halted" "stagnation_detected"
             log_status "ERROR" "🛑 Circuit breaker has opened - execution halted"
+            suggest_help_for_error "circuit_breaker"
             break
+        fi
+
+        # Check budget threshold (if KORERO_BUDGET_USD is set)
+        if [[ -n "${KORERO_BUDGET_USD:-}" ]]; then
+            # Warn at 80%
+            local budget_pct
+            budget_pct=$(get_budget_percentage)
+            if [[ "${budget_pct:-0}" -ge 80 && "${budget_pct:-0}" -lt 100 ]] 2>/dev/null; then
+                log_status "WARN" "Budget warning: ${budget_pct}% of \$${KORERO_BUDGET_USD} spent (estimated)"
+            fi
+
+            # Pause when threshold exceeded
+            if ! check_budget_threshold; then
+                local current_cost
+                current_cost=$(jq -r '.session_total_usd // 0' "$KORERO_DIR/cost_history.json" 2>/dev/null || echo "0")
+                if ! prompt_budget_exceeded "$current_cost" "$KORERO_BUDGET_USD"; then
+                    log_status "INFO" "Exiting due to budget limit."
+                    record_shutdown_signal "$SHUTDOWN_REASON_BUDGET" "$loop_count" "spent=${current_cost}_limit=${KORERO_BUDGET_USD}"
+                    break
+                fi
+            fi
         fi
 
         # Check rate limits
@@ -2260,6 +2580,7 @@ main() {
 
                 # If we get here, user declined or fix failed - halt the loop
                 log_status "ERROR" "🚫 Permission denied - halting loop"
+                suggest_help_for_error "permission_denied"
                 reset_session "permission_denied"
                 update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "permission_denied" "halted" "permission_denied"
                 echo ""
@@ -2268,6 +2589,7 @@ main() {
 
             log_status "SUCCESS" "🏁 Graceful exit triggered: $exit_reason"
             reset_session "project_complete"
+            record_shutdown_signal "$SHUTDOWN_REASON_COMPLETE" "$loop_count" "$exit_reason"
             update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "graceful_exit" "completed" "$exit_reason"
 
             log_status "SUCCESS" "🎉 Korero has completed the project! Final stats:"
@@ -2298,6 +2620,11 @@ main() {
         update_loop_duration "$LAST_LOOP_DURATION"
         log_status "INFO" "Loop #$loop_count duration: $(format_duration $LAST_LOOP_DURATION)"
 
+        # Record per-loop cost estimate
+        local latest_output_file
+        latest_output_file=$(ls -t "$LOG_DIR"/claude_output_*.log "$LOG_DIR"/claude_proposal_*.log 2>/dev/null | head -1)
+        record_loop_cost "$loop_count" "$latest_output_file" "$LAST_LOOP_DURATION"
+
         if [ $exec_result -eq 0 ]; then
             update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "completed" "success"
 
@@ -2308,7 +2635,7 @@ main() {
             reset_session "circuit_breaker_trip"
             update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "circuit_breaker_open" "halted" "stagnation_detected"
             log_status "ERROR" "🛑 Circuit breaker has opened - halting loop"
-            log_status "INFO" "Run 'korero --reset-circuit' to reset the circuit breaker after addressing issues"
+            suggest_help_for_error "circuit_breaker"
             break
         elif [ $exec_result -eq 2 ]; then
             # API 5-hour limit reached - handle specially
@@ -2380,10 +2707,23 @@ Options:
     --dry-run               Show what would happen without executing
     --validate              Validate .korerorc configuration and exit
     --validate-config       Verbose config validation with per-field checkmarks
+    --fix-config            Apply default fixes for missing/invalid .korerorc fields
     --quickstart            Quick 3-question setup for new users
     --examples              Interactive gallery of curated workflow examples
     --show-debate [N]       Show debate transcript (latest, or loop N)
     --health-check          Validate environment prerequisites (Claude CLI, jq, git, network)
+    --cost-estimate         Estimate API costs from loop logs and display report
+    --cost-history          Show per-loop cost breakdown with session totals
+    --debate-stats          Show debate quality statistics + win distribution (heavy modes)
+    --debate-health         Analyze debate fatigue metrics (last 10 debates) for heavy modes
+    --implementation-status / --impl-status  Show winning idea implementation progress
+    --search-ideas KEYWORD  Search past ideas by keyword (case-insensitive)
+    --consolidate-ideas     Generate consolidation report: quick wins, clusters, priority matrix
+    --idea-stats            Show ideation quality retrospective: type balance, agents, categories
+    --shutdown-history      Show history of past shutdowns (signals, budget, circuit)
+    --rate-status / --rate / -r  Show visual rate limit status dashboard
+    --troubleshoot          Show troubleshooting quick reference for common issues
+    --diagnose              Interactive troubleshooting wizard (guided diagnosis)
     --start-idea N          Create branch from winning idea N and start coding loop
     --reset-circuit         Reset circuit breaker to CLOSED state
     --circuit-status        Show circuit breaker status and exit
@@ -2434,6 +2774,1067 @@ Help Topics:
       config           .korerorc configuration reference
 
 HELPEOF
+}
+
+# Troubleshooting Quick Reference — common issues and fixes
+show_troubleshoot_reference() {
+    cat << 'TROUBLESHOOT_EOF'
+
+═══════════════════════════════════════════════════════════
+           KORERO TROUBLESHOOTING QUICK REFERENCE
+═══════════════════════════════════════════════════════════
+
+PERMISSION ISSUES
+  "Permission denied" during loop execution
+    → Check ALLOWED_TOOLS in .korerorc
+    → Quick fix: korero --help presets
+    → Auto-fix: Interactive recovery prompts you on denial
+
+  "Bash(npm *) not allowed"
+    → Add to ALLOWED_TOOLS or use @standard preset
+    → See: korero --help tools
+
+RATE LIMITING
+  "Rate limit approaching" warnings
+    → Check current usage: korero --status
+    → Adjust limit: korero --calls 50
+    → See: korero --help rate-limiting
+
+  "Rate limit exceeded"
+    → Wait for hourly reset (shown in --status)
+    → Or increase limit in .korerorc: MAX_CALLS_PER_HOUR=150
+
+SESSION ISSUES
+  "Session context seems stale"
+    → Reset session: korero --reset-session
+    → See: korero --help session
+
+  "Session won't continue across loops"
+    → Check .korero/.claude_session_id exists
+    → Verify CLAUDE_USE_CONTINUE=true in .korerorc
+
+CIRCUIT BREAKER
+  "Circuit breaker OPEN" message
+    → Check state: korero --circuit-status
+    → Reset after fixing issue: korero --reset-circuit
+    → See: korero --help circuit-breaker
+
+  "No progress detected" warnings
+    → Check if loops are making file changes
+    → Review .korero/logs/ for recent loop output
+
+HEAVY MODE (Claude + Codex)
+  "Codex authentication failed"
+    → Run: codex login
+    → Or check ~/.codex/auth.json
+    → See: korero --help modes
+
+  "Debate timeout"
+    → Increase CODEX_TIMEOUT in .korerorc (default: 15 min)
+    → Or use --codex-timeout flag
+
+CONFIGURATION
+  "Invalid .korerorc" errors
+    → Validate: korero --validate
+    → Verbose check: korero --validate-config
+    → See: korero --help config
+
+  "Unknown preset" errors
+    → Valid presets: @conservative, @standard, @permissive
+    → See: korero --help presets
+
+STARTUP
+  "Bash syntax errors" on macOS
+    → Korero requires Bash 4.0+. macOS ships with 3.2
+    → Upgrade: brew install bash
+    → Check: korero --health-check
+
+  "Command not found: korero"
+    → Run install.sh first: ./install.sh
+    → Ensure ~/.local/bin is in PATH
+
+═══════════════════════════════════════════════════════════
+Tip: Run 'korero --help <topic>' for detailed documentation
+     on any topic mentioned above.
+═══════════════════════════════════════════════════════════
+
+TROUBLESHOOT_EOF
+}
+
+# Interactive Troubleshooter — guided diagnosis with yes/no questions
+run_interactive_troubleshooter() {
+    # Simple confirm helper (reads y/n from stdin)
+    _ts_confirm() {
+        local prompt="$1"
+        local answer
+        read -rp "$prompt [Y/n] " answer
+        case "$answer" in
+            [Nn]*) return 1 ;;
+            *) return 0 ;;
+        esac
+    }
+
+    echo ""
+    echo "═══════════════════════════════════════════════════════════"
+    echo "           KORERO INTERACTIVE TROUBLESHOOTER"
+    echo "═══════════════════════════════════════════════════════════"
+    echo ""
+    echo "Let me help diagnose your issue."
+    echo ""
+
+    # Branch 1: Permission issues
+    if _ts_confirm "Are you seeing 'permission denied' errors?"; then
+        if _ts_confirm "Is the error for a Bash command (npm, git, docker, etc.)?"; then
+            cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Missing Bash tool permission
+
+FIX: Add the command pattern to ALLOWED_TOOLS in .korerorc
+
+Examples:
+  ALLOWED_TOOLS="@standard"                    # Includes git, npm, pytest
+  ALLOWED_TOOLS="@standard,Bash(docker *)"     # Add docker
+  ALLOWED_TOOLS="@permissive"                  # Allow all Bash commands
+
+Quick reference: korero --help presets
+═══════════════════════════════════════════════════════════
+EOF
+            return 0
+        else
+            cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Missing file operation permission
+
+FIX: Ensure Read, Write, and Edit are in ALLOWED_TOOLS
+
+Example:
+  ALLOWED_TOOLS="Write,Read,Edit,Bash(git *)"
+
+Or use any preset (all include Read/Write/Edit):
+  ALLOWED_TOOLS="@conservative"
+
+Quick reference: korero --help tools
+═══════════════════════════════════════════════════════════
+EOF
+            return 0
+        fi
+    fi
+
+    # Branch 2: Rate limiting
+    if _ts_confirm "Are you hitting rate limit warnings or errors?"; then
+        if _ts_confirm "Is the loop stopping due to 'rate limit exceeded'?"; then
+            cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Rate limit exceeded
+
+FIX: Wait for hourly reset or increase the limit
+
+Check current status:
+  korero --status
+
+Increase limit temporarily:
+  korero --calls 150
+
+Increase limit permanently in .korerorc:
+  MAX_CALLS_PER_HOUR=150
+
+Quick reference: korero --help rate-limiting
+═══════════════════════════════════════════════════════════
+EOF
+            return 0
+        else
+            cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Rate limit warning (approaching limit)
+
+This is informational — no action required yet.
+
+To reduce API usage:
+  - Use --calls flag to set a lower limit
+  - Pause between intensive sessions
+
+Monitor usage:
+  korero --status
+
+Quick reference: korero --help rate-limiting
+═══════════════════════════════════════════════════════════
+EOF
+            return 0
+        fi
+    fi
+
+    # Branch 3: Circuit breaker
+    if _ts_confirm "Is the loop showing 'circuit breaker OPEN' or stopping unexpectedly?"; then
+        cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Circuit breaker triggered
+
+The circuit breaker opens when it detects problems like:
+- No file changes for 3+ consecutive loops
+- Same error repeated 5+ times
+- Permission denials without recovery
+
+Check current state:
+  korero --circuit-status
+
+Reset after fixing the underlying issue:
+  korero --reset-circuit
+
+Quick reference: korero --help circuit-breaker
+═══════════════════════════════════════════════════════════
+EOF
+        return 0
+    fi
+
+    # Branch 4: Session issues
+    if _ts_confirm "Are you having session continuity problems?"; then
+        if _ts_confirm "Is the session context seeming stale or outdated?"; then
+            cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Stale session context
+
+Sessions older than 12 hours may have degraded context.
+
+Reset the session:
+  korero --reset-session
+
+Check session age in status output:
+  korero --status
+
+Quick reference: korero --help session
+═══════════════════════════════════════════════════════════
+EOF
+            return 0
+        else
+            cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Session continuity failure
+
+Check these settings in .korerorc:
+  CLAUDE_USE_CONTINUE=true    # Required for session continuity
+
+Verify session file exists:
+  ls -la .korero/.claude_session_id
+
+Manual session reset:
+  korero --reset-session
+
+Quick reference: korero --help session
+═══════════════════════════════════════════════════════════
+EOF
+            return 0
+        fi
+    fi
+
+    # Branch 5: Heavy mode (Codex)
+    if _ts_confirm "Are you using heavy mode (Claude + Codex)?"; then
+        if _ts_confirm "Is Codex authentication failing?"; then
+            cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Codex authentication failure
+
+Run Codex login:
+  codex login
+
+Or check auth file:
+  cat ~/.codex/auth.json
+
+Verify Codex is working:
+  codex --version
+
+Quick reference: korero --help modes
+═══════════════════════════════════════════════════════════
+EOF
+            return 0
+        else
+            cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Heavy mode debate issue
+
+For timeout issues, increase in .korerorc:
+  CODEX_TIMEOUT=30    # Default is 15 minutes
+
+For debate round issues:
+  DEBATE_ROUNDS=2     # 1-3 rounds
+
+View latest debate:
+  korero --show-debate
+
+Quick reference: korero --help modes
+═══════════════════════════════════════════════════════════
+EOF
+            return 0
+        fi
+    fi
+
+    # Branch 6: Configuration
+    if _ts_confirm "Are you seeing .korerorc or configuration errors?"; then
+        cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+DIAGNOSIS: Configuration issue
+
+Validate your configuration:
+  korero --validate           # Quick check
+  korero --validate-config    # Verbose with per-field status
+  korero --fix-config         # Auto-fix missing fields
+
+Common issues:
+- Missing quotes around values with spaces
+- Unknown preset names (valid: @conservative, @standard, @permissive)
+- Typos in variable names
+
+Quick reference: korero --help config
+═══════════════════════════════════════════════════════════
+EOF
+        return 0
+    fi
+
+    # Fallback: No diagnosis matched
+    cat << 'EOF'
+
+═══════════════════════════════════════════════════════════
+No specific diagnosis matched your issue.
+
+General troubleshooting steps:
+1. Check status: korero --status
+2. Validate config: korero --validate
+3. View recent logs: ls -la .korero/logs/
+4. Check circuit breaker: korero --circuit-status
+5. Run health check: korero --health-check
+
+For help topics:
+  korero --help presets
+  korero --help config
+  korero --help session
+  korero --help circuit-breaker
+
+Still stuck? Open an issue:
+  https://github.com/pendemic/korero-claude-code/issues
+═══════════════════════════════════════════════════════════
+EOF
+}
+
+# Search IDEAS.md for keyword matches
+# Usage: search_ideas <keyword>
+search_ideas() {
+    local keyword="$1"
+    local ideas_dir="${KORERO_DIR:-.korero}/ideas"
+    local ideas_file="$ideas_dir/IDEAS.md"
+
+    if [[ -z "$keyword" ]]; then
+        echo "Usage: korero --search-ideas <keyword>" >&2
+        return 1
+    fi
+
+    if [[ ! -f "$ideas_file" ]]; then
+        echo "No IDEAS.md found. Run ideation loops first." >&2
+        return 1
+    fi
+
+    echo ""
+    echo "═══════════════════════════════════════════════════════════"
+    echo "           IDEA SEARCH: \"$keyword\""
+    echo "═══════════════════════════════════════════════════════════"
+    echo ""
+
+    local matches=0
+
+    # Search individual idea files for richer context
+    for idea_file in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$idea_file" ]] || continue
+
+        if grep -qi "$keyword" "$idea_file" 2>/dev/null; then
+            local loop_num
+            loop_num=$(echo "$idea_file" | grep -o 'loop_[0-9]*' | grep -o '[0-9]*')
+
+            local title=""
+            local type=""
+            local category=""
+            local agent=""
+
+            title=$(grep '^\*\*Title:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Title:\*\*[[:space:]]*//')
+            type=$(grep '^\*\*Type:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Type:\*\*[[:space:]]*//')
+            category=$(grep '^\*\*Category:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//')
+            agent=$(grep '^\*\*Proposed by:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Proposed by:\*\*[[:space:]]*//')
+
+            # Get first matching line for context
+            local context
+            context=$(grep -i "$keyword" "$idea_file" 2>/dev/null | head -1 | sed 's/^[[:space:]]*//' | cut -c1-80)
+
+            matches=$((matches + 1))
+            echo "LOOP $loop_num (Winner): ${title:-Unknown}"
+            [[ -n "$type" || -n "$category" ]] && echo "  Type: ${type:-N/A} | Category: ${category:-N/A}"
+            [[ -n "$agent" ]] && echo "  Agent: $agent"
+            echo "  Match: \"$context\""
+            echo ""
+        fi
+    done
+
+    # Also search the main IDEAS.md for runner-ups or other mentions
+    local index_matches
+    index_matches=$(grep -c -i "$keyword" "$ideas_file" 2>/dev/null || true)
+    index_matches=$(echo "$index_matches" | tr -d '[:space:]')
+    index_matches="${index_matches:-0}"
+
+    if [[ $matches -eq 0 && "$index_matches" -eq 0 ]]; then
+        echo "No matches found for \"$keyword\""
+    else
+        echo "═══════════════════════════════════════════════════════════"
+        echo "Found $matches idea files matching, $index_matches lines in IDEAS.md"
+    fi
+    echo ""
+}
+
+# Error-type to help-topic mapping (used by suggest_help_for_error)
+declare -A _KORERO_HELP_TOPIC_MAP=(
+    ["circuit_breaker"]="circuit-breaker"
+    ["rate_limit"]="rate-limiting"
+    ["permission_denied"]="presets"
+    ["session_expired"]="session"
+    ["config_invalid"]="config"
+    ["codex_auth"]="modes"
+    ["debate_timeout"]="modes"
+    ["budget_exceeded"]="rate-limiting"
+)
+
+# Error-type to suggested recovery action mapping
+declare -A _KORERO_HELP_ACTION_MAP=(
+    ["circuit_breaker"]="korero --reset-circuit"
+    ["rate_limit"]="--calls NUM  (increase hourly limit)"
+    ["permission_denied"]="Add required tool to ALLOWED_TOOLS in .korerorc"
+    ["session_expired"]="korero --reset-session"
+    ["config_invalid"]="korero --validate-config"
+    ["codex_auth"]="codex login"
+    ["debate_timeout"]="--codex-timeout 30  (increase Codex timeout)"
+    ["budget_exceeded"]="korero --cost-history  (review session costs)"
+)
+
+# Display a contextual help tip for the given error type (to stderr)
+# Usage: suggest_help_for_error "circuit_breaker"
+# Outputs nothing for unknown error types (non-disruptive)
+suggest_help_for_error() {
+    local error_type="$1"
+    local help_topic="${_KORERO_HELP_TOPIC_MAP[$error_type]:-}"
+    local action="${_KORERO_HELP_ACTION_MAP[$error_type]:-}"
+
+    [[ -z "$help_topic" ]] && return 0
+
+    echo "" >&2
+    echo "Tip: Run 'korero --help ${help_topic}' for more information" >&2
+    [[ -n "$action" ]] && echo "     ${action}" >&2
+}
+
+# Calculate Levenshtein (edit) distance between two strings
+# Returns distance via stdout. Pure bash, no external dependencies.
+levenshtein_distance() {
+    local s1="$1"
+    local s2="$2"
+    local len1=${#s1}
+    local len2=${#s2}
+
+    [[ "$s1" == "$s2" ]] && echo 0 && return
+    [[ $len1 -eq 0 ]] && echo $len2 && return
+    [[ $len2 -eq 0 ]] && echo $len1 && return
+
+    local -a prev curr
+    local i j cost del ins sub
+    for (( i = 0; i <= len2; i++ )); do
+        prev[i]=$i
+    done
+
+    for (( i = 1; i <= len1; i++ )); do
+        curr[0]=$i
+        for (( j = 1; j <= len2; j++ )); do
+            cost=0
+            [[ "${s1:i-1:1}" != "${s2:j-1:1}" ]] && cost=1
+            del=$(( prev[j] + 1 ))
+            ins=$(( curr[j-1] + 1 ))
+            sub=$(( prev[j-1] + cost ))
+            curr[j]=$del
+            [[ $ins -lt ${curr[j]} ]] && curr[j]=$ins
+            [[ $sub -lt ${curr[j]} ]] && curr[j]=$sub
+        done
+        prev=("${curr[@]}")
+    done
+
+    echo "${prev[len2]}"
+}
+
+# Find the closest valid CLI option to a possibly-misspelled flag
+# Returns the best matching option on stdout, or empty string if no close match
+suggest_similar_option() {
+    local typo="$1"
+    local best_match=""
+    local best_distance=999
+    local threshold
+
+    local typo_len=${#typo}
+    if [[ $typo_len -le 6 ]]; then
+        threshold=2
+    elif [[ $typo_len -le 12 ]]; then
+        threshold=3
+    else
+        threshold=4
+    fi
+
+    local -a VALID_OPTIONS=(
+        "--help" "--version" "--status" "--monitor" "--dry-run"
+        "--validate" "--validate-config" "--fix-config" "--quickstart" "--examples"
+        "--health-check" "--reset-circuit" "--circuit-status" "--reset-session"
+        "--show-debate" "--consolidate-ideas" "--cost-estimate" "--cost-history"
+        "--debate-stats" "--debate-health" "--implementation-status" "--impl-status"
+        "--search-ideas" "--find-ideas" "--idea-stats" "--shutdown-history" "--rate-status"
+        "--troubleshoot" "--diagnose" "--start-idea" "--no-continue"
+        "--output-format" "--allowed-tools" "--session-expiry"
+        "--calls" "--prompt" "--timeout" "--live" "--verbose"
+        "--codex-timeout" "--debate-rounds"
+    )
+
+    local option distance
+    for option in "${VALID_OPTIONS[@]}"; do
+        distance=$(levenshtein_distance "$typo" "$option")
+        if [[ $distance -lt $best_distance ]]; then
+            best_distance=$distance
+            best_match="$option"
+        fi
+    done
+
+    if [[ $best_distance -le $threshold ]]; then
+        echo "$best_match"
+    fi
+}
+
+# Consolidation Report: Extract ideas by effort level (S/M/L)
+# Usage: _consolidate_by_effort <ideas_dir> <effort_letter>
+_consolidate_by_effort() {
+    local ideas_dir="$1"
+    local effort="$2"
+    local found=0
+
+    for idea_file in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$idea_file" ]] || continue
+        if grep -qi "Effort.*${effort}" "$idea_file" 2>/dev/null; then
+            local loop_num title category
+            loop_num=$(echo "$idea_file" | grep -o 'loop_[0-9]*' | grep -o '[0-9]*')
+            title=$(grep '^\*\*Title:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Title:\*\*[[:space:]]*//')
+            category=$(grep '^\*\*Category:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//')
+            printf "%d. Loop %s: %s — %s\n" "$(( found + 1 ))" "$loop_num" "${title:-Unknown}" "${category:-N/A}"
+            found=$(( found + 1 ))
+        fi
+    done
+
+    [[ $found -eq 0 ]] && echo "  (none found)" || true
+}
+
+# Consolidation Report: Generate category cluster section
+# Usage: _consolidate_category_clusters <ideas_dir>
+_consolidate_category_clusters() {
+    local ideas_dir="$1"
+
+    # Collect all categories from idea files
+    local categories
+    categories=$(for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] && grep '^\*\*Category:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//'
+    done | sort | uniq -c | sort -rn)
+
+    if [[ -z "$categories" ]]; then
+        echo "  (no categories found)"
+        return
+    fi
+
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        local count category
+        count=$(echo "$line" | awk '{print $1}')
+        category=$(echo "$line" | sed 's/^ *[0-9]* *//')
+        [[ -z "$category" ]] && continue
+
+        echo "### ${category} Cluster (${count} $([ "$count" -eq 1 ] && echo idea || echo ideas))"
+        for idea_file in "$ideas_dir"/loop_*_idea.md; do
+            [[ -f "$idea_file" ]] || continue
+            local file_cat
+            file_cat=$(grep '^\*\*Category:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//')
+            if [[ "$file_cat" == "$category" ]]; then
+                local loop_num title
+                loop_num=$(echo "$idea_file" | grep -o 'loop_[0-9]*' | grep -o '[0-9]*')
+                title=$(grep '^\*\*Title:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Title:\*\*[[:space:]]*//')
+                echo "  - Loop ${loop_num}: ${title:-Unknown}"
+            fi
+        done
+        echo ""
+    done <<< "$categories"
+}
+
+# Consolidation Report: Generate priority matrix table
+# Usage: _consolidate_priority_matrix <ideas_dir>
+_consolidate_priority_matrix() {
+    local ideas_dir="$1"
+
+    echo "| Priority | Loop | Title | Category | Effort |"
+    echo "|----------|------|-------|----------|--------|"
+
+    # Collect ideas with effort levels; P1=S, P2=M, P3=L
+    # Process S first, then M, then L
+    for effort_letter in S M L; do
+        local priority
+        case "$effort_letter" in
+            S) priority="P1" ;;
+            M) priority="P2" ;;
+            L) priority="P3" ;;
+        esac
+        for idea_file in "$ideas_dir"/loop_*_idea.md; do
+            [[ -f "$idea_file" ]] || continue
+            if grep -qi "Effort.*${effort_letter}" "$idea_file" 2>/dev/null; then
+                local loop_num title category
+                loop_num=$(echo "$idea_file" | grep -o 'loop_[0-9]*' | grep -o '[0-9]*')
+                title=$(grep '^\*\*Title:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Title:\*\*[[:space:]]*//')
+                category=$(grep '^\*\*Category:\*\*' "$idea_file" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//')
+                printf "| %-8s | %-4s | %-50s | %-30s | %-6s |\n" \
+                    "$priority" "$loop_num" "${title:-Unknown}" "${category:-N/A}" "$effort_letter"
+            fi
+        done
+    done
+}
+
+# Consolidation Report: Display category distribution bar chart
+# Usage: _consolidate_category_distribution <ideas_dir>
+_consolidate_category_distribution() {
+    local ideas_dir="$1"
+
+    for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] && grep '^\*\*Category:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//'
+    done | sort | uniq -c | sort -rn | \
+    while read -r count category; do
+        [[ -z "$category" ]] && continue
+        local bar=""
+        local i
+        for (( i=0; i<count; i++ )); do bar+="█"; done
+        printf "  %-32s %s (%d)\n" "$category" "$bar" "$count"
+    done
+}
+
+# Generate Idea Consolidation Report from IDEAS.md and per-loop idea files
+# Usage: consolidate_ideas [--output FILE]
+# Outputs structured report: quick wins, theme clusters, priority matrix, category distribution
+consolidate_ideas() {
+    local output_file=""
+    if [[ "${1:-}" == "--output" && -n "${2:-}" ]]; then
+        output_file="$2"
+    fi
+
+    local korero_dir="${KORERO_DIR:-.korero}"
+    local ideas_dir="$korero_dir/ideas"
+    local ideas_file="$ideas_dir/IDEAS.md"
+
+    if [[ ! -f "$ideas_file" ]]; then
+        echo "Error: No IDEAS.md found at $ideas_file" >&2
+        echo "Run ideation loops first to generate ideas." >&2
+        return 1
+    fi
+
+    # Count total ideas from individual loop files
+    local total_ideas=0
+    for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] && total_ideas=$(( total_ideas + 1 ))
+    done
+
+    # Count unique categories and types
+    local total_categories total_types
+    total_categories=$(for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] && grep '^\*\*Category:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//'
+    done | sort -u | grep -c . 2>/dev/null || echo 0)
+
+    total_types=$(for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] && grep '^\*\*Type:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Type:\*\*[[:space:]]*//'
+    done | sort -u | grep -c . 2>/dev/null || echo 0)
+
+    local _report_body
+    _report_body=$(
+        echo "═══════════════════════════════════════════════════════════"
+        echo "IDEA CONSOLIDATION REPORT"
+        echo "Generated: $(date +%Y-%m-%d)"
+        echo "Total Ideas: ${total_ideas} | Categories: ${total_categories} | Types: ${total_types}"
+        echo "═══════════════════════════════════════════════════════════"
+        echo ""
+
+        echo "## Quick Wins (S effort)"
+        _consolidate_by_effort "$ideas_dir" "S"
+        echo ""
+
+        echo "## Medium Effort (M effort)"
+        _consolidate_by_effort "$ideas_dir" "M"
+        echo ""
+
+        echo "## Theme Clusters"
+        _consolidate_category_clusters "$ideas_dir"
+
+        echo "## Implementation Priority Matrix"
+        _consolidate_priority_matrix "$ideas_dir"
+        echo ""
+
+        echo "## Category Distribution"
+        _consolidate_category_distribution "$ideas_dir"
+        echo ""
+
+        echo "═══════════════════════════════════════════════════════════"
+        echo "Tip: Use 'korero --search-ideas KEYWORD' to find specific ideas."
+        echo "     Use 'korero --start-idea N' to begin implementing idea N."
+        echo "═══════════════════════════════════════════════════════════"
+    )
+
+    if [[ -n "$output_file" ]]; then
+        echo "$_report_body" > "$output_file"
+        echo "Consolidation report written to: $output_file"
+    else
+        echo "$_report_body"
+    fi
+}
+
+# Display ideation quality statistics from individual idea files
+# Analyzes: type balance, category coverage, agent productivity, recent trends
+# Usage: show_idea_stats
+show_idea_stats() {
+    local korero_dir="${KORERO_DIR:-.korero}"
+    local ideas_dir="$korero_dir/ideas"
+
+    if [[ ! -d "$ideas_dir" ]]; then
+        echo "No ideas directory found. Run ideation loops first." >&2
+        return 1
+    fi
+
+    # Count total ideas
+    local total=0
+    for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] && total=$(( total + 1 ))
+    done
+
+    if [[ $total -eq 0 ]]; then
+        echo "No idea files found in $ideas_dir." >&2
+        return 1
+    fi
+
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════╗"
+    echo "║  KORERO IDEATION STATISTICS                                ║"
+    echo "╚════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "Total Ideas Generated: $total"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    # Type balance
+    echo "TYPE BALANCE"
+    local ui_count=0 nf_count=0
+    for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] || continue
+        local ftype
+        ftype=$(grep '^\*\*Type:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Type:\*\*[[:space:]]*//')
+        case "$ftype" in
+            *Usability*) ui_count=$(( ui_count + 1 )) ;;
+            *Feature*)   nf_count=$(( nf_count + 1 )) ;;
+        esac
+    done
+    local ui_pct=0 nf_pct=0
+    if [[ $total -gt 0 ]]; then
+        ui_pct=$(( ui_count * 100 / total ))
+        nf_pct=$(( nf_count * 100 / total ))
+    fi
+    printf "  Usability Improvement: %d (%d%%)\n" "$ui_count" "$ui_pct"
+    printf "  New Feature:           %d (%d%%)\n" "$nf_count" "$nf_pct"
+    echo "  Target:                60% / 40%"
+    echo ""
+
+    # Agent productivity
+    echo "MOST PRODUCTIVE AGENTS"
+    for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] && grep '^\*\*Proposed by:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Proposed by:\*\*[[:space:]]*//'
+    done | sort | uniq -c | sort -rn | head -5 | \
+    while read -r count agent; do
+        [[ -z "$agent" ]] && continue
+        printf "  %-35s %d wins\n" "$agent" "$count"
+    done
+    echo ""
+
+    # Category coverage
+    echo "CATEGORY COVERAGE"
+    for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] && grep '^\*\*Category:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//'
+    done | sort | uniq -c | sort -rn | \
+    while read -r count category; do
+        [[ -z "$category" ]] && continue
+        printf "  %-35s %d wins\n" "$category" "$count"
+    done
+    echo ""
+
+    # Recent trends (last 10 loops)
+    local recent_files
+    recent_files=$(ls -1 "$ideas_dir"/loop_*_idea.md 2>/dev/null | sort -t_ -k2 -n | tail -10)
+    local recent_count=0
+    local recent_ui=0 recent_nf=0 recent_cats_unique
+    for f in $recent_files; do
+        [[ -f "$f" ]] || continue
+        recent_count=$(( recent_count + 1 ))
+        local ftype
+        ftype=$(grep '^\*\*Type:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Type:\*\*[[:space:]]*//')
+        case "$ftype" in
+            *Usability*) recent_ui=$(( recent_ui + 1 )) ;;
+            *Feature*)   recent_nf=$(( recent_nf + 1 )) ;;
+        esac
+    done
+    recent_cats_unique=$(for f in $recent_files; do
+        [[ -f "$f" ]] && grep '^\*\*Category:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//'
+    done | sort -u | grep -c . 2>/dev/null || echo 0)
+
+    local total_cats
+    total_cats=$(for f in "$ideas_dir"/loop_*_idea.md; do
+        [[ -f "$f" ]] && grep '^\*\*Category:\*\*' "$f" 2>/dev/null | head -1 | sed 's/\*\*Category:\*\*[[:space:]]*//'
+    done | sort -u | grep -c . 2>/dev/null || echo 0)
+
+    echo "RECENT TRENDS (last ${recent_count} loops)"
+    printf "  Category diversity: %d/%d unique categories\n" "$recent_cats_unique" "$total_cats"
+    printf "  Type balance:       %d UI / %d NF\n" "$recent_ui" "$recent_nf"
+    echo ""
+
+    echo "════════════════════════════════════════════════════════════"
+    echo "Tip: Use 'korero --consolidate-ideas' for implementation planning."
+    echo "════════════════════════════════════════════════════════════"
+}
+
+# Show per-loop cost history from cost_history.json
+# Reads from .korero/cost_history.json written by record_loop_cost()
+show_cost_history() {
+    local korero_dir="${KORERO_DIR:-.korero}"
+    local cost_file="$korero_dir/cost_history.json"
+
+    if [[ ! -f "$cost_file" ]]; then
+        echo "No cost history found. Run some loops first."
+        return 1
+    fi
+
+    echo ""
+    echo "═══════════════════════════════════════════════════════════"
+    echo "              LOOP COST HISTORY"
+    echo "═══════════════════════════════════════════════════════════"
+    echo ""
+    printf "%-6s| %-10s| %-8s| %-9s| %s\n" "Loop" "Est. Cost" "Tokens" "Duration" "Timestamp"
+    echo "──────|───────────|─────────|──────────|──────────────────"
+
+    # Display each loop entry
+    jq -r '.loops[] | "\(.loop)|\(.cost_usd)|\(.tokens)|\(.duration_sec)|\(.timestamp)"' "$cost_file" 2>/dev/null | \
+    while IFS='|' read -r loop cost tokens duration ts; do
+        local ts_short
+        ts_short=$(echo "$ts" | cut -d'T' -f1,2 | tr 'T' ' ' | cut -c1-16)
+        printf "  %-4s|   \$%-6s |  %6s |   %3ss   | %s\n" "$loop" "$cost" "$tokens" "$duration" "$ts_short"
+    done
+
+    echo ""
+    echo "═══════════════════════════════════════════════════════════"
+    echo "SESSION SUMMARY"
+    echo "═══════════════════════════════════════════════════════════"
+
+    local total_cost total_tokens loop_count avg_cost
+    total_cost=$(jq -r '.session_total_usd' "$cost_file" 2>/dev/null || echo "0")
+    total_tokens=$(jq -r '.session_total_tokens' "$cost_file" 2>/dev/null || echo "0")
+    loop_count=$(jq -r '.loops | length' "$cost_file" 2>/dev/null || echo "0")
+
+    if [[ "$loop_count" -gt 0 ]]; then
+        avg_cost=$(awk "BEGIN { printf \"%.2f\", $total_cost / $loop_count }" 2>/dev/null || echo "0.00")
+    else
+        avg_cost="0.00"
+    fi
+
+    echo "Total estimated cost:  \$${total_cost}"
+    echo "Total tokens:          ${total_tokens}"
+    echo "Average per loop:      \$${avg_cost}"
+    echo "Loops recorded:        ${loop_count}"
+    echo "═══════════════════════════════════════════════════════════"
+}
+
+# Show debate quality statistics from .korero/.debate_quality.json
+# Also displays aggregate win distribution via display_debate_stats() (Loop 35)
+show_debate_stats() {
+    local korero_dir="${KORERO_DIR:-.korero}"
+    local quality_file="$korero_dir/.debate_quality.json"
+
+    # Show transcript-based aggregate stats first (Loop 35)
+    source "$SCRIPT_DIR/lib/debate_transcript.sh" 2>/dev/null || true
+    display_debate_stats
+
+    if [[ ! -f "$quality_file" ]]; then
+        echo "No debate quality data found. Run heavy mode loops first."
+        return 1
+    fi
+
+    if ! command -v jq &>/dev/null; then
+        echo "jq is required to display quality metrics."
+        return 1
+    fi
+
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════╗"
+    echo "║              DEBATE QUALITY STATISTICS                     ║"
+    echo "╚════════════════════════════════════════════════════════════╝"
+    echo ""
+
+    local total_debates avg_quality
+    total_debates=$(jq '.debates | length' "$quality_file" 2>/dev/null || echo "0")
+    avg_quality=$(jq 'if (.debates | length) > 0 then ([.debates[].quality_score] | add / length | floor) else 0 end' "$quality_file" 2>/dev/null || echo "0")
+
+    echo "  Total debates analyzed: $total_debates"
+    echo "  Average quality score:  $avg_quality/100"
+    echo ""
+
+    if [[ "$avg_quality" -ge 70 ]]; then
+        echo "  Assessment: HIGH QUALITY — AIs are engaging substantively"
+    elif [[ "$avg_quality" -ge 50 ]]; then
+        echo "  Assessment: MODERATE — Some improvement possible"
+    else
+        echo "  Assessment: LOW — Consider reviewing debate prompts"
+    fi
+    echo ""
+
+    if [[ "$total_debates" -gt 0 ]]; then
+        echo "  Recent Debates (up to 5):"
+        echo "  ────────────────────────────────────────────────────────"
+        printf "  %-6s| %-9s| %-13s| %-10s| %s\n" "Loop" "Quality" "Length Ratio" "Coverage" "Confidence"
+        echo "  ──────|───────────|─────────────|──────────|───────────"
+
+        jq -r '
+          .debates |
+          sort_by(.loop) |
+          reverse |
+          .[:5][] |
+          "\(.loop)|\(.quality_score)|\(.length_ratio)|\(.coverage)|\(.verdict_confidence)"
+        ' "$quality_file" 2>/dev/null | \
+        while IFS='|' read -r loop quality ratio coverage conf; do
+            printf "  %-6s|   %3s/100 |  %-11s|  %4s%%    |  %3s%%\n" \
+                "$loop" "$quality" "$ratio" "$coverage" "$conf"
+        done
+    fi
+
+    echo ""
+    echo "╚════════════════════════════════════════════════════════════╝"
+    echo ""
+}
+
+# =============================================================================
+# IDEA IMPLEMENTATION STATUS (Loop 37)
+# =============================================================================
+
+# Display idea implementation status dashboard
+# Parses fix_plan.md's Loop Checkpoints section and Winning Ideas Tracker table
+# Usage: show_implementation_status
+show_implementation_status() {
+    local fix_plan="${KORERO_DIR:-.korero}/fix_plan.md"
+
+    if [[ ! -f "$fix_plan" ]]; then
+        echo "No fix_plan.md found. Run korero-enable first."
+        return 1
+    fi
+
+    # Parse winning ideas tracker: rows like | NN | Title | Type | Category | Agent | Status |
+    declare -A idea_titles
+    declare -A idea_categories
+    while IFS='|' read -r _ loop title _ category _; do
+        loop=$(echo "$loop" | tr -d '[:space:]')
+        title=$(echo "$title" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+        category=$(echo "$category" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+        [[ "$loop" =~ ^[0-9]+$ ]] || continue
+        idea_titles["$loop"]="$title"
+        idea_categories["$loop"]="$category"
+    done < <(grep -E '^\| *[0-9]+ *\|' "$fix_plan" 2>/dev/null)
+
+    # Parse Loop Checkpoint checkboxes
+    # Format:
+    #   ### Loop N
+    #   - [x] Implementation   (completed)
+    #   - [ ] Implementation   (pending)
+    local implemented=()
+    local pending=()
+    local current_loop=""
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^###[[:space:]]Loop[[:space:]]([0-9]+) ]]; then
+            current_loop="${BASH_REMATCH[1]}"
+        elif [[ -n "$current_loop" && "$line" =~ [Ii]mplementation ]]; then
+            if [[ "$line" =~ \[x\] ]]; then
+                implemented+=("$current_loop")
+            else
+                pending+=("$current_loop")
+            fi
+            current_loop=""
+        fi
+    done < "$fix_plan"
+
+    local total=$(( ${#implemented[@]} + ${#pending[@]} ))
+    local impl_count=${#implemented[@]}
+    local pct=0
+    [[ $total -gt 0 ]] && pct=$(( impl_count * 100 / total ))
+
+    # Build progress bar (20 chars wide)
+    local filled=$(( pct / 5 ))
+    local empty=$(( 20 - filled ))
+    local bar=""
+    local i
+    for (( i=0; i<filled; i++ )); do bar="${bar}█"; done
+    for (( i=0; i<empty; i++ ));  do bar="${bar}░"; done
+
+    echo ""
+    echo "═══════════════════════════════════════════════════════════"
+    echo "           IDEA IMPLEMENTATION STATUS"
+    echo "═══════════════════════════════════════════════════════════"
+    echo ""
+    printf "SUMMARY: %d/%d implemented (%d%%)\n" "$impl_count" "$total" "$pct"
+    echo ""
+    printf "PROGRESS BAR: [%s] %d%%\n" "$bar" "$pct"
+    echo ""
+
+    # Implemented ideas
+    if [[ ${#implemented[@]} -gt 0 ]]; then
+        printf "IMPLEMENTED (%d):\n" "${#implemented[@]}"
+        for loop in "${implemented[@]}"; do
+            printf "  ✓ Loop %s: %s\n" "$loop" "${idea_titles[$loop]:-Unknown}"
+        done
+        echo ""
+    fi
+
+    # Pending ideas (show first 5, summarise rest)
+    if [[ ${#pending[@]} -gt 0 ]]; then
+        printf "PENDING (%d):\n" "${#pending[@]}"
+        local count=0
+        for loop in "${pending[@]}"; do
+            printf "  ○ Loop %s: %s\n" "$loop" "${idea_titles[$loop]:-Unknown}"
+            count=$(( count + 1 ))
+            [[ $count -ge 5 ]] && break
+        done
+        if [[ ${#pending[@]} -gt 5 ]]; then
+            printf "  ... (%d more)\n" "$(( ${#pending[@]} - 5 ))"
+        fi
+        echo ""
+    fi
+
+    # Next up
+    if [[ ${#pending[@]} -gt 0 ]]; then
+        local next_loop="${pending[0]}"
+        echo "NEXT UP (oldest pending):"
+        printf "  → Loop %s: %s\n" "$next_loop" "${idea_titles[$next_loop]:-Unknown}"
+        printf "    Category: %s\n" "${idea_categories[$next_loop]:-Unknown}"
+    fi
+
+    echo ""
+    echo "═══════════════════════════════════════════════════════════"
+    echo ""
+    return 0
 }
 
 # Example Gallery — curated workflow examples for new users
@@ -2896,12 +4297,56 @@ Create via:
   korero-enable-ci               Non-interactive (CI/scripts)
 TOPICEOF
             ;;
+        idea-stats)
+            cat << 'TOPICEOF'
+IDEA QUALITY RETROSPECTIVE
+===========================
+
+Show statistics about your ideation sessions:
+
+  korero --idea-stats
+
+The report includes:
+  Type Balance      UI vs New Feature ratio (target: 60%/40%)
+  Top Agents        Most productive agents by win count (top 5)
+  Category Coverage All categories with win counts
+  Recent Trends     Last 10 loops: diversity and type balance
+
+Use alongside:
+  korero --consolidate-ideas    Group ideas for sprint planning
+  korero --search-ideas KEYWORD Find ideas by keyword
+TOPICEOF
+            ;;
+        consolidate-ideas|consolidation)
+            cat << 'TOPICEOF'
+IDEA CONSOLIDATION REPORT
+==========================
+
+Generate a structured summary report from accumulated IDEAS.md:
+
+  korero --consolidate-ideas
+
+The report includes:
+  Quick Wins      S-effort ideas for immediate implementation
+  Medium Effort   M-effort ideas
+  Theme Clusters  Ideas grouped by category with loop references
+  Priority Matrix Table sorted P1 (S) → P2 (M) → P3 (L)
+  Distribution    Bar chart of ideas per category
+
+Save to a file:
+  korero --consolidate-ideas --output sprint-plan.md
+
+Use alongside:
+  korero --search-ideas KEYWORD   Find ideas by keyword
+  korero --start-idea N           Start implementing idea N
+TOPICEOF
+            ;;
         *)
             echo "Unknown help topic: $topic"
             echo ""
             echo "Available topics:"
-            echo "  presets, circuit-breaker, session, tools,"
-            echo "  modes, exit-detection, rate-limiting, config"
+            echo "  presets, circuit-breaker, session, tools, modes,"
+            echo "  exit-detection, rate-limiting, config, consolidate-ideas, idea-stats"
             echo ""
             echo "Usage: korero --help <topic>"
             return 1
@@ -3000,6 +4445,31 @@ while [[ $# -gt 0 ]]; do
             validate_korerorc_verbose ".korerorc"
             exit $?
             ;;
+        --fix-config)
+            SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+            source "$SCRIPT_DIR/lib/enable_core.sh"
+            local korerorc=".korerorc"
+            if [[ ! -f "$korerorc" ]]; then
+                echo "No .korerorc found. Run: korero --quickstart"
+                exit 1
+            fi
+            echo "Applying default fixes to $korerorc..."
+            local fix_count=0
+            for field in ALLOWED_TOOLS KORERO_MODE MAX_LOOPS; do
+                if ! grep -q "^${field}=" "$korerorc" 2>/dev/null; then
+                    eval "$(get_config_fix "$field" "$korerorc")"
+                    echo "  Added: $field"
+                    fix_count=$((fix_count + 1))
+                fi
+            done
+            if [[ $fix_count -eq 0 ]]; then
+                echo "  No missing fields found."
+            else
+                echo "$fix_count field(s) added."
+            fi
+            echo "Run 'korero --validate-config' to verify."
+            exit 0
+            ;;
         --quickstart)
             SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
             source "$SCRIPT_DIR/lib/enable_core.sh"
@@ -3014,6 +4484,68 @@ while [[ $# -gt 0 ]]; do
         --health-check)
             run_health_check
             exit $?
+            ;;
+        --cost-estimate)
+            display_cost_report
+            exit $?
+            ;;
+        --cost-history|--costs)
+            show_cost_history
+            exit $?
+            ;;
+        --debate-stats|--quality)
+            show_debate_stats
+            exit $?
+            ;;
+        --debate-health)
+            source "$SCRIPT_DIR/lib/cross_ai_debate.sh" 2>/dev/null || true
+            echo "Analyzing debate health (last 10 debates)..."
+            analyze_debate_fatigue 10
+            local _dh_rc=$?
+            if [[ $_dh_rc -eq 0 ]]; then
+                local _metrics_file="${KORERO_DIR:-.korero}/.debate_metrics"
+                if [[ ! -f "$_metrics_file" ]] || [[ $(wc -l < "$_metrics_file" 2>/dev/null || echo 0) -lt 3 ]]; then
+                    echo "No debate metrics found. Run heavy mode loops to collect data."
+                fi
+            fi
+            exit 0
+            ;;
+        --implementation-status|--impl-status)
+            show_implementation_status
+            exit $?
+            ;;
+        --shutdown-history)
+            show_shutdown_history "${2:-20}"
+            exit $?
+            ;;
+        --rate-status|--rate|-r)
+            show_rate_status
+            exit $?
+            ;;
+        --search-ideas|--find-ideas)
+            shift
+            search_ideas "$1"
+            exit $?
+            ;;
+        --consolidate-ideas)
+            if [[ "${2:-}" == "--output" && -n "${3:-}" ]]; then
+                consolidate_ideas --output "$3"
+            else
+                consolidate_ideas
+            fi
+            exit $?
+            ;;
+        --idea-stats)
+            show_idea_stats
+            exit $?
+            ;;
+        --troubleshoot|--troubleshooting)
+            show_troubleshoot_reference
+            exit 0
+            ;;
+        --diagnose)
+            run_interactive_troubleshooter
+            exit 0
             ;;
         --show-debate)
             SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
@@ -3090,8 +4622,14 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         *)
-            echo "Unknown option: $1"
-            show_help
+            echo "Unknown option: $1" >&2
+            _unknown_suggestion=$(suggest_similar_option "$1")
+            if [[ -n "$_unknown_suggestion" ]]; then
+                echo "" >&2
+                echo "Did you mean: ${_unknown_suggestion}?" >&2
+            fi
+            echo "" >&2
+            echo "Run 'korero --help' for usage information." >&2
             exit 1
             ;;
     esac

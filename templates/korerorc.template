@@ -82,6 +82,15 @@ BEADS_FILTER="status:open"
 # CIRCUIT BREAKER THRESHOLDS
 # =============================================================================
 
+# Budget alert: maximum estimated API spend in USD (optional)
+# When estimated costs exceed this value, loop pauses with recovery options
+# Set to "" or remove this line to disable budget checking
+# KORERO_BUDGET_USD=""
+
+# API call budget alert threshold (percentage 50-95, default 80)
+# Progress bar turns yellow at this % of MAX_CALLS_PER_HOUR, red at 95%
+KORERO_BUDGET_ALERT=80
+
 # Open circuit after N loops with no file changes
 CB_NO_PROGRESS_THRESHOLD=3
 

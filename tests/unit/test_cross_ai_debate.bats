@@ -147,6 +147,23 @@ EOF
     grep -q '"confidence": 75' "$KORERO_DIR/.debate_result"
 }
 
+@test "parse_debate_verdict extracts wrapped JSON verdict without working jq" {
+    mkdir -p "$TEST_DIR/bin"
+    echo '#!/bin/bash
+exit 1' > "$TEST_DIR/bin/jq"
+    chmod +x "$TEST_DIR/bin/jq"
+
+    cat > "$TEST_DIR/judge.log" << 'EOF'
+{"type":"result","subtype":"success","result":"\n---DEBATE_VERDICT---\nWINNER: codex\nTITLE: Wrapped verdict survives jq fallback\nCONFIDENCE: 82\nRATIONALE: Codex had the stronger final proposal.\nRUNNER_UP_INSIGHT: Claude still surfaced a useful tradeoff.\n---END_DEBATE_VERDICT---","stop_reason":"end_turn"}
+EOF
+
+    run bash -c 'PATH="'$TEST_DIR/bin':/usr/bin:/bin"; export KORERO_DIR="'$KORERO_DIR'"; source "'$REPO_ROOT'/lib/debate_transcript.sh"; source "'$REPO_ROOT'/lib/codex_adapter.sh"; source "'$REPO_ROOT'/lib/cross_ai_debate.sh"; parse_debate_verdict "'$TEST_DIR'/judge.log" "'$KORERO_DIR'/.debate_result"; cat "'$KORERO_DIR'/.debate_result"'
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"winner": "codex"'* ]]
+    [[ "$output" == *'"confidence": 82'* ]]
+    [[ "$output" == *'Wrapped verdict survives jq fallback'* ]]
+}
+
 @test "parse_debate_verdict defaults to claude on missing verdict block" {
     echo "No verdict here" > "$TEST_DIR/judge.log"
     parse_debate_verdict "$TEST_DIR/judge.log" "$KORERO_DIR/.debate_result" || true
@@ -249,4 +266,734 @@ EOF
     init_debate_transcript 1 > /dev/null
     run_cross_ai_debate "$TEST_DIR/claude_prop.log" "$TEST_DIR/codex_prop.log" 1 "heavy-idea" "proj" 2
     grep -q "default" "$DEBATES_DIR/loop_1.md"
+}
+
+# ===== get_phase_icon =====
+
+@test "get_phase_icon returns correct icon for proposal" {
+    result=$(get_phase_icon "proposal")
+    [ "$result" = "[>]" ]
+}
+
+@test "get_phase_icon returns correct icon for critique" {
+    result=$(get_phase_icon "critique")
+    [ "$result" = "[*]" ]
+}
+
+@test "get_phase_icon returns correct icon for defense" {
+    result=$(get_phase_icon "defense")
+    [ "$result" = "[#]" ]
+}
+
+@test "get_phase_icon returns correct icon for judgment" {
+    result=$(get_phase_icon "judgment")
+    [ "$result" = "[=]" ]
+}
+
+@test "get_phase_icon returns correct icon for complete" {
+    result=$(get_phase_icon "complete")
+    [ "$result" = "[+]" ]
+}
+
+@test "get_phase_icon returns correct icon for error" {
+    result=$(get_phase_icon "error")
+    [ "$result" = "[!]" ]
+}
+
+@test "get_phase_icon returns default icon for unknown phase" {
+    result=$(get_phase_icon "unknown")
+    [ "$result" = "[-]" ]
+}
+
+# ===== show_debate_progress =====
+
+@test "show_debate_progress outputs to stderr" {
+    run show_debate_progress "critique" "start" "testing"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Critique"* ]]
+    [[ "$output" == *"IN PROGRESS"* ]]
+}
+
+@test "show_debate_progress shows DONE for end status" {
+    run show_debate_progress "defense" "end" "complete"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DONE"* ]]
+}
+
+@test "show_debate_progress shows FAILED for error status" {
+    run show_debate_progress "judgment" "error" "exit code 1"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"FAILED"* ]]
+}
+
+@test "show_debate_progress includes elapsed time" {
+    run show_debate_progress "critique" "end" "done" "42"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"42s"* ]]
+}
+
+@test "show_debate_progress includes detail message" {
+    run show_debate_progress "defense" "start" "Claude + Codex in parallel"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Claude + Codex in parallel"* ]]
+}
+
+# ===== show_debate_summary =====
+
+@test "show_debate_summary displays winner" {
+    run show_debate_summary "claude" "Test Idea" "85" "120"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DEBATE COMPLETE"* ]]
+    [[ "$output" == *"Claude"* ]]
+}
+
+@test "show_debate_summary displays codex winner" {
+    run show_debate_summary "codex" "Codex Idea" "90" "60"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Codex"* ]]
+}
+
+@test "show_debate_summary shows confidence and duration" {
+    run show_debate_summary "claude" "Test" "75" "45"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"75%"* ]]
+    [[ "$output" == *"45s"* ]]
+}
+
+@test "show_debate_summary shows idea title" {
+    run show_debate_summary "claude" "Add streaming support" "80" "30"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Add streaming support"* ]]
+}
+
+# ===== run_cross_ai_debate fallback mode =====
+
+@test "run_cross_ai_debate uses claude fallback when codex not installed" {
+    echo "Claude proposal text" > "$TEST_DIR/claude_prop.log"
+    echo "Codex proposal text" > "$TEST_DIR/codex_prop.log"
+    init_debate_transcript 1 > /dev/null
+    # Override PATH so codex is not found, set fallback mode
+    run bash -c '
+        export KORERO_DIR="'$KORERO_DIR'"
+        export DEBATES_DIR="'$DEBATES_DIR'"
+        export CODEX_FALLBACK="claude-only"
+        PATH=/usr/bin:/bin
+        source "'$REPO_ROOT'/lib/debate_transcript.sh"
+        source "'$REPO_ROOT'/lib/codex_adapter.sh"
+        source "'$REPO_ROOT'/lib/cross_ai_debate.sh"
+        run_cross_ai_debate "'$TEST_DIR'/claude_prop.log" "'$TEST_DIR'/codex_prop.log" 1 "heavy-idea" "proj" 2
+    '
+    [ "$status" -eq 0 ]
+    grep -q '"winner": "claude"' "$KORERO_DIR/.debate_result"
+    grep -q '"fallback": true' "$KORERO_DIR/.debate_result"
+}
+
+@test "run_cross_ai_debate fallback records reason in result" {
+    echo "Claude proposal text" > "$TEST_DIR/claude_prop.log"
+    echo "" > "$TEST_DIR/codex_prop.log"
+    init_debate_transcript 1 > /dev/null
+    run bash -c '
+        export KORERO_DIR="'$KORERO_DIR'"
+        export DEBATES_DIR="'$DEBATES_DIR'"
+        export CODEX_FALLBACK="silent"
+        PATH=/usr/bin:/bin
+        source "'$REPO_ROOT'/lib/debate_transcript.sh"
+        source "'$REPO_ROOT'/lib/codex_adapter.sh"
+        source "'$REPO_ROOT'/lib/cross_ai_debate.sh"
+        run_cross_ai_debate "'$TEST_DIR'/claude_prop.log" "'$TEST_DIR'/codex_prop.log" 1 "heavy-idea" "proj" 2
+    '
+    [ "$status" -eq 0 ]
+    grep -q '"fallback_reason": "not_installed"' "$KORERO_DIR/.debate_result"
+}
+
+@test "run_cross_ai_debate fallback records in transcript" {
+    echo "Claude proposal text" > "$TEST_DIR/claude_prop.log"
+    echo "" > "$TEST_DIR/codex_prop.log"
+    init_debate_transcript 1 > /dev/null
+    run bash -c '
+        export KORERO_DIR="'$KORERO_DIR'"
+        export DEBATES_DIR="'$DEBATES_DIR'"
+        export CODEX_FALLBACK="claude-only"
+        PATH=/usr/bin:/bin
+        source "'$REPO_ROOT'/lib/debate_transcript.sh"
+        source "'$REPO_ROOT'/lib/codex_adapter.sh"
+        source "'$REPO_ROOT'/lib/cross_ai_debate.sh"
+        run_cross_ai_debate "'$TEST_DIR'/claude_prop.log" "'$TEST_DIR'/codex_prop.log" 1 "heavy-idea" "proj" 2
+    '
+    [ "$status" -eq 0 ]
+    grep -q "fallback" "$DEBATES_DIR/loop_1.md"
+}
+
+# ===== show_debate_round_progress =====
+
+@test "show_debate_round_progress displays correct bar for round 1 of 3" {
+    run show_debate_round_progress 1 "Critique" 3
+    [[ "$output" == *"Round 1/3"* ]]
+    [[ "$output" == *"Critique"* ]]
+    [[ "$output" == *"███"* ]]
+}
+
+@test "show_debate_round_progress displays correct bar for round 2 of 3" {
+    run show_debate_round_progress 2 "Defense" 3
+    [[ "$output" == *"Round 2/3"* ]]
+    [[ "$output" == *"Defense"* ]]
+    [[ "$output" == *"██████"* ]]
+}
+
+@test "show_debate_round_progress displays correct bar for round 3 of 3" {
+    run show_debate_round_progress 3 "Judgment" 3
+    [[ "$output" == *"Round 3/3"* ]]
+    [[ "$output" == *"Judgment"* ]]
+    [[ "$output" == *"██████████"* ]]
+}
+
+@test "show_debate_round_progress defaults to 3 total rounds" {
+    run show_debate_round_progress 2 "Defense"
+    [[ "$output" == *"Round 2/3"* ]]
+}
+
+@test "complete_debate_round_progress shows full bar with message" {
+    run complete_debate_round_progress
+    [[ "$output" == *"██████████"* ]]
+    [[ "$output" == *"Debate complete!"* ]]
+}
+
+# ===== calculate_length_ratio =====
+
+@test "calculate_length_ratio returns balanced ratio for similar-length files" {
+    echo "This is a proposal with several words to test the length calculation" > "$TEST_DIR/claude.txt"
+    echo "This codex proposal also has about the same number of words here" > "$TEST_DIR/codex.txt"
+    run calculate_length_ratio "$TEST_DIR/claude.txt" "$TEST_DIR/codex.txt"
+    [ "$status" -eq 0 ]
+    # Should be close to 1.0 (non-empty output)
+    [[ -n "$output" ]]
+}
+
+@test "calculate_length_ratio returns 0 for empty codex file" {
+    echo "Claude has content" > "$TEST_DIR/claude.txt"
+    touch "$TEST_DIR/empty.txt"
+    run calculate_length_ratio "$TEST_DIR/claude.txt" "$TEST_DIR/empty.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "0" ]
+}
+
+@test "calculate_length_ratio returns 0 for missing files" {
+    run calculate_length_ratio "/nonexistent/a.txt" "/nonexistent/b.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "0" ]
+}
+
+# ===== calculate_coverage =====
+
+@test "calculate_coverage returns 0 for missing files" {
+    run calculate_coverage "/nonexistent/proposal.txt" "/nonexistent/critique.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "0" ]
+}
+
+@test "calculate_coverage returns positive for matching terms" {
+    echo "The implementation should use caching and Redis for performance optimization" > "$TEST_DIR/proposal.txt"
+    echo "The critique addresses caching Redis implementation performance optimization concerns" > "$TEST_DIR/critique.txt"
+    run calculate_coverage "$TEST_DIR/proposal.txt" "$TEST_DIR/critique.txt"
+    [ "$status" -eq 0 ]
+    [[ "$output" -gt 0 ]]
+}
+
+@test "calculate_coverage returns 0 for completely different content" {
+    echo "aaaa bbbb cccc dddd eeee ffff" > "$TEST_DIR/proposal.txt"
+    echo "zzzz yyyy xxxx wwww vvvv uuuu" > "$TEST_DIR/critique.txt"
+    run calculate_coverage "$TEST_DIR/proposal.txt" "$TEST_DIR/critique.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "0" ]
+}
+
+# ===== calculate_verdict_confidence =====
+
+@test "calculate_verdict_confidence returns 90 for clearly superior language" {
+    echo "Claude's proposal is clearly superior and is the obvious choice." > "$TEST_DIR/judgment.txt"
+    run calculate_verdict_confidence "$TEST_DIR/judgment.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "90" ]
+}
+
+@test "calculate_verdict_confidence returns 75 for preferred language" {
+    echo "Claude's proposal is better overall and more convincingly argued." > "$TEST_DIR/judgment.txt"
+    run calculate_verdict_confidence "$TEST_DIR/judgment.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "75" ]
+}
+
+@test "calculate_verdict_confidence returns 40 for marginal language" {
+    echo "Claude has a slight edge, though it was a close call." > "$TEST_DIR/judgment.txt"
+    run calculate_verdict_confidence "$TEST_DIR/judgment.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "40" ]
+}
+
+@test "calculate_verdict_confidence returns 50 as default" {
+    echo "Both proposals present interesting approaches." > "$TEST_DIR/judgment.txt"
+    run calculate_verdict_confidence "$TEST_DIR/judgment.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "50" ]
+}
+
+@test "calculate_verdict_confidence returns 50 for missing file" {
+    run calculate_verdict_confidence "/nonexistent/judgment.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "50" ]
+}
+
+# ===== calculate_debate_quality =====
+
+@test "calculate_debate_quality returns score between 0 and 100" {
+    echo "Claude proposes implementing feature X with approach Y" > "$TEST_DIR/claude.txt"
+    echo "Codex proposes implementing feature X with approach Z" > "$TEST_DIR/codex.txt"
+    echo "The critique addresses feature approach implementation" > "$TEST_DIR/claude_crit.txt"
+    echo "The critique addresses feature approach implementation" > "$TEST_DIR/codex_crit.txt"
+    echo "Claude's proposal is the preferred choice overall" > "$TEST_DIR/judgment.txt"
+    run calculate_debate_quality \
+        "$TEST_DIR/claude.txt" "$TEST_DIR/codex.txt" \
+        "$TEST_DIR/claude_crit.txt" "$TEST_DIR/codex_crit.txt" \
+        "$TEST_DIR/judgment.txt"
+    [ "$status" -eq 0 ]
+    [[ "$output" -ge 0 && "$output" -le 100 ]]
+}
+
+# ===== record_debate_quality =====
+
+@test "record_debate_quality creates JSON file" {
+    if ! command -v jq &>/dev/null; then skip "jq not available"; fi
+    run record_debate_quality 1 75 "0.95" 80 70
+    [ "$status" -eq 0 ]
+    [ -f "$KORERO_DIR/.debate_quality.json" ]
+}
+
+@test "record_debate_quality stores correct quality score" {
+    if ! command -v jq &>/dev/null; then skip "jq not available"; fi
+    record_debate_quality 1 75 "0.95" 80 70
+    local score
+    score=$(jq '.debates[0].quality_score' "$KORERO_DIR/.debate_quality.json")
+    [ "$score" -eq 75 ]
+}
+
+@test "record_debate_quality accumulates multiple debates" {
+    if ! command -v jq &>/dev/null; then skip "jq not available"; fi
+    record_debate_quality 1 70 "1.00" 60 80
+    record_debate_quality 2 80 "0.90" 75 90
+    local count
+    count=$(jq '.debates | length' "$KORERO_DIR/.debate_quality.json")
+    [ "$count" -eq 2 ]
+}
+
+@test "record_debate_quality includes timestamp" {
+    if ! command -v jq &>/dev/null; then skip "jq not available"; fi
+    record_debate_quality 1 75 "0.95" 80 70
+    local ts
+    ts=$(jq -r '.debates[0].timestamp' "$KORERO_DIR/.debate_quality.json")
+    [[ "$ts" == *"T"* ]]
+}
+
+@test "run_cross_ai_debate silent fallback suppresses warning" {
+    echo "Claude proposal text" > "$TEST_DIR/claude_prop.log"
+    echo "" > "$TEST_DIR/codex_prop.log"
+    init_debate_transcript 1 > /dev/null
+    run bash -c '
+        export KORERO_DIR="'$KORERO_DIR'"
+        export DEBATES_DIR="'$DEBATES_DIR'"
+        export CODEX_FALLBACK="silent"
+        PATH=/usr/bin:/bin
+        source "'$REPO_ROOT'/lib/debate_transcript.sh"
+        source "'$REPO_ROOT'/lib/codex_adapter.sh"
+        source "'$REPO_ROOT'/lib/cross_ai_debate.sh"
+        run_cross_ai_debate "'$TEST_DIR'/claude_prop.log" "'$TEST_DIR'/codex_prop.log" 1 "heavy-idea" "proj" 2
+    '
+    [ "$status" -eq 0 ]
+    # Silent mode should not show the CODEX FALLBACK banner
+    [[ "$output" != *"CODEX FALLBACK"* ]]
+}
+
+# ===== display_parallel_timing (Loop 32) =====
+
+@test "display_parallel_timing outputs success line for exit 0" {
+    run bash -c "
+        source \"$REPO_ROOT/lib/codex_adapter.sh\"
+        source \"$REPO_ROOT/lib/cross_ai_debate.sh\"
+        display_parallel_timing 'claude' 42 0
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Claude"* ]]
+    [[ "$output" == *"42"* ]]
+}
+
+@test "display_parallel_timing outputs failure line for non-zero exit" {
+    run bash -c "
+        source \"$REPO_ROOT/lib/codex_adapter.sh\"
+        source \"$REPO_ROOT/lib/cross_ai_debate.sh\"
+        display_parallel_timing 'codex' 15 1
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Codex"* ]]
+    [[ "$output" == *"15"* ]]
+}
+
+@test "display_parallel_timing suppresses output when KORERO_QUIET=1" {
+    run bash -c "
+        export KORERO_QUIET=1
+        source \"$REPO_ROOT/lib/codex_adapter.sh\"
+        source \"$REPO_ROOT/lib/cross_ai_debate.sh\"
+        display_parallel_timing 'claude' 10 0
+    "
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "display_parallel_timing shows elapsed seconds" {
+    run bash -c "
+        source \"$REPO_ROOT/lib/codex_adapter.sh\"
+        source \"$REPO_ROOT/lib/cross_ai_debate.sh\"
+        display_parallel_timing 'claude' 73 0
+    "
+    [[ "$output" == *"73s"* ]]
+}
+
+# ===== run_parallel_critiques_with_timing (Loop 32) =====
+
+@test "run_parallel_critiques_with_timing sets PARALLEL_CLAUDE_EXIT and PARALLEL_CODEX_EXIT" {
+    run bash -c "
+        source \"$REPO_ROOT/lib/date_utils.sh\" 2>/dev/null || true
+        source \"$REPO_ROOT/lib/timeout_utils.sh\" 2>/dev/null || true
+        source \"$REPO_ROOT/lib/codex_adapter.sh\"
+        source \"$REPO_ROOT/lib/cross_ai_debate.sh\"
+        sleep 0.1 &
+        p1=\$!
+        sleep 0.1 &
+        p2=\$!
+        start=\$(date +%s)
+        run_parallel_critiques_with_timing 'Critique' \$p1 \$p2 \$start
+        echo \"claude_exit=\$PARALLEL_CLAUDE_EXIT codex_exit=\$PARALLEL_CODEX_EXIT\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"claude_exit=0"* ]]
+    [[ "$output" == *"codex_exit=0"* ]]
+}
+
+@test "run_parallel_critiques_with_timing sets PARALLEL_ELAPSED" {
+    run bash -c "
+        source \"$REPO_ROOT/lib/date_utils.sh\" 2>/dev/null || true
+        source \"$REPO_ROOT/lib/timeout_utils.sh\" 2>/dev/null || true
+        source \"$REPO_ROOT/lib/codex_adapter.sh\"
+        source \"$REPO_ROOT/lib/cross_ai_debate.sh\"
+        sleep 0.1 &
+        p1=\$!
+        sleep 0.1 &
+        p2=\$!
+        start=\$(date +%s)
+        run_parallel_critiques_with_timing 'Critique' \$p1 \$p2 \$start
+        echo \"elapsed=\$PARALLEL_ELAPSED\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"elapsed="* ]]
+}
+
+# ===== track_debate_metrics (Loop 45) =====
+
+@test "track_debate_metrics creates metrics file" {
+    track_debate_metrics 75 false false
+    [ -f "$KORERO_DIR/.debate_metrics" ]
+}
+
+@test "track_debate_metrics appends JSON entry with confidence" {
+    track_debate_metrics 80 false true
+    grep -q '"confidence":80' "$KORERO_DIR/.debate_metrics"
+}
+
+@test "track_debate_metrics records timed_out field" {
+    track_debate_metrics 60 true false
+    grep -q '"timed_out":true' "$KORERO_DIR/.debate_metrics"
+}
+
+@test "track_debate_metrics records agreed field" {
+    track_debate_metrics 70 false true
+    grep -q '"agreed":true' "$KORERO_DIR/.debate_metrics"
+}
+
+@test "track_debate_metrics keeps only last 20 entries" {
+    for i in $(seq 1 25); do
+        track_debate_metrics 70 false false
+    done
+    local count
+    count=$(wc -l < "$KORERO_DIR/.debate_metrics")
+    [ "$count" -le 20 ]
+}
+
+# ===== analyze_debate_fatigue (Loop 45) =====
+
+@test "analyze_debate_fatigue returns 0 when no metrics file" {
+    run analyze_debate_fatigue 5
+    [ "$status" -eq 0 ]
+}
+
+@test "analyze_debate_fatigue returns 0 with fewer than 3 entries" {
+    track_debate_metrics 70 false false
+    track_debate_metrics 70 false false
+    run analyze_debate_fatigue 5
+    [ "$status" -eq 0 ]
+}
+
+@test "analyze_debate_fatigue detects low confidence" {
+    for i in 1 2 3 4 5; do
+        echo '{"timestamp":"t","confidence":50,"timed_out":false,"agreed":false}' >> "$KORERO_DIR/.debate_metrics"
+    done
+    run analyze_debate_fatigue 5
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DEBATE FATIGUE DETECTED"* ]]
+}
+
+@test "analyze_debate_fatigue detects high timeout rate" {
+    echo '{"timestamp":"t","confidence":75,"timed_out":true,"agreed":false}' >> "$KORERO_DIR/.debate_metrics"
+    echo '{"timestamp":"t","confidence":75,"timed_out":true,"agreed":false}' >> "$KORERO_DIR/.debate_metrics"
+    echo '{"timestamp":"t","confidence":75,"timed_out":false,"agreed":false}' >> "$KORERO_DIR/.debate_metrics"
+    run analyze_debate_fatigue 3
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DEBATE FATIGUE DETECTED"* ]]
+    [[ "$output" == *"CODEX_TIMEOUT"* ]]
+}
+
+@test "analyze_debate_fatigue detects high consensus" {
+    for i in 1 2 3 4 5; do
+        echo '{"timestamp":"t","confidence":75,"timed_out":false,"agreed":true}' >> "$KORERO_DIR/.debate_metrics"
+    done
+    run analyze_debate_fatigue 5
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DEBATE FATIGUE DETECTED"* ]]
+    [[ "$output" == *"DEBATE_ROUNDS"* ]]
+}
+
+@test "analyze_debate_fatigue produces no output for healthy metrics" {
+    for i in 1 2 3 4 5; do
+        echo '{"timestamp":"t","confidence":80,"timed_out":false,"agreed":false}' >> "$KORERO_DIR/.debate_metrics"
+    done
+    run analyze_debate_fatigue 5
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"FATIGUE"* ]]
+}
+
+# ===== display_fatigue_warning (Loop 45) =====
+
+@test "display_fatigue_warning shows DEBATE FATIGUE DETECTED header" {
+    run display_fatigue_warning 50 30 60 "Increase CODEX_TIMEOUT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DEBATE FATIGUE DETECTED"* ]]
+}
+
+@test "display_fatigue_warning shows warning icon for low confidence" {
+    run display_fatigue_warning 50 10 60
+    [[ "$output" == *"50%"* ]]
+    [[ "$output" == *"⚠"* ]]
+}
+
+@test "display_fatigue_warning shows recommendation text" {
+    run display_fatigue_warning 50 30 60 "Reduce DEBATE_ROUNDS" "Increase timeout"
+    [[ "$output" == *"Recommendations:"* ]]
+    [[ "$output" == *"Reduce DEBATE_ROUNDS"* ]]
+}
+
+# ===== display_verdict_explanation (Loop 47) =====
+
+@test "display_verdict_explanation returns 1 when no result file" {
+    run display_verdict_explanation "$TEST_DIR/nonexistent.json"
+    [ "$status" -eq 1 ]
+}
+
+@test "display_verdict_explanation shows DEBATE VERDICT EXPLANATION header" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "confidence": 78,
+  "title": "Test Proposal",
+  "rationale": "Claude won because the proposal was better.",
+  "runner_up_insight": "N/A"
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DEBATE VERDICT EXPLANATION"* ]]
+}
+
+@test "display_verdict_explanation shows winner and confidence" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "confidence": 78,
+  "title": "Test Proposal",
+  "rationale": "Claude won.",
+  "runner_up_insight": "N/A"
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [[ "$output" == *"CLAUDE"* ]]
+    [[ "$output" == *"78%"* ]]
+}
+
+@test "display_verdict_explanation shows title" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "codex",
+  "confidence": 65,
+  "title": "Portable Signal Handling",
+  "rationale": "Codex had better implementation.",
+  "runner_up_insight": "N/A"
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [[ "$output" == *"Portable Signal Handling"* ]]
+}
+
+@test "display_verdict_explanation shows rationale section" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "confidence": 80,
+  "title": "Test",
+  "rationale": "Claude demonstrated concrete implementation knowledge.",
+  "runner_up_insight": "N/A"
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [[ "$output" == *"RATIONALE:"* ]]
+    [[ "$output" == *"concrete implementation"* ]]
+}
+
+@test "display_verdict_explanation shows runner-up insight when present" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "confidence": 80,
+  "title": "Test",
+  "rationale": "Claude won.",
+  "runner_up_insight": "Codex had a creative approach worth exploring."
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [[ "$output" == *"RUNNER-UP INSIGHT:"* ]]
+    [[ "$output" == *"creative approach"* ]]
+}
+
+@test "display_verdict_explanation works for codex winner" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "codex",
+  "confidence": 72,
+  "title": "Better Algorithm",
+  "rationale": "Codex proposed a more efficient solution.",
+  "runner_up_insight": "N/A"
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CODEX"* ]]
+    [[ "$output" == *"72%"* ]]
+}
+
+# ===== Loop 60: get_debate_confidence =====
+
+@test "get_debate_confidence returns 50 when no result file" {
+    rm -f "$KORERO_DIR/.debate_result"
+    run get_debate_confidence
+    [[ "$output" == "50" ]]
+}
+
+@test "get_debate_confidence reads confidence from result file" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "confidence": 85,
+  "title": "Test Idea"
+}
+EOF
+    run get_debate_confidence
+    [[ "$output" == "85" ]]
+}
+
+@test "get_debate_confidence defaults to 50 when field missing" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "title": "Test Idea"
+}
+EOF
+    run get_debate_confidence
+    [[ "$output" == "50" ]]
+}
+
+@test "get_debate_confidence returns low value correctly" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "codex",
+  "confidence": 30,
+  "title": "Close Call"
+}
+EOF
+    run get_debate_confidence
+    [[ "$output" == "30" ]]
+}
+
+# ===== Loop 60: display_verdict_explanation low confidence warning =====
+
+@test "display_verdict_explanation shows warning for low confidence (30%)" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "confidence": 30,
+  "title": "Close Call",
+  "rationale": "Very close debate.",
+  "runner_up_insight": "Both good"
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"WARNING"* ]]
+    [[ "$output" == *"close debate"* ]]
+}
+
+@test "display_verdict_explanation shows warning at confidence 50%" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "confidence": 50,
+  "title": "Borderline",
+  "rationale": "Barely won."
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"WARNING"* ]]
+}
+
+@test "display_verdict_explanation shows no warning at confidence 60%" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "confidence": 60,
+  "title": "Solid Win",
+  "rationale": "Clear advantage."
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"WARNING"* ]]
+}
+
+@test "display_verdict_explanation shows no warning at confidence 85%" {
+    cat > "$KORERO_DIR/.debate_result" << 'EOF'
+{
+  "winner": "claude",
+  "confidence": 85,
+  "title": "Decisive Win",
+  "rationale": "Strong advantages."
+}
+EOF
+    run display_verdict_explanation "$KORERO_DIR/.debate_result"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"WARNING"* ]]
 }

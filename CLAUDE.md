@@ -45,6 +45,9 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - Three states: CLOSED (normal), HALF_OPEN (monitoring), OPEN (halted)
    - Configurable thresholds for no-progress and error detection
    - Automatic state transitions and recovery
+   - `check_budget_threshold()` - Returns 0 if under budget or no budget set, 1 if at/over; uses `KORERO_BUDGET_USD` + `.korero/cost_history.json`; `bc` for floating-point comparison
+   - `get_budget_percentage()` - Returns current spend as integer percentage of budget (0 if no budget set)
+   - `prompt_budget_exceeded(current_cost, budget)` - Interactive recovery prompt: continue / reduce rate limit (halves MAX_CALLS_PER_HOUR) / exit
 
 2. **lib/response_analyzer.sh** - Intelligent response analysis
    - Analyzes Claude Code output for completion signals
@@ -66,6 +69,10 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - `merge_tool_permissions()` - Merges tool permissions avoiding duplicates
    - `suggest_permission_fix()` - Maps commands to ALLOWED_TOOLS patterns (e.g., `npm install` → `Bash(npm *)`)
    - `format_permission_denial_message()` - Formats actionable fix messages with preset alternatives
+   - **Visual configuration diff**: Colorized before/after display for `.korerorc` changes
+   - `show_config_diff()` - Pure display: RED for removed, GREEN for added, YELLOW for no-change; shows preset expansion
+   - `confirm_config_change()` - Wraps `show_config_diff()` with y/N confirmation prompt (for contexts without prior menu)
+   - **Session age warning**: `check_session_age()` - Warns when session file is older than configurable threshold (default 12 hours); cross-platform `stat` support
 
 3. **lib/date_utils.sh** - Cross-platform date utilities
    - ISO timestamp generation for logging
@@ -96,6 +103,17 @@ The system uses a modular architecture with reusable components in the `lib/` di
      - `generate_ideation_agent_md()` - Agent table, debate rules, scoring criteria, output location instructions
      - `generate_ideation_fix_plan_md()` - Pre-built tracker tables, category coverage, type balance, per-loop checklists with checkpoints
      - `generate_ideation_ideas_md()` - Project-specific IDEAS.md header
+   - **Configuration preview**: `preview_korerorc_changes(new_content, interactive)` - Field-by-field diff when overwriting existing `.korerorc`; prompts for confirmation in interactive mode
+   - **Diversity tracking**: `generate_diversity_stats(ideas_dir)` - Scans idea files for `**Category:**` fields, produces compact text summary with per-category counts, overrepresentation warnings, and diversity alerts
+   - **Config fix commands**: `get_config_fix(field, korerorc)` - Returns copy-paste shell command to fix a missing/invalid field
+   - **Config validation with fixes**: `validate_korerorc_with_fixes(korerorc)` - Validates config and outputs actionable fix commands for each error
+   - **Quick Reference Card**: `generate_quick_reference(mode)` - Generates `.korero/QUICK_REFERENCE.md` with mode-specific commands, troubleshooting, and tips; called automatically at end of `korero-enable`
+     - `_format_mode_name(mode)` - Returns display name for mode (e.g., `heavy-coding` → `Heavy Coding (Claude + Codex)`)
+     - `_qr_essential_commands(mode)` - Mode-specific essential commands section
+     - `_qr_status_commands()` - Status & monitoring commands section
+     - `_qr_troubleshooting()` - Troubleshooting table section
+     - `_qr_keyboard_shortcuts()` - Keyboard shortcuts section
+     - `_qr_mode_tips(mode)` - Mode-specific tips section
 
 6. **lib/wizard_utils.sh** - Interactive prompt utilities for enable wizard
    - User prompts: `confirm()`, `prompt_text()`, `prompt_number()`
@@ -122,9 +140,12 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - `get_latest_debate_loop()` - Returns highest loop number from debates directory
    - `show_debate_transcript(loop_num|"latest")` - Displays transcript content; resolves "latest" automatically
    - `list_debate_transcripts()` - Lists all available transcripts with status indicators
+   - `get_debate_stats()` — Scans `.korero/debates/loop_*.md` and returns compact JSON: total, completed, timed_out, claude_wins, codex_wins, claude_pct, codex_pct, avg_confidence, high_conf_count, low_conf_count (Loop 35)
+   - `display_debate_stats()` — Renders formatted dashboard from `get_debate_stats()`: win distribution bars, confidence analysis; called by `--debate-stats` alongside quality metrics (Loop 35)
 
 10. **lib/health_check.sh** - Environment prerequisite validation
-    - `run_health_check()` - Runs all checks and prints formatted report; exits 0 (all pass) or N (issues found)
+    - `check_bash_version()` - Validates Bash 4.0+ requirement; shows platform-specific upgrade instructions; returns 3 on failure
+    - `run_health_check()` - Runs all checks (including bash version) and prints formatted report; exits 0 (all pass) or N (issues found)
     - `check_tool(cmd, name, hint)` - Checks if a CLI tool is installed; shows version or install hint
     - `check_timeout_tool()` - Checks for `timeout` or `gtimeout` (cross-platform)
     - `check_git_config()` - Validates `git config user.name` and `user.email` are set
@@ -142,6 +163,8 @@ The system uses a modular architecture with reusable components in the `lib/` di
     - `build_codex_command(prompt, mode, output_path)` - Populates `CODEX_CMD_ARGS` array with `codex exec --json --sandbox read-only`
     - `parse_codex_response(ndjson_file, last_message_file, result_file)` - Creates normalized JSON at `.korero/.codex_parse_result`
     - `extract_codex_proposal(last_message_file)` - Returns final proposal text on stdout
+    - `should_fallback_to_claude()` - Checks `CODEX_FALLBACK` env and Codex readiness; returns 0 (should fallback) with reason on stdout, 1 (Codex ready)
+    - `display_fallback_warning(reason, fallback_mode)` - Shows fallback warning to stderr; suppressed in "silent" mode
 
 12. **lib/cross_ai_debate.sh** - Cross-AI debate orchestrator for heavy modes
     - `run_cross_ai_debate(claude_file, codex_file, loop_num, mode, project, rounds)` - Orchestrates 3-round debate, writes `.korero/.debate_result`
@@ -150,6 +173,42 @@ The system uses a modular architecture with reusable components in the `lib/` di
     - `build_judge_prompt(6 artifacts, mode, project)` - Generates judgment prompt with scoring criteria (truncates artifacts to 2000 chars)
     - `parse_debate_verdict(judge_output, result_file)` - Extracts winner from `---DEBATE_VERDICT---` block, defaults to claude on failure
     - `get_debate_winner()` - Returns winner from `.korero/.debate_result`
+    - `get_phase_icon(phase)` - Returns ASCII icon for debate phase (proposal, critique, defense, judgment, complete, error)
+    - `show_debate_progress(phase, status, detail, elapsed)` - Streams colorized progress indicator to stderr with phase name, status, timing
+    - `show_debate_summary(winner, title, confidence, total_time)` - Displays formatted debate completion box with winner info
+    - `show_debate_round_progress(round, phase, total_rounds)` - Round-level progress bar (`[███░░░░░░░] Round 1/3: Critique`) to stderr
+    - `complete_debate_round_progress()` - Full progress bar with "Debate complete!" message to stderr
+    - `calculate_length_ratio(claude_file, codex_file)` - Argument length ratio between proposals (balanced = ~1.0)
+    - `calculate_coverage(proposal_file, critique_file)` - Counter-argument coverage percentage (0-100)
+    - `calculate_verdict_confidence(judgment_file)` - Confidence score from judgment language (0-100)
+    - `calculate_debate_quality(claude, codex, claude_crit, codex_crit, judgment)` - Composite quality score (0-100); 30% length + 40% coverage + 30% confidence
+    - `record_debate_quality(loop_num, quality, ratio, coverage, confidence)` - Appends metrics to `.korero/.debate_quality.json`
+    - `display_parallel_timing(ai_name, elapsed_sec, exit_code)` — Prints per-AI timing line to stderr as each parallel process finishes; suppressed if `KORERO_QUIET=1`
+    - `run_parallel_critiques_with_timing(phase, claude_pid, codex_pid, start_time)` — Polls both background PIDs and calls `display_parallel_timing` as each finishes; sets globals `PARALLEL_CLAUDE_EXIT`, `PARALLEL_CODEX_EXIT`, `PARALLEL_ELAPSED`
+    - **Debate Fatigue Detection** (Loop 45): Tracks debate effectiveness across loops; warns when metrics cross thresholds
+      - `track_debate_metrics(confidence, timed_out, agreed)` — Appends one debate's metrics to `.korero/.debate_metrics`; rotates to keep last 20 entries
+      - `analyze_debate_fatigue([window])` — Reads rolling metrics, checks thresholds (confidence <60%, timeout rate >20%, consensus >80%); calls `display_fatigue_warning` if triggered; runs every 3 loops automatically
+      - `display_fatigue_warning(avg_conf, timeout_rate, consensus_rate, rec...)` — Displays `DEBATE FATIGUE DETECTED` box with per-metric status (✓/⚠) and recommendations
+    - **Verdict Explanation** (Loop 47): Shows structured explanation of why the winner was selected after each debate
+      - `display_verdict_explanation([result_file])` — Reads `.korero/.debate_result`, displays winner/confidence/title/rationale/runner-up insight in formatted box; called automatically after each debate
+    - **Verdict Confidence Scoring** (Loop 60): Structured confidence rubric in judge prompt + runtime confidence accessor
+      - `get_debate_confidence()` — Returns 0-100 integer confidence from `.korero/.debate_result` (jq with sed fallback); defaults to 50 if missing
+      - Low-confidence warning (≤50%) automatically displayed after verdict explanation: warns user to review both proposals manually
+
+13. **lib/cost_estimator.sh** - API cost estimation from loop logs
+    - `estimate_tokens_from_file(file_path)` - Estimates token count from file size (4 chars/token)
+    - `calculate_cost(tokens, rate)` - Calculates USD cost for given tokens at per-1M rate
+    - `estimate_api_costs(log_dir)` - Scans log directory and returns JSON cost breakdown (input/output tokens, costs, files analyzed)
+    - `display_cost_report(log_dir)` - Displays formatted cost dashboard with token usage, cost breakdown, and pricing info
+    - `record_loop_cost(loop_num, output_file, duration_sec)` - Records per-loop cost to `.korero/cost_history.json` (tokens, cost_usd, duration, timestamp); accumulates session totals
+
+14. **lib/signal_handler.sh** - Portable signal handling and shutdown history (Loop 31)
+    - `record_shutdown_signal(reason, loop_count, detail)` - Appends a shutdown event to `.korero/.signal_log.json`; works without jq (creates single-entry fallback)
+    - `show_shutdown_history([limit])` - Displays tabular shutdown history from `.signal_log.json` (default: last 20 events)
+    - `get_shutdown_count()` - Returns total number of recorded shutdown events
+    - `get_last_shutdown_reason()` - Returns the most recent shutdown reason string
+    - `install_signal_handlers(callback, loop_count_var)` - Registers SIGINT/SIGTERM traps; each signal is auto-recorded before calling `callback`
+    - Predefined reason constants: `SHUTDOWN_REASON_SIGINT`, `SHUTDOWN_REASON_SIGTERM`, `SHUTDOWN_REASON_BUDGET`, `SHUTDOWN_REASON_CIRCUIT`, `SHUTDOWN_REASON_COMPLETE`, `SHUTDOWN_REASON_LIMIT`, `SHUTDOWN_REASON_MANUAL`, `SHUTDOWN_REASON_ERROR`
 
 ## Key Commands
 
@@ -209,6 +268,17 @@ korero-enable-ci --project-type typescript   # Override detection
 korero-enable-ci --json                      # Machine-readable output
 ```
 
+### Quick Reference Card
+
+After running `korero-enable`, a mode-specific quick reference card is automatically generated at `.korero/QUICK_REFERENCE.md`. This single-page document contains:
+- Essential commands for your selected mode
+- Status and monitoring commands
+- Troubleshooting table (circuit breaker, rate limits, permissions)
+- Keyboard shortcuts
+- Mode-specific tips (ideas browsing, commit workflow, Codex auth, etc.)
+
+Print or bookmark `.korero/QUICK_REFERENCE.md` for easy command lookup.
+
 ### Running the Korero Loop
 ```bash
 # Start with integrated tmux monitoring (recommended)
@@ -243,6 +313,9 @@ korero --start-idea 5         # Create branch from loop 5's winning idea
 # Verbose config validation with per-field checkmarks
 korero --validate-config
 
+# Auto-fix missing/invalid config fields
+korero --fix-config
+
 # Example workflow gallery (interactive menu)
 korero --examples
 
@@ -253,6 +326,33 @@ korero --show-debate 5        # Show transcript from loop 5
 # Environment health check
 korero --health-check            # Validate all prerequisites
 korero --health-check || exit 1  # Use in CI to fail fast
+
+# API cost estimation
+korero --cost-estimate           # Show estimated API costs from logs
+korero --cost-history            # Show per-loop cost breakdown with session totals
+
+# Debate quality and health (heavy modes)
+korero --debate-stats            # Show win distribution + quality statistics across loops
+korero --debate-health           # Analyze debate fatigue metrics (last 10 debates)
+
+# Implementation status
+korero --implementation-status   # Show which winning ideas are implemented vs pending
+korero --impl-status             # Short alias
+
+# Idea search and consolidation
+korero --search-ideas "caching"  # Search past ideas by keyword
+korero --consolidate-ideas       # Generate consolidation report: quick wins, clusters, priority matrix
+korero --idea-stats              # Ideation quality retrospective: type balance, agents, categories
+
+# Signal / shutdown history
+korero --shutdown-history        # Show past shutdown events (signals, budget, circuit)
+
+# Rate limit visualization
+korero --rate-status             # Show visual rate limit status dashboard (alias: --rate, -r)
+
+# Troubleshooting
+korero --troubleshoot            # Quick reference for common issues and fixes
+korero --diagnose                # Interactive troubleshooting wizard (guided diagnosis)
 
 # Circuit breaker management
 korero --reset-circuit
@@ -283,8 +383,14 @@ When `MAX_LOOPS` is set to a number, the bar shows completion percentage. In con
 
 ### Running Tests
 ```bash
-# Run all tests (744 tests)
+# Run all tests (sequential, works everywhere)
 npm test
+
+# Parallel execution (requires flock — CI uses this automatically)
+npm run test:parallel
+
+# Sequential fallback for debugging
+npm run test:sequential
 
 # Run specific test suites
 npm run test:unit
@@ -298,6 +404,8 @@ bats tests/unit/test_enable_core.bats
 bats tests/unit/test_task_sources.bats
 bats tests/unit/test_korero_enable.bats
 ```
+
+> **CI Note:** GitHub Actions runs tests in parallel via `bats --jobs $(nproc)` for ~50% faster feedback. Locally, `npm test` runs sequentially for compatibility.
 
 ## Korero Loop Configuration
 
@@ -313,6 +421,7 @@ The loop is controlled by several key files and environment variables within the
 - Default: 100 API calls per hour (configurable via `--calls` flag)
 - Automatic hourly reset with countdown display
 - Call tracking persists across script restarts
+- **Predictive warnings**: When projected remaining loops drops below threshold (default: 5), a prediction warning is shown with usage stats and suggestions. Configure via `RATE_LIMIT_WARNING_THRESHOLD` in `.korerorc` (set to 0 to disable).
 
 ### Modern CLI Configuration (Phase 1.1)
 
@@ -339,20 +448,47 @@ Presets can be mixed with custom tools: `@standard,Bash(docker *)`
 - `--output-format json|text` - Set Claude output format (default: json)
 - `--allowed-tools "Write,Read,Bash(git *)"` - Restrict allowed tools
 - `--no-continue` - Disable session continuity, start fresh each loop
-- `--help <topic>` - Show detailed help on a specific topic (presets, circuit-breaker, session, tools, modes, exit-detection, rate-limiting, config)
+- `--help <topic>` - Show detailed help on a specific topic (presets, circuit-breaker, session, tools, modes, exit-detection, rate-limiting, config, consolidate-ideas, idea-stats)
 - `--start-idea N` - Create a feature branch from winning idea N and start coding loop
 - `--quickstart` - Quick 3-question setup wizard for new users (mode, project description, permissions)
 - `--validate-config` - Verbose configuration validation with per-field success/error checkmarks
+- `--fix-config` - Apply default fixes for missing/invalid `.korerorc` fields (adds ALLOWED_TOOLS, KORERO_MODE, MAX_LOOPS with sensible defaults)
 - `--examples` - Interactive example workflow gallery with 7 project-type templates
 - `--show-debate [N]` - Display debate transcript from loop N (or latest if N omitted)
 - `--health-check` - Validate all prerequisites (Claude CLI, jq, git, permissions, network, config)
+- `--cost-estimate` - Estimate API costs from loop log files and display formatted report
+- `--cost-history` / `--costs` - Show per-loop cost breakdown with session totals from `cost_history.json`
+- `--debate-stats` / `--quality` - Show win distribution dashboard (from `.korero/debates/` transcripts) + quality metrics (from `.korero/.debate_quality.json`)
+- `--debate-health` - Analyze debate fatigue across last 10 debates; checks confidence, timeout rate, consensus rate against thresholds; displays `DEBATE FATIGUE DETECTED` box with recommendations if triggered
+- `--implementation-status` / `--impl-status` - Show winning idea implementation progress: summary, progress bar, implemented vs pending lists, next-up suggestion; parses fix_plan.md
+- `--search-ideas KEYWORD` / `--find-ideas KEYWORD` - Search past ideas by keyword (case-insensitive), shows metadata and matching context
+- `--consolidate-ideas [--output FILE]` - Generate structured consolidation report from IDEAS.md: Quick Wins (S effort), Medium Effort (M), Theme Clusters by category, Priority Matrix (P1/P2/P3), Category Distribution bar chart; optionally write to file
+- `--idea-stats` - Show ideation quality retrospective: type balance (UI vs NF with 60/40 target), most productive agents (top 5 by wins), category coverage, recent trends (last 10 loops)
+- `--shutdown-history [N]` - Show history of past shutdown events (SIGINT, SIGTERM, budget, circuit); reads `.korero/.signal_log.json` (default: last 20)
+- `--rate-status` / `--rate` / `-r` - Show visual rate limit status dashboard: call count, ASCII bar, remaining calls, time until reset
+- `--troubleshoot` / `--troubleshooting` - Show categorized troubleshooting quick reference with common issues and fix commands
+- `--diagnose` - Interactive troubleshooting wizard with guided yes/no decision tree for diagnosing issues
 - `--codex-timeout NUM` - Set Codex execution timeout in minutes (1-120, heavy modes only)
 - `--debate-rounds NUM` - Set number of cross-AI debate rounds (1-3, heavy modes only)
+
+**Typo Correction:**
+When an unknown flag is passed, Korero uses `levenshtein_distance()` to find the closest valid option and suggests it:
+```
+$ korero --stauts
+Unknown option: --stauts
+
+Did you mean: --status?
+
+Run 'korero --help' for usage information.
+```
+Suggestions only appear when edit distance ≤ threshold (2 for short flags, 3 for medium, 4 for long).
+Functions: `levenshtein_distance(s1, s2)`, `suggest_similar_option(flag)` — pure bash, no external dependencies.
 
 **Loop Context:**
 Each loop iteration injects context via `build_loop_context()`:
 - Current loop number
 - Remaining tasks from fix_plan.md
+- Category diversity stats (per-category counts, overrepresentation warnings)
 - Idea context (when started via `--start-idea`)
 - Circuit breaker state (if not CLOSED)
 - Previous loop work summary
@@ -362,6 +498,7 @@ Each loop iteration injects context via `build_loop_context()`:
 - Sessions are preserved in `.korero/.claude_session_id`
 - Use `--continue` flag to maintain context across loops
 - Disable with `--no-continue` for isolated iterations
+- **Session age warning**: At loop start, warns if session is older than 12 hours (configurable via `SESSION_AGE_WARNING_HOURS` in `.korerorc`)
 
 ### Multi-Agent Ideation System
 
@@ -397,6 +534,7 @@ KORERO_MODE="idea"               # Loop mode: coding, idea, heavy-coding, or hea
 PROJECT_SUBJECT="data analysis"  # Subject for agent generation
 DOMAIN_AGENT_COUNT=3             # Number of domain agents
 MAX_LOOPS="continuous"           # Loop limit: number or continuous
+KORERO_BUDGET_ALERT=80           # API call % threshold for yellow progress bar (default 80)
 ```
 
 **`.korerorc` Heavy Mode Fields** (only used for `heavy-coding` / `heavy-idea`):
@@ -404,6 +542,7 @@ MAX_LOOPS="continuous"           # Loop limit: number or continuous
 CODEX_TIMEOUT=15                 # Codex execution timeout in minutes (1-120)
 CODEX_APPROVAL="never"          # Codex approval mode: never | on-request
 DEBATE_ROUNDS=2                  # Cross-AI debate rounds (1-3)
+CODEX_FALLBACK="claude-only"    # Fallback when Codex unavailable: fail | claude-only | silent
 ```
 
 ### Heavy Mode Architecture
@@ -417,15 +556,77 @@ Heavy modes run Claude Code and OpenAI Codex CLI in parallel each loop, then orc
 
 **Scoring Rubric:** User Impact (30%), Technical Feasibility (25%), Debate Performance (20%), Implementation Clarity (15%), Risk Management (10%)
 
+**Verdict Confidence Rubric:** The judge rates confidence on a 0-100 scale: 90-100 (decisive victory), 70-89 (solid win), 50-69 (close call), 0-49 (very close / human review recommended). Low confidence (≤50%) triggers an automatic warning suggesting manual review of both proposals.
+
 **Fallback Behavior:**
 - If one AI fails, the surviving AI's proposal is used directly (debate skipped)
 - If both AIs fail, the loop exits with an error
 - Codex always runs in `--sandbox read-only`; only Claude implements the winner
+- **CODEX_FALLBACK modes**: `fail` (default, halt on Codex error), `claude-only` (auto-fallback with warning), `silent` (auto-fallback without output)
+- Fallback is checked at the start of `run_cross_ai_debate()` via `should_fallback_to_claude()` before any API calls
+- Fallback result includes `"fallback": true` and `"fallback_reason"` in `.korero/.debate_result`
+
+**Streaming Progress Indicators:**
+Each debate phase outputs real-time progress to stderr with colorized status, phase icons, and elapsed time.
+A round-level progress bar also updates in-place showing overall debate completion:
+```
+[███░░░░░░░] Round 1/3: Critique
+[*] Critique [IN PROGRESS] — Claude + Codex critiquing in parallel
+[+] Critique [DONE] (42s) — Both critiques received
+[██████░░░░] Round 2/3: Defense
+[#] Defense [IN PROGRESS] — Claude + Codex defending in parallel
+[+] Defense [DONE] (38s) — Both defenses received
+[█████████░] Round 3/3: Judgment
+[=] Judgment [IN PROGRESS] — Claude evaluating all artifacts
+[+] Judgment [DONE] (15s) — Verdict received
+[██████████] Debate complete!
+╔══════════════════════════════════════════════════╗
+║  DEBATE COMPLETE                                 ║
+╠══════════════════════════════════════════════════╣
+║  Winner:     Claude
+║  Idea:       Add streaming support
+║  Confidence: 85%
+║  Duration:   95s
+╚══════════════════════════════════════════════════╝
+```
+
+**Parallel Critique Timing Display (Loop 32):**
+As each AI finishes its parallel critique or defense phase, a per-AI timing line is streamed to stderr immediately:
+```
+  ✓ Claude  finished in 42s
+  ✓ Codex   finished in 67s
+```
+Set `KORERO_QUIET=1` in environment to suppress these timing lines.
 
 **Key Files:**
 - `.korero/.debate_result` — JSON with winner, title, confidence, rationale
 - `.korero/debates/loop_N.md` — Full debate transcript per loop
+- `.korero/.debate_quality.json` — Per-loop quality metrics (length ratio, coverage, verdict confidence, composite score)
+- `.korero/.signal_log.json` — Shutdown event history (reason, loop number, detail, timestamp)
 - `templates/heavy_debate_prompts/` — Critique, defense, and judge prompt templates
+
+**Debate Quality Metrics** (calculated after each debate, stored in `.korero/.debate_quality.json`):
+- **Length Ratio** — Word count ratio between Claude and Codex proposals (ideal: 0.7–1.3); extreme ratios flag disengagement
+- **Coverage** — % of proposal key terms addressed in the critique (higher = more substantive engagement)
+- **Verdict Confidence** — Decisiveness score from judgment language: clearly superior=90, preferred=75, slight edge=40, tie=20, default=50
+- **Quality Score** — Composite 0–100 (30% length + 40% coverage + 30% confidence); ≥70 indicates high-quality debates
+
+View with `korero --debate-stats` (alias: `--quality`).
+
+**Debate Fatigue Detection** (Loop 45, runs every 3 loops automatically):
+After each heavy mode loop, metrics are appended to `.korero/.debate_metrics`. Every 3 loops, Korero analyzes the last 5 debates:
+- **Low confidence** (<60%): Debates aren't producing decisive winners → suggest reducing `DEBATE_ROUNDS`
+- **High timeout rate** (>20%): `CODEX_TIMEOUT` is too low → suggest increasing it
+- **High consensus** (>80%): AIs agree too much → suggest reducing `DEBATE_ROUNDS`
+
+Check manually: `korero --debate-health` (analyzes last 10 debates).
+
+**Verdict Explanation** (Loop 47, shown after each debate):
+After each debate judgment, a formatted explanation box is displayed showing:
+- Winner name and confidence %
+- Idea title
+- Rationale: why the winner was selected
+- Runner-up insight: what was valuable from the losing proposal
 
 ### Intelligent Exit Detection
 The loop uses a dual-condition check to prevent premature exits during productive iterations:
@@ -520,7 +721,7 @@ Korero installs to:
 - **Commands**: `~/.local/bin/` (korero, korero-monitor, korero-setup, korero-import, korero-migrate, korero-enable, korero-enable-ci)
 - **Templates**: `~/.korero/templates/`
 - **Scripts**: `~/.korero/` (korero_loop.sh, korero_monitor.sh, setup.sh, korero_import.sh, migrate_to_korero_folder.sh, korero_enable.sh, korero_enable_ci.sh)
-- **Libraries**: `~/.korero/lib/` (circuit_breaker.sh, response_analyzer.sh, date_utils.sh, timeout_utils.sh, enable_core.sh, wizard_utils.sh, task_sources.sh, permission_presets.sh, codex_adapter.sh, cross_ai_debate.sh, debate_transcript.sh)
+- **Libraries**: `~/.korero/lib/` (circuit_breaker.sh, response_analyzer.sh, date_utils.sh, timeout_utils.sh, enable_core.sh, wizard_utils.sh, task_sources.sh, permission_presets.sh, codex_adapter.sh, cross_ai_debate.sh, debate_transcript.sh, cost_estimator.sh, signal_handler.sh)
 
 After installation, the following global commands are available:
 - `korero` - Start the autonomous development loop
@@ -586,6 +787,65 @@ fi
 - `CB_PERMISSION_DENIAL_THRESHOLD=2` - Open circuit after 2 loops with permission denials (Issue #101)
 - `CB_CODEX_FAILURE_THRESHOLD=3` - Open circuit after 3 consecutive Codex failures (heavy modes only)
 
+### Contextual Help Suggestions
+
+When an error halts the loop, Korero appends a relevant `--help` topic tip to stderr:
+
+```
+Error: Circuit breaker opened due to stagnation
+
+Tip: Run 'korero --help circuit-breaker' for more information
+     korero --reset-circuit
+```
+
+Error types and their help topics:
+| Error type | Help topic | Recovery action |
+|---|---|---|
+| `circuit_breaker` | `circuit-breaker` | `korero --reset-circuit` |
+| `rate_limit` | `rate-limiting` | `--calls NUM` |
+| `permission_denied` | `presets` | Edit `ALLOWED_TOOLS` in `.korerorc` |
+| `session_expired` | `session` | `korero --reset-session` |
+| `config_invalid` | `config` | `korero --validate-config` |
+| `codex_auth` | `modes` | `codex login` |
+| `budget_exceeded` | `rate-limiting` | `korero --cost-history` |
+
+**Key function** (in `korero_loop.sh`): `suggest_help_for_error(error_type)` — looks up topic/action from `_KORERO_HELP_TOPIC_MAP` / `_KORERO_HELP_ACTION_MAP`; outputs nothing for unknown types (non-disruptive).
+
+### API Call Budget Alert Progress Bar
+
+The `print_progress()` bar changes color based on API call usage:
+- **Blue** (0-79%): normal operation
+- **Yellow** (≥`KORERO_BUDGET_ALERT`%, default 80%): alert — calls count appended
+- **Red** (≥95%): critical — calls count appended
+
+```bash
+# .korerorc
+KORERO_BUDGET_ALERT=80  # percentage threshold for yellow warning (default 80)
+```
+
+**Key function**: `get_budget_status(current_calls, max_calls)` — returns `green`, `yellow`, or `red`; reads `KORERO_BUDGET_ALERT` (default 80); red threshold fixed at 95%.
+
+### Budget Alert System
+
+Prevents unexpected API bills by pausing when estimated costs exceed a configurable threshold:
+
+```bash
+# In .korerorc — set spending limit in USD
+KORERO_BUDGET_USD="10.00"   # Pause when estimated spend reaches $10
+```
+
+When the budget is reached, users choose from:
+1. **Continue** — acknowledge overspend and proceed
+2. **Reduce rate limit** — halves `MAX_CALLS_PER_HOUR` to slow spending
+3. **Exit** — stop the loop and review costs with `korero --cost-history`
+
+A **warning at 80%** of the budget is shown before the hard pause. Budget checking is **fully opt-in** — if `KORERO_BUDGET_USD` is not set, no checking occurs.
+
+**Key functions** (in `lib/circuit_breaker.sh`):
+- `check_budget_threshold()` - Returns 0 (under) or 1 (over/at budget); handles floating-point via `bc`
+- `get_budget_percentage()` - Returns spend as percentage of budget (0 if no budget set)
+- `prompt_budget_exceeded(current, budget)` - Interactive recovery prompt; returns 0 (continue) or 1 (exit)
+
 ### Permission Denial Detection (Issue #101)
 
 When Claude Code is denied permission to execute commands (e.g., `npm install`), Korero detects this from the `permission_denials` array in the JSON output and offers interactive recovery:
@@ -613,12 +873,18 @@ When Claude Code is denied permission to execute commands (e.g., `npm install`),
 5. **Command mapping**: `suggest_permission_fix()` maps common commands to wildcard patterns (e.g., `npm install` → `Bash(npm *)`)
 6. **Tool merging**: `merge_tool_permissions()` combines new tools with existing ones, avoiding duplicates
 
+**Visual Configuration Diff:**
+Before any `.korerorc` modification, Korero displays a colorized diff showing exactly what will change. Users see the before/after state with RED for removed values and GREEN for added values. When a preset like `@standard` is applied, the expansion is shown. This provides transparency and prevents accidental misconfigurations.
+
 **Key Functions:**
 - `prompt_permission_fix()` - Interactive prompt for permission recovery
-- `apply_permission_fix()` - Updates `.korerorc` with new tools (creates backup)
+- `apply_permission_fix()` - Updates `.korerorc` with new tools (creates backup, shows diff before applying)
 - `merge_tool_permissions()` - Merges tool permissions avoiding duplicates
 - `suggest_permission_fix()` - Maps commands to ALLOWED_TOOLS patterns
 - `format_permission_denial_message()` - Formats actionable fix suggestions
+- `show_config_diff()` - Colorized before/after diff of config field changes
+- `confirm_config_change()` - Show diff + y/N confirmation (for contexts without prior menu)
+- `preview_korerorc_changes()` - Field-by-field diff when `korero-enable --force` overwrites existing config
 
 **Example `.korerorc` tool patterns:**
 ```bash
@@ -657,34 +923,43 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ## Test Suite
 
-### Test Files (824 tests across 27 files)
+### Test Files (1259 tests across 36 files)
 
-**Unit Tests (688 tests):**
+**Unit Tests (1124 tests):**
 
 | File | Tests | Description |
 |------|-------|-------------|
-| `test_cli_parsing.bats` | 63 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea, quickstart, validate-config, examples, show-debate |
+| `test_cli_parsing.bats` | 94 | CLI argument parsing, progress indicator, dry-run, help topics, start-idea, quickstart, validate-config, examples, show-debate, troubleshoot, diagnose, fix-config, search-ideas, cost-history, shutdown-history, rate-status |
 | `test_cli_modern.bats` | 33 | Modern CLI commands (Phase 1.1) + build_claude_command fix |
-| `test_json_parsing.bats` | 64 | JSON output format parsing + Claude CLI format + session management + permission suggestions |
-| `test_session_continuity.bats` | 44 | Session lifecycle management + circuit breaker integration + issue #91 fix |
+| `test_json_parsing.bats` | 74 | JSON output format parsing + Claude CLI format + session management + permission suggestions + visual config diff |
+| `test_session_continuity.bats` | 49 | Session lifecycle management + circuit breaker integration + issue #91 fix + session age warning |
 | `test_exit_detection.bats` | 58 | Exit signal detection + EXIT_SIGNAL-based completion indicators + progress detection |
-| `test_rate_limiting.bats` | 25 | Rate limiting behavior |
-| `test_enable_core.bats` | 45 | Enable core library (idempotency, project detection, template generation, config validation, quickstart, verbose validation) |
+| `test_rate_limiting.bats` | 34 | Rate limiting behavior + predictive rate limit warnings |
+| `test_enable_core.bats` | 79 | Enable core library (idempotency, project detection, template generation, config validation, quickstart, verbose validation, config preview, diversity stats, config fix commands, quick reference card) |
 | `test_task_sources.bats` | 23 | Task sources (beads, GitHub, PRD extraction, normalization) |
 | `test_korero_enable.bats` | 22 | Korero enable integration tests (wizard, CI version, JSON output) |
 | `test_wizard_utils.bats` | 20 | Wizard utility functions (stdout/stderr separation, prompt functions) |
-| `test_ideation_mode.bats` | 66 | Multi-agent ideation: agent generation, context-aware templates, idea storage, integration |
+| `test_ideation_mode.bats` | 75 | Multi-agent ideation: agent generation, context-aware templates, idea storage, integration, implementation status |
 | `test_permission_presets.bats` | 16 | Permission presets: expansion, mixed tools, integration with CLI args |
 | `test_korero_ideas.bats` | 31 | Ideas browsing, search, get_idea_title, sanitize_branch_name |
-| `test_debate_transcript.bats` | 18 | Debate transcript: init, append, finalize, get_latest, show, list |
-| `test_health_check.bats` | 23 | Health check: tool detection, git config, permissions, network, config, CLI flag |
-| `test_codex_adapter.bats` | 25 | Codex CLI adapter: command building, auth checks, response parsing, proposal extraction |
-| `test_cross_ai_debate.bats` | 28 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling |
-| `test_heavy_mode.bats` | 27 | Heavy mode integration: .korerorc validation, CLI flags, health checks, circuit breaker, enable |
+| `test_debate_transcript.bats` | 31 | Debate transcript: init, append, finalize, get_latest, show, list, get_debate_stats, display_debate_stats |
+| `test_health_check.bats` | 28 | Health check: tool detection, git config, permissions, network, config, CLI flag, bash version guard |
+| `test_codex_adapter.bats` | 35 | Codex CLI adapter: command building, auth checks, response parsing, proposal extraction, fallback detection |
+| `test_circuit_breaker.bats` | 16 | Budget Alert System: check_budget_threshold, get_budget_percentage, prompt_budget_exceeded |
+| `test_cross_ai_debate.bats` | 104 | Cross-AI debate: prompt building, verdict parsing, transcript recording, fallback handling, progress indicators, round progress bar, codex fallback integration, debate quality metrics, parallel critique timing, debate fatigue tracking and analysis, verdict explanation display, confidence scoring, low-confidence warning |
+| `test_signal_handling.bats` | 23 | Portable signal handling: record_shutdown_signal, show_shutdown_history, get_shutdown_count, get_last_shutdown_reason, install_signal_handlers, reason constants |
+| `test_prompt_templates.bats` | 44 | Template validation: existence, structure (KORERO_STATUS, EXIT_SIGNAL), shell variable escaping, markdown code block balance, heavy mode placeholders ({AI_NAME}, {OWN_PROPOSAL}, {CRITIQUE}, {CLAUDE_PROPOSAL}, {CODEX_PROPOSAL}), korerorc.template fields |
+| `test_heavy_mode.bats` | 31 | Heavy mode integration: .korerorc validation, CLI flags, health checks, circuit breaker, enable, CODEX_FALLBACK validation |
 | `test_agent_protocol.bats` | 21 | Agent protocol tests |
 | `test_duration_tracking.bats` | 16 | Loop duration tracking |
 | `test_korero_config.bats` | 9 | Configuration management |
 | `test_korero_status.bats` | 11 | Status reporting |
+| `test_cost_estimator.bats` | 30 | API cost estimation: token estimation, cost calculation, log scanning, report display, per-loop cost recording |
+| `test_consolidation.bats` | 31 | Idea consolidation report: consolidate_ideas, _consolidate_by_effort, _consolidate_category_clusters, _consolidate_priority_matrix, _consolidate_category_distribution; no-IDEAS.md error, --output flag, empty states |
+| `test_typo_suggestion.bats` | 25 | Typo correction: levenshtein_distance (identical/substitution/transposition/empty/different), suggest_similar_option (status, monitor, help, validate, unrelated), CLI integration (Did you mean, exit code, help hint) |
+| `test_contextual_help.bats` | 17 | Contextual help: suggest_help_for_error for circuit_breaker/rate_limit/permission_denied/session_expired/config_invalid/codex_auth/budget_exceeded; empty output for unknown types; exit 0 always |
+| `test_budget_alert.bats` | 18 | API call budget alerts: get_budget_status (green/yellow/red thresholds, custom KORERO_BUDGET_ALERT, zero max), print_progress with budget coloring (Calls appended at alert/critical, hidden at normal) |
+| `test_idea_stats.bats` | 25 | Idea quality retrospective: show_idea_stats (type balance, agent productivity, category coverage, recent trends), --idea-stats CLI flag, --help idea-stats topic, edge cases (single idea, missing fields) |
 
 **Integration Tests (136 tests):**
 
@@ -698,8 +973,11 @@ Korero uses advanced error detection with two-stage filtering to eliminate false
 
 ### Running Tests
 ```bash
-# All tests
+# All tests (sequential)
 npm test
+
+# Parallel execution (CI — requires flock)
+npm run test:parallel
 
 # Unit tests only
 npm run test:unit
@@ -712,6 +990,15 @@ bats tests/unit/test_health_check.bats
 bats tests/unit/test_codex_adapter.bats
 bats tests/unit/test_cross_ai_debate.bats
 bats tests/unit/test_heavy_mode.bats
+bats tests/unit/test_cost_estimator.bats
+bats tests/unit/test_signal_handling.bats
+bats tests/unit/test_prompt_templates.bats
+bats tests/unit/test_consolidation.bats
+bats tests/unit/test_typo_suggestion.bats
+bats tests/unit/test_contextual_help.bats
+bats tests/unit/test_budget_alert.bats
+bats tests/unit/test_idea_stats.bats
+npm run test:templates
 ```
 
 ## Feature Development Quality Standards

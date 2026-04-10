@@ -148,3 +148,156 @@ teardown() {
     run list_debate_transcripts
     [[ "$output" == *"No debate"* ]]
 }
+
+# ===== get_debate_stats (Loop 35) =====
+
+@test "get_debate_stats returns JSON with correct total" {
+    mkdir -p "$DEBATES_DIR"
+    # Transcript with winner
+    cat > "$DEBATES_DIR/loop_1.md" << 'EOF'
+## Final Judgment
+
+**Winner:** claude
+**Confidence:** 85
+EOF
+    cat > "$DEBATES_DIR/loop_2.md" << 'EOF'
+## Final Judgment
+
+**Winner:** codex
+**Confidence:** 72
+EOF
+    run get_debate_stats
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"total":2'* ]]
+}
+
+@test "get_debate_stats counts claude wins" {
+    mkdir -p "$DEBATES_DIR"
+    cat > "$DEBATES_DIR/loop_1.md" << 'EOF'
+## Final Judgment
+
+**Winner:** claude
+**Confidence:** 80
+EOF
+    run get_debate_stats
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"claude_wins":1'* ]]
+}
+
+@test "get_debate_stats counts codex wins" {
+    mkdir -p "$DEBATES_DIR"
+    cat > "$DEBATES_DIR/loop_1.md" << 'EOF'
+## Final Judgment
+
+**Winner:** codex
+**Confidence:** 75
+EOF
+    run get_debate_stats
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"codex_wins":1'* ]]
+}
+
+@test "get_debate_stats counts timed_out for missing winner" {
+    mkdir -p "$DEBATES_DIR"
+    cat > "$DEBATES_DIR/loop_1.md" << 'EOF'
+# Debate Transcript: Loop 1
+**Status:** In Progress
+EOF
+    run get_debate_stats
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"timed_out":1'* ]]
+}
+
+@test "get_debate_stats returns 0-total JSON when no transcripts" {
+    mkdir -p "$DEBATES_DIR"
+    run get_debate_stats
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"total":0'* ]]
+}
+
+@test "get_debate_stats returns 1 when debates dir missing" {
+    run get_debate_stats
+    [ "$status" -eq 1 ]
+}
+
+@test "get_debate_stats calculates avg_confidence" {
+    mkdir -p "$DEBATES_DIR"
+    cat > "$DEBATES_DIR/loop_1.md" << 'EOF'
+## Final Judgment
+
+**Winner:** claude
+**Confidence:** 80
+EOF
+    cat > "$DEBATES_DIR/loop_2.md" << 'EOF'
+## Final Judgment
+
+**Winner:** codex
+**Confidence:** 60
+EOF
+    run get_debate_stats
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"avg_confidence":70'* ]]
+}
+
+# ===== display_debate_stats (Loop 35) =====
+
+@test "display_debate_stats shows CROSS-AI DEBATE STATISTICS header" {
+    mkdir -p "$DEBATES_DIR"
+    cat > "$DEBATES_DIR/loop_1.md" << 'EOF'
+## Final Judgment
+
+**Winner:** claude
+**Confidence:** 85
+EOF
+    run display_debate_stats
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CROSS-AI DEBATE STATISTICS"* ]]
+}
+
+@test "display_debate_stats shows WIN DISTRIBUTION" {
+    mkdir -p "$DEBATES_DIR"
+    cat > "$DEBATES_DIR/loop_1.md" << 'EOF'
+## Final Judgment
+
+**Winner:** claude
+**Confidence:** 85
+EOF
+    run display_debate_stats
+    [[ "$output" == *"WIN DISTRIBUTION"* ]]
+}
+
+@test "display_debate_stats shows Claude win count" {
+    mkdir -p "$DEBATES_DIR"
+    cat > "$DEBATES_DIR/loop_1.md" << 'EOF'
+## Final Judgment
+
+**Winner:** claude
+**Confidence:** 85
+EOF
+    run display_debate_stats
+    [[ "$output" == *"Claude"* ]]
+}
+
+@test "display_debate_stats shows CONFIDENCE ANALYSIS section" {
+    mkdir -p "$DEBATES_DIR"
+    cat > "$DEBATES_DIR/loop_1.md" << 'EOF'
+## Final Judgment
+
+**Winner:** claude
+**Confidence:** 85
+EOF
+    run display_debate_stats
+    [[ "$output" == *"CONFIDENCE ANALYSIS"* ]]
+}
+
+@test "display_debate_stats shows message when no debates dir" {
+    run display_debate_stats
+    [ "$status" -eq 1 ]
+}
+
+@test "display_debate_stats shows message when no transcripts" {
+    mkdir -p "$DEBATES_DIR"
+    run display_debate_stats
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No debate transcripts found"* ]]
+}

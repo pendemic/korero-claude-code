@@ -210,6 +210,16 @@ validate_korerorc() {
             fi
         fi
 
+        # Check CODEX_FALLBACK validity (heavy modes)
+        if [[ "$line" =~ CODEX_FALLBACK=[\"\']*([a-zA-Z-]+) ]]; then
+            local codex_fb="${BASH_REMATCH[1]}"
+            if [[ ! "$codex_fb" =~ ^(fail|claude-only|silent)$ ]]; then
+                echo "$config_file:$line_num - Invalid CODEX_FALLBACK '$codex_fb'" >&2
+                echo "  Valid values: fail, claude-only, silent" >&2
+                ((errors++))
+            fi
+        fi
+
         # Check MAX_LOOPS validity
         if [[ "$line" =~ MAX_LOOPS=[\"\']*([a-zA-Z0-9]+) ]]; then
             local loops_val="${BASH_REMATCH[1]}"
@@ -227,6 +237,154 @@ validate_korerorc() {
         echo "$errors error(s) found. Fix and re-run: korero --validate" >&2
         return 1
     fi
+    return 0
+}
+
+# Map config fields to their default fix commands
+# Arguments:
+#   $1 (field) - Configuration field name
+#   $2 (korerorc) - Path to .korerorc file (default: .korerorc)
+# Returns: shell command to fix the field on stdout
+get_config_fix() {
+    local field="$1"
+    local korerorc="${2:-.korerorc}"
+
+    case "$field" in
+        ALLOWED_TOOLS)
+            echo "echo 'ALLOWED_TOOLS=\"@standard\"' >> $korerorc"
+            ;;
+        KORERO_MODE)
+            echo "echo 'KORERO_MODE=\"coding\"' >> $korerorc  # Or: idea, heavy-coding, heavy-idea"
+            ;;
+        KORERO_MODE_INVALID)
+            echo "sed -i 's/KORERO_MODE=.*/KORERO_MODE=\"coding\"/' $korerorc"
+            ;;
+        PROJECT_SUBJECT)
+            echo "echo 'PROJECT_SUBJECT=\"my project\"' >> $korerorc"
+            ;;
+        DOMAIN_AGENT_COUNT)
+            echo "echo 'DOMAIN_AGENT_COUNT=3' >> $korerorc  # Range: 1-10"
+            ;;
+        MAX_LOOPS)
+            echo "echo 'MAX_LOOPS=\"continuous\"' >> $korerorc  # Or: 10, 20, 50"
+            ;;
+        MAX_LOOPS_INVALID)
+            echo "sed -i 's/MAX_LOOPS=.*/MAX_LOOPS=\"continuous\"/' $korerorc"
+            ;;
+        CODEX_TIMEOUT_INVALID)
+            echo "sed -i 's/CODEX_TIMEOUT=.*/CODEX_TIMEOUT=15/' $korerorc  # Range: 1-120"
+            ;;
+        DEBATE_ROUNDS_INVALID)
+            echo "sed -i 's/DEBATE_ROUNDS=.*/DEBATE_ROUNDS=2/' $korerorc  # Range: 1-3"
+            ;;
+        CODEX_FALLBACK_INVALID)
+            echo "sed -i 's/CODEX_FALLBACK=.*/CODEX_FALLBACK=\"claude-only\"/' $korerorc  # Or: fail, silent"
+            ;;
+        *)
+            echo "# Please add $field to $korerorc manually"
+            ;;
+    esac
+}
+
+# Validate .korerorc with actionable fix commands for each error
+# Returns 0 if valid, 1 if errors found
+# Outputs errors with fix commands to stderr
+validate_korerorc_with_fixes() {
+    local korerorc="${1:-.korerorc}"
+    local -a errors=()
+    local -a fixes=()
+
+    if [[ ! -f "$korerorc" ]]; then
+        echo "Configuration file not found: $korerorc" >&2
+        echo "" >&2
+        echo "  Fix: korero-enable  # Interactive setup" >&2
+        echo "  Or:  korero --quickstart  # Quick 3-question setup" >&2
+        return 1
+    fi
+
+    # Check for required ALLOWED_TOOLS
+    if ! grep -q '^ALLOWED_TOOLS=' "$korerorc" 2>/dev/null; then
+        errors+=("Missing ALLOWED_TOOLS")
+        fixes+=("$(get_config_fix "ALLOWED_TOOLS" "$korerorc")")
+    fi
+
+    # Check KORERO_MODE value if present
+    local mode_line
+    mode_line=$(grep '^KORERO_MODE=' "$korerorc" 2>/dev/null || echo "")
+    if [[ -n "$mode_line" ]]; then
+        local mode_val
+        mode_val=$(echo "$mode_line" | sed 's/^KORERO_MODE=["\x27]*//' | sed 's/["\x27]*$//')
+        if [[ -n "$mode_val" && ! "$mode_val" =~ ^(coding|idea|heavy-coding|heavy-idea)$ ]]; then
+            errors+=("Invalid KORERO_MODE: '$mode_val' (valid: coding, idea, heavy-coding, heavy-idea)")
+            fixes+=("$(get_config_fix "KORERO_MODE_INVALID" "$korerorc")")
+        fi
+    fi
+
+    # Check MAX_LOOPS value if present
+    local loops_line
+    loops_line=$(grep '^MAX_LOOPS=' "$korerorc" 2>/dev/null || echo "")
+    if [[ -n "$loops_line" ]]; then
+        local loops_val
+        loops_val=$(echo "$loops_line" | sed 's/^MAX_LOOPS=["\x27]*//' | sed 's/["\x27]*$//')
+        if [[ -n "$loops_val" && "$loops_val" != "continuous" && ! "$loops_val" =~ ^[0-9]+$ ]]; then
+            errors+=("Invalid MAX_LOOPS: '$loops_val' (must be a number or 'continuous')")
+            fixes+=("$(get_config_fix "MAX_LOOPS_INVALID" "$korerorc")")
+        fi
+    fi
+
+    # Check CODEX_TIMEOUT value if present
+    local timeout_line
+    timeout_line=$(grep '^CODEX_TIMEOUT=' "$korerorc" 2>/dev/null || echo "")
+    if [[ -n "$timeout_line" ]]; then
+        local timeout_val
+        timeout_val=$(echo "$timeout_line" | sed 's/^CODEX_TIMEOUT=["\x27]*//' | sed 's/["\x27]*$//')
+        if [[ -n "$timeout_val" && "$timeout_val" =~ ^[0-9]+$ ]]; then
+            if [[ "$timeout_val" -lt 1 || "$timeout_val" -gt 120 ]]; then
+                errors+=("Invalid CODEX_TIMEOUT: $timeout_val (must be 1-120)")
+                fixes+=("$(get_config_fix "CODEX_TIMEOUT_INVALID" "$korerorc")")
+            fi
+        fi
+    fi
+
+    # Check DEBATE_ROUNDS value if present
+    local rounds_line
+    rounds_line=$(grep '^DEBATE_ROUNDS=' "$korerorc" 2>/dev/null || echo "")
+    if [[ -n "$rounds_line" ]]; then
+        local rounds_val
+        rounds_val=$(echo "$rounds_line" | sed 's/^DEBATE_ROUNDS=["\x27]*//' | sed 's/["\x27]*$//')
+        if [[ -n "$rounds_val" && "$rounds_val" =~ ^[0-9]+$ ]]; then
+            if [[ "$rounds_val" -lt 1 || "$rounds_val" -gt 3 ]]; then
+                errors+=("Invalid DEBATE_ROUNDS: $rounds_val (must be 1-3)")
+                fixes+=("$(get_config_fix "DEBATE_ROUNDS_INVALID" "$korerorc")")
+            fi
+        fi
+    fi
+
+    # Check CODEX_FALLBACK value if present
+    local fallback_line
+    fallback_line=$(grep '^CODEX_FALLBACK=' "$korerorc" 2>/dev/null || echo "")
+    if [[ -n "$fallback_line" ]]; then
+        local fb_val
+        fb_val=$(echo "$fallback_line" | sed 's/^CODEX_FALLBACK=["\x27]*//' | sed 's/["\x27]*$//')
+        if [[ -n "$fb_val" && ! "$fb_val" =~ ^(fail|claude-only|silent)$ ]]; then
+            errors+=("Invalid CODEX_FALLBACK: '$fb_val' (valid: fail, claude-only, silent)")
+            fixes+=("$(get_config_fix "CODEX_FALLBACK_INVALID" "$korerorc")")
+        fi
+    fi
+
+    # Display errors with fixes
+    if [[ ${#errors[@]} -gt 0 ]]; then
+        echo "Configuration errors in $korerorc:" >&2
+        echo "" >&2
+        for i in "${!errors[@]}"; do
+            echo "  ERROR: ${errors[$i]}" >&2
+            echo "    Fix: ${fixes[$i]}" >&2
+            echo "" >&2
+        done
+        echo "${#errors[@]} error(s) found. Run the fix commands above, then restart korero." >&2
+        return 1
+    fi
+
     return 0
 }
 
@@ -812,6 +970,7 @@ MAX_LOOPS=\"${max_loops}\"
 CODEX_TIMEOUT=15
 CODEX_APPROVAL=\"never\"
 DEBATE_ROUNDS=2
+CODEX_FALLBACK=\"claude-only\"
 "
         fi
     fi
@@ -849,6 +1008,100 @@ CB_NO_PROGRESS_THRESHOLD=3
 CB_SAME_ERROR_THRESHOLD=5
 CB_OUTPUT_DECLINE_THRESHOLD=70
 KORERORCEOF
+}
+
+# =============================================================================
+# CONFIGURATION PREVIEW
+# =============================================================================
+
+# Preview changes that will be made to .korerorc when overwriting an existing config
+# Shows field-by-field diff between current and new configuration
+#
+# Parameters:
+#   $1 (new_content) - The new .korerorc content that would be written
+#   $2 (interactive) - "true" to prompt for confirmation, "false" to display only (default: true)
+#
+# Returns: 0 if confirmed/non-interactive/no existing config, 1 if user declines
+preview_korerorc_changes() {
+    local new_content="$1"
+    local interactive="${2:-true}"
+    local korerorc=".korerorc"
+
+    # Nothing to diff against if no existing config
+    if [[ ! -f "$korerorc" ]]; then
+        return 0
+    fi
+
+    # Source show_config_diff if not already available
+    if ! type show_config_diff &>/dev/null; then
+        local lib_dir
+        lib_dir="$(dirname "${BASH_SOURCE[0]}")"
+        if [[ -f "$lib_dir/response_analyzer.sh" ]]; then
+            source "$lib_dir/response_analyzer.sh"
+        fi
+    fi
+
+    # Fields to compare
+    local fields=(
+        "KORERO_MODE"
+        "PROJECT_SUBJECT"
+        "PROJECT_NAME"
+        "PROJECT_TYPE"
+        "DOMAIN_AGENT_COUNT"
+        "MAX_LOOPS"
+        "ALLOWED_TOOLS"
+        "MAX_CALLS_PER_HOUR"
+        "SESSION_CONTINUITY"
+        "TASK_SOURCES"
+    )
+
+    echo ""
+    echo -e "${BLUE:-}Configuration changes (.korerorc):${NC:-}"
+    echo "──────────────────────────────────"
+
+    local has_changes=false
+
+    for field in "${fields[@]}"; do
+        # Extract old value from existing file
+        local old_val
+        old_val=$(grep -E "^${field}=" "$korerorc" 2>/dev/null | head -1 | sed "s/^${field}=\"//" | sed 's/"$//' | sed "s/^${field}=//")
+
+        # Extract new value from new content
+        local new_val
+        new_val=$(echo "$new_content" | grep -E "^${field}=" 2>/dev/null | head -1 | sed "s/^${field}=\"//" | sed 's/"$//' | sed "s/^${field}=//")
+
+        # Only show fields where at least one side has a value
+        if [[ -n "$old_val" || -n "$new_val" ]]; then
+            if [[ "$old_val" != "$new_val" ]]; then
+                has_changes=true
+                show_config_diff "$field" "$old_val" "$new_val"
+            fi
+        fi
+    done
+
+    if [[ "$has_changes" == "false" ]]; then
+        echo -e "  ${YELLOW:-}No changes detected${NC:-}"
+        echo ""
+        return 0
+    fi
+
+    echo ""
+
+    # Prompt for confirmation in interactive mode
+    if [[ "$interactive" == "true" ]]; then
+        echo -en "Apply these changes to .korerorc? [y/N]: "
+        read -r response
+        case "${response,,}" in
+            y|yes)
+                return 0
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    fi
+
+    return 0
 }
 
 # =============================================================================
@@ -1436,6 +1689,8 @@ generate_ideation_prompt_md() {
     local mode_mission=""
     local mode_constraint=""
     local implementation_section=""
+    local phase4_section=""
+    local current_task_section=""
     local idea_mode_no_implementation=""
     local loop_display="${max_loops}"
 
@@ -1446,6 +1701,14 @@ generate_ideation_prompt_md() {
     else
         mode_mission="Each loop produces exactly ONE best idea through a multi-phase debate process, then implements it with code changes and a git commit."
         mode_constraint="**IDEATION + IMPLEMENTATION** — Generate the best idea through debate, then implement it."
+    fi
+
+    if [[ "$mode" == "heavy-idea" ]]; then
+        mode_mission="Each loop produces exactly ONE best idea for a cross-AI debate. This is proposal generation only. Do NOT implement anything, run tests, or write files. Korero will persist the winning idea after the debate."
+        mode_constraint="**HEAVY IDEA PROPOSAL ONLY** - No code changes, no file edits, no tests, no implementation."
+    elif [[ "$mode" == "heavy-coding" ]]; then
+        mode_mission="Each loop produces exactly ONE best implementation proposal for a cross-AI debate. This is proposal generation only. Do NOT implement anything, run tests, or write files in this phase. Korero will run implementation separately after the debate."
+        mode_constraint="**HEAVY CODING PROPOSAL ONLY** - No code changes, no file edits, no tests, no implementation in this phase."
     fi
 
     # Build context section
@@ -1535,6 +1798,100 @@ After the winning idea is documented in Phase 4:
 See AGENT.md for build, test, and run instructions.'
     fi
 
+    if [[ "$mode" == "idea" ]]; then
+        phase4_section='
+### Phase 4: Winning Idea Documentation (CRITICAL - YOU MUST WRITE TO FILES)
+The winning idea is documented in full detail using the output format below.
+**You MUST perform ALL of these file writes at the end of each loop:**
+
+1. **APPEND the full winning idea to `.korero/IDEAS.md`** - This is the permanent record.
+   Use the output format below. Append it to the end of the file (do not overwrite existing ideas).
+
+2. **UPDATE the Winning Ideas Tracker table in `.korero/fix_plan.md`** - Fill in the row for
+   the current loop number with the winner'"'"'s title, type, category, and proposing agent.
+   Change Status from "Pending" to "Complete".
+
+3. **UPDATE the Category Coverage table in `.korero/fix_plan.md`** - Increment the count for
+   the winning category and add the loop number.
+
+4. **UPDATE the Type Balance table in `.korero/fix_plan.md`** - Increment the count for
+   the winning type (Usability Improvement or New Feature).
+
+5. **CHECK OFF the phase checkboxes in `.korero/fix_plan.md`** - Mark all 5 checkboxes
+   for the current loop as `[x]`.
+
+If you do not write to these files, the ideas are LOST. This is the most important step.'
+
+        current_task_section='## Current Task
+Execute the next uncompleted loop (check fix_plan.md to see which loop is next).
+Follow the 4-phase workflow above. Begin with Phase 1.
+
+**REMINDER:** At the end of Phase 4 you MUST:
+- APPEND the winning idea to `.korero/IDEAS.md`
+- UPDATE the tracker, category, and type tables in `.korero/fix_plan.md`
+- CHECK OFF the checkboxes for the completed loop in `.korero/fix_plan.md`
+If IDEAS.md is not updated, the idea is lost and the loop was wasted.'
+    elif [[ "$mode" == "heavy-idea" ]]; then
+        phase4_section='
+### Phase 4: Winning Idea Documentation
+Document the winning idea in full detail using the output format below.
+In heavy-idea mode, Korero persists the winning idea after the cross-AI debate.
+Do NOT write to `.korero/IDEAS.md`, `.korero/fix_plan.md`, or any other files during proposal generation.'
+
+        current_task_section='## Current Task
+Execute the next uncompleted loop and produce the strongest proposal content for the debate.
+Follow the 4-phase workflow above conceptually, but do NOT write files.
+Korero will save the final winning idea after the debate.'
+    elif [[ "$mode" == "heavy-coding" ]]; then
+        phase4_section='
+### Phase 4: Winning Idea Documentation
+Document the winning idea in full detail using the output format below.
+In heavy-coding mode, Korero runs implementation in a separate phase after the cross-AI debate.
+Do NOT write files or implement changes during proposal generation.'
+
+        current_task_section='## Current Task
+Execute the next uncompleted loop and produce the strongest implementation proposal for the debate.
+Follow the 4-phase workflow above conceptually, but do NOT write files or implement code yet.
+Korero will pass the winning idea to a separate implementation phase after the debate.'
+    else
+        phase4_section='
+### Phase 4: Winning Idea Documentation (CRITICAL - YOU MUST WRITE TO FILES)
+The winning idea is documented in full detail using the output format below.
+**You MUST perform ALL of these file writes at the end of each loop:**
+
+1. **APPEND the full winning idea to `.korero/IDEAS.md`** - This is the permanent record.
+   Use the output format below. Append it to the end of the file (do not overwrite existing ideas).
+
+2. **UPDATE the Winning Ideas Tracker table in `.korero/fix_plan.md`** - Fill in the row for
+   the current loop number with the winner'"'"'s title, type, category, and proposing agent.
+   Change Status from "Pending" to "Complete".
+
+3. **UPDATE the Category Coverage table in `.korero/fix_plan.md`** - Increment the count for
+   the winning category and add the loop number.
+
+4. **UPDATE the Type Balance table in `.korero/fix_plan.md`** - Increment the count for
+   the winning type (Usability Improvement or New Feature).
+
+5. **CHECK OFF the phase checkboxes in `.korero/fix_plan.md`** - Mark all 5 checkboxes
+   for the current loop as `[x]`.
+
+If you do not write to these files, the ideas are LOST. This is the most important step.'
+
+        current_task_section='## Current Task
+Execute the next uncompleted loop (check fix_plan.md to see which loop is next).
+Follow the 4-phase workflow above. Begin with Phase 1.
+
+**REMINDER:** At the end of Phase 4 you MUST:
+- APPEND the winning idea to `.korero/IDEAS.md`
+- UPDATE the tracker, category, and type tables in `.korero/fix_plan.md`
+- CHECK OFF the checkboxes for the completed loop in `.korero/fix_plan.md`
+If IDEAS.md is not updated, the idea is lost and the loop was wasted.'
+    fi
+
+    if [[ "$mode" == "coding" ]]; then
+        phase4_section="${phase4_section}${implementation_section}"
+    fi
+
     # Build anti-repetition rules based on max_loops
     local anti_repetition=""
     if [[ "$max_loops" != "continuous" ]] && [[ "$max_loops" -gt 5 ]]; then
@@ -1572,6 +1929,211 @@ An idea is considered a DUPLICATE if:
 - It is a minor variation of a prior winner
 
 Ensure category diversity across loops. Avoid repeating the same category more than 3 times."
+    fi
+
+    if [[ "$mode" == "heavy-idea" || "$mode" == "heavy-coding" ]]; then
+        cat << IDEATIONEOF
+# Korero Multi-Agent Idea Generation System
+
+## Context
+${context_section}
+
+${mode_constraint}
+
+**Your mission:** Generate ${loop_display} winning improvement ideas across ${loop_display} loops.
+${mode_mission}
+${focus_section}
+
+---
+
+## The ${total_agents}-Agent Team
+
+### Idea Generators (${agent_count} agents - participate in Phase 1 and Phase 3)
+
+${agent_listing}
+
+### Evaluators (3 agents - participate in Phase 2 and Phase 3)
+
+$((agent_count + 1)). **Devil's Advocate** - Pokes holes. Finds risks, scope creep, hidden complexity, low adoption risk.
+    Asks: "Will users actually use this? How often? Is this solving a real pain point or a hypothetical one?
+    Could this confuse existing users? Is the usability gain worth the added complexity?"
+    Scores each idea on:
+    - User Demand (1-5, higher = more likely to be used daily)
+    - Usability Risk (1-5, higher = more likely to confuse existing users)
+    - Complexity Creep (1-5, higher = worse)
+    - Verdict: STRONG / MODERATE / WEAK
+
+$((agent_count + 2)). **Technical Feasibility Agent** - Assesses implementation against project stack.
+    Asks: "How hard is this to build? Does it fit the current architecture? What are the dependencies?
+    Can we ship a useful v1 of this feature in a reasonable sprint?"
+    Scores each idea on:
+    - Implementation Effort (S/M/L/XL)
+    - Architecture Fit (1-5, higher = better fit)
+    - Breaking Change Risk (Low/Medium/High)
+    - Verdict: FEASIBLE / CHALLENGING / IMPRACTICAL
+
+$((agent_count + 3)). **Idea Orchestrator** - Synthesizer and final decision-maker. Weighs all arguments.
+    Selects the single best idea based on the scoring criteria below.
+    Strongly favors ideas that are immediately noticeable to users over invisible backend improvements.
+
+---
+
+## Per-Loop Workflow (4 Phases)
+
+### Phase 1: Idea Generation (Independent Proposals)
+Each of the ${agent_count} idea generator agents independently proposes 1-2 improvement ideas.
+
+Requirements for each idea:
+- Must cite likely affected files, functions, or components
+- Must explain user-visible value
+- Must be grounded in the actual codebase, not generic product advice
+- Must classify itself into one category
+- Must specify whether it is a usability improvement or new feature
+
+### Phase 2: Evaluation (All evaluators score every idea)
+The 3 evaluator agents review every proposed idea.
+
+### Phase 3: Debate (Back-and-forth)
+Structured 2-round debate:
+
+**Round 1 - Defenders respond:**
+The agents who proposed the top 3-5 ideas (per Orchestrator's ranking) each defend their idea
+against the evaluators' critiques. They can:
+- Address specific Devil's Advocate concerns
+- Propose scope reductions to address feasibility concerns
+- Cite specific files/functions in the codebase that support feasibility
+- Strengthen the value proposition
+
+**Round 2 - Evaluators counter:**
+Evaluators respond to the defenses. The Idea Orchestrator announces the FINAL WINNER
+with clear justification for why this idea beat the alternatives, and identifies 2-3
+RUNNER-UPS whose insights should be preserved in the Minority Opinions section.
+
+${phase4_section}
+
+---
+
+## Winning Idea Output Format
+
+For each loop, document the winner as:
+
+\`\`\`
+===========================================================
+LOOP [N] WINNING IDEA
+===========================================================
+
+**Title:** [Idea Title]
+**Type:** [Usability Improvement | New Feature]
+**Category:** [from categories list]
+**Proposed by:** [Agent Name]
+**Loop:** [N] of ${loop_display}
+
+### Description
+[3-5 paragraph detailed description of the idea, what it does, and how it works]
+
+### Implementation Instructions
+Step-by-step guide for a developer to implement this:
+1. [Step with specific file paths, function names, and code patterns from the codebase]
+2. [Step...]
+3. [Step...]
+...
+
+### Value Proposition
+**Business Value:**
+- [Bullet point with concrete benefit]
+- [Bullet point...]
+
+**Technical Value:**
+- [Bullet point with concrete benefit]
+- [Bullet point...]
+
+**User Impact:**
+- [Who benefits and how]
+
+### Evaluator Feedback Summary
+**Devil's Advocate:** [2-3 sentence summary of concerns and how they were addressed]
+**Technical Feasibility:** [2-3 sentence summary of implementation assessment]
+**Idea Orchestrator:** [2-3 sentence summary of why this idea won]
+
+### Files Most Likely Affected
+- `path/to/file` - [what changes]
+- `path/to/file` - [what changes]
+
+### Minority Opinions (Preserved for Future Reference)
+
+The following ideas were strong contenders but not selected.
+Their insights are preserved for potential future consideration.
+
+**Runner-Up 1: [Idea Title]**
+- **Proposed by:** [Agent Name]
+- **Category:** [Category]
+- **Rejection rationale:** [1-2 sentences why not selected]
+- **Core insight to preserve:** [Key value worth remembering]
+- **Reconsider when:** [Conditions that would make this relevant again]
+
+**Runner-Up 2: [Idea Title]**
+- **Proposed by:** [Agent Name]
+- **Category:** [Category]
+- **Rejection rationale:** [1-2 sentences]
+- **Core insight to preserve:** [Key value]
+- **Reconsider when:** [Conditions]
+
+[Optional Runner-Up 3 if relevant]
+
+===========================================================
+\`\`\`
+
+---
+
+${categories_section}
+
+---
+
+${scoring_section}
+
+---
+
+${anti_repetition}
+
+---
+
+${key_files_section}
+
+${notes_section}
+
+---
+
+## Status Reporting (CRITICAL)
+
+At the end of EACH LOOP, include this status block:
+
+\`\`\`
+---KORERO_STATUS---
+STATUS: IN_PROGRESS | COMPLETE
+LOOP: [N] of ${loop_display}
+PHASE_COMPLETED: GENERATION | EVALUATION | DEBATE | DOCUMENTATION
+WINNING_IDEA: [Title of winning idea]
+WINNING_TYPE: [Usability Improvement | New Feature]
+WINNING_CATEGORY: [Category]
+WINNING_AGENT: [Agent name who proposed it]
+CATEGORIES_COVERED: [comma-separated list of unique categories among all winners so far]
+IDEAS_GENERATED_THIS_LOOP: [number of raw ideas in Phase 1]
+PRIOR_WINNERS: [comma-separated titles of all prior winning ideas]
+EXIT_SIGNAL: false | true
+RECOMMENDATION: [What the next loop should focus on for diversity]
+---END_KORERO_STATUS---
+\`\`\`
+
+### EXIT_SIGNAL Guidelines
+- **Idea mode:** Set EXIT_SIGNAL to `true` only when you genuinely cannot think of any more meaningful improvements. This is rare - there is almost always room for improvement.
+- **Coding mode:** Set EXIT_SIGNAL to `true` only when all fix_plan.md items are done AND no more meaningful improvements can be found through ideation.
+- **Default:** Keep EXIT_SIGNAL `false` - the loop should continue running.
+
+---
+
+${current_task_section}
+IDEATIONEOF
+        return 0
     fi
 
     # Output the full PROMPT.md
@@ -1849,7 +2411,7 @@ generate_ideation_agent_md() {
     # Mode description
     local mode_description=""
     local build_section=""
-    if [[ "$mode" == "idea" ]]; then
+    if [[ "$mode" == "idea" || "$mode" == "heavy-idea" ]]; then
         mode_description="**IDEA GENERATION ONLY** — No code changes, no file edits, no tests, no implementation.
 Korero operates as a ${total_agents}-agent debate team generating improvement ideas for ${project_name}."
         build_section="
@@ -1944,10 +2506,100 @@ ${notes_config}"
 
     # No-implementation rule for idea mode
     local idea_mode_rule=""
-    if [[ "$mode" == "idea" ]]; then
+    if [[ "$mode" == "idea" || "$mode" == "heavy-idea" ]]; then
         idea_mode_rule="6. **No Implementation:** Korero must NOT create, edit, or delete any project source files. Pure ideation only. However, Korero MUST write to \`.korero/IDEAS.md\` and \`.korero/fix_plan.md\` to persist winning ideas — these are the only files that should be modified."
     else
         idea_mode_rule="6. **Implementation:** After documenting the winning idea, implement it with code changes, tests, and a git commit."
+    fi
+
+    if [[ "$mode" == "heavy-idea" || "$mode" == "heavy-coding" ]]; then
+        local heavy_mode_description=""
+        local heavy_build_section="
+## Build Instructions
+
+\`\`\`bash
+# No build - this is a proposal generation run, not a code change run.
+echo 'Idea generation mode - no build required'
+\`\`\`
+
+## Test Instructions
+
+\`\`\`bash
+# No tests - this is a proposal generation run.
+echo 'Idea generation mode - no tests required'
+\`\`\`
+
+## Run Instructions
+
+\`\`\`bash
+# No run - this is a proposal generation run.
+echo 'Idea generation mode - no run required'
+\`\`\`"
+        local heavy_rule=""
+        local heavy_output_location=""
+
+        if [[ "$mode" == "heavy-idea" ]]; then
+            heavy_mode_description="**HEAVY IDEA PROPOSAL ONLY** - No code changes, no file edits, no tests, no implementation.
+Korero operates as a ${total_agents}-agent debate team generating competing proposals for ${project_name}. Korero saves the winning idea after the debate."
+            heavy_rule="6. **No Implementation:** During heavy-idea proposal generation, Korero must NOT create, edit, or delete files, run tests, or implement changes."
+            heavy_output_location="## Output Location
+Korero saves the winning idea after the cross-AI debate.
+Proposal generation must NOT write to \`.korero/IDEAS.md\`, \`.korero/fix_plan.md\`, or any other files."
+        else
+            heavy_mode_description="**HEAVY CODING PROPOSAL ONLY** - Generate the best implementation proposal through ${total_agents}-agent debate.
+Korero implements the winning idea in a separate phase after the debate."
+            heavy_rule="6. **Proposal Only:** During heavy-coding proposal generation, Korero must NOT create, edit, or delete files, run tests, or implement changes."
+            heavy_output_location="## Output Location
+Korero carries the winning proposal into a separate implementation phase after the cross-AI debate.
+Proposal generation must NOT write files directly."
+        fi
+
+        cat << AGENTEOF
+# Korero Agent Configuration - Multi-Agent Idea Generation
+
+## Mode
+${heavy_mode_description}
+
+${focus_section}
+
+## Loop Configuration
+- **Total Loops:** ${max_loops}
+- **Output per Loop:** Exactly 1 winning idea (fully documented)
+- **Total Output:** ${max_loops} winning ideas
+${heavy_build_section}
+
+## Agent Team (${total_agents} members)
+
+### Idea Generators (${agent_count})
+
+${domain_agents}
+
+### Evaluators (3)
+
+| # | Agent | Role | Evaluation Focus |
+|---|-------|------|-----------------|
+| $((agent_count + 1)) | Devil's Advocate | Critic | User adoption likelihood, usability risk, complexity creep |
+| $((agent_count + 2)) | Technical Feasibility Agent | Assessor | Effort sizing, architecture fit, breaking change risk |
+| $((agent_count + 3)) | Idea Orchestrator | Decision-maker | Final ranking using weighted scoring criteria |
+
+## Debate Rules
+
+1. **Independence:** In Phase 1, each generator proposes ideas WITHOUT seeing other generators' ideas.
+2. **Transparency:** In Phase 2, evaluators must score EVERY idea - no skipping.
+3. **Defense:** In Phase 3, only the top 3-5 ideas (per Orchestrator) proceed to debate.
+4. **Finality:** The Idea Orchestrator's Phase 3 decision is FINAL. No appeals.
+5. **Specificity:** All ideas must reference actual files, functions, or patterns from the codebase.
+${heavy_rule}
+7. **One Winner:** Exactly one idea wins per loop. No ties. No "honorable mentions."
+8. **Anti-Repetition:** Ideas materially similar to prior winners are automatically disqualified.
+
+${scoring_section}
+
+${heavy_output_location}
+
+${notes_section}
+AGENTEOF
+        return 0
     fi
 
     cat << AGENTEOF
@@ -2386,7 +3038,18 @@ enable_korero_in_directory() {
     # Generate .korerorc
     local korerorc_content
     korerorc_content=$(generate_korerorc "$project_name" "$DETECTED_PROJECT_TYPE" "$task_sources" "$korero_mode" "$project_subject" "$agent_count" "$max_loops")
-    safe_create_file ".korerorc" "$korerorc_content"
+
+    # When force-overwriting existing config, preview changes and confirm
+    if [[ -f ".korerorc" && "$force" == "true" ]]; then
+        local interactive_mode="${ENABLE_INTERACTIVE:-true}"
+        if preview_korerorc_changes "$korerorc_content" "$interactive_mode"; then
+            safe_create_file ".korerorc" "$korerorc_content"
+        else
+            enable_log "INFO" "Skipped .korerorc overwrite (user declined)"
+        fi
+    else
+        safe_create_file ".korerorc" "$korerorc_content"
+    fi
 
     enable_log "SUCCESS" "Korero enabled successfully!"
 
@@ -2522,6 +3185,15 @@ validate_korerorc_verbose() {
                     ((field_errors++))
                 fi
             fi
+            if [[ -n "${CODEX_FALLBACK:-}" ]]; then
+                if [[ "$CODEX_FALLBACK" =~ ^(fail|claude-only|silent)$ ]]; then
+                    echo "✓ CODEX_FALLBACK: $CODEX_FALLBACK (valid)"
+                else
+                    echo "✗ CODEX_FALLBACK: $CODEX_FALLBACK"
+                    echo "  Error: Must be fail, claude-only, or silent"
+                    ((field_errors++))
+                fi
+            fi
         fi
 
         # Validate ALLOWED_TOOLS
@@ -2612,6 +3284,275 @@ export -f safe_create_dir
 export -f create_korero_structure
 export -f detect_project_context
 export -f detect_git_info
+# generate_diversity_stats - Scan idea files and produce a category balance summary
+#
+# Reads .korero/ideas/loop_*_idea.md files, extracts **Category:** fields,
+# and produces a compact text summary of category coverage for injection into
+# the loop context.
+#
+# Arguments:
+#   $1 (ideas_dir) - Path to ideas directory (default: $KORERO_DIR/ideas)
+# Returns: Multi-line text summary on stdout; empty string if no ideas exist
+generate_diversity_stats() {
+    local ideas_dir="${1:-${KORERO_DIR:-.korero}/ideas}"
+
+    if [[ ! -d "$ideas_dir" ]]; then
+        echo ""
+        return 0
+    fi
+
+    # Collect category counts from idea files
+    local -A category_counts=()
+    local total_ideas=0
+    local file
+
+    for file in "$ideas_dir"/loop_*_idea.md; do
+        if [[ ! -f "$file" ]]; then
+            continue
+        fi
+        total_ideas=$((total_ideas + 1))
+
+        # Extract category from **Category:** line (portable, no grep -P)
+        local category=""
+        category=$(grep '\*\*Category:\*\*' "$file" 2>/dev/null | head -1 | sed 's/.*\*\*Category:\*\*[[:space:]]*//')
+        if [[ -z "$category" ]]; then
+            # Fallback: try "Category:" without bold
+            category=$(grep '^Category:' "$file" 2>/dev/null | head -1 | sed 's/^Category:[[:space:]]*//')
+        fi
+        category="${category:-Uncategorized}"
+        # Trim whitespace
+        category="${category#"${category%%[![:space:]]*}"}"
+        category="${category%"${category##*[![:space:]]}"}"
+
+        category_counts["$category"]=$(( ${category_counts["$category"]:-0} + 1 ))
+    done
+
+    if [[ $total_ideas -eq 0 ]]; then
+        echo ""
+        return 0
+    fi
+
+    # Find max and min categories
+    local max_count=0 min_count=999999
+    local max_cat="" min_cat=""
+    local unique_categories=0
+
+    for cat in "${!category_counts[@]}"; do
+        local count=${category_counts[$cat]}
+        unique_categories=$((unique_categories + 1))
+        if [[ $count -gt $max_count ]]; then
+            max_count=$count
+            max_cat="$cat"
+        fi
+        if [[ $count -lt $min_count ]]; then
+            min_count=$count
+            min_cat="$cat"
+        fi
+    done
+
+    # Build compact summary
+    local summary="Category diversity: ${unique_categories} categories across ${total_ideas} ideas."
+
+    # Build per-category breakdown
+    local breakdown=""
+    for cat in "${!category_counts[@]}"; do
+        local count=${category_counts[$cat]}
+        if [[ -n "$breakdown" ]]; then
+            breakdown+=", "
+        fi
+        breakdown+="${cat}(${count})"
+    done
+    summary+=" Coverage: ${breakdown}."
+
+    # Add recommendation if imbalanced
+    if [[ $max_count -ge 3 && $unique_categories -gt 1 ]]; then
+        summary+=" Note: '${max_cat}' is overrepresented (${max_count}x). Prioritize underrepresented categories."
+    fi
+    if [[ $unique_categories -eq 1 && $total_ideas -ge 3 ]]; then
+        summary+=" Warning: All ideas in one category. Diversify."
+    fi
+
+    echo "$summary"
+}
+
+# ===== Quick Reference Card (Loop 43) =====
+
+# Format a mode name for display
+# Arguments: mode (coding|idea|heavy-coding|heavy-idea)
+_format_mode_name() {
+    case "$1" in
+        coding)        echo "Continuous Coding" ;;
+        idea)          echo "Idea Generation" ;;
+        heavy-coding)  echo "Heavy Coding (Claude + Codex)" ;;
+        heavy-idea)    echo "Heavy Idea Generation (Claude + Codex)" ;;
+        *)             echo "${1:-Coding}" ;;
+    esac
+}
+
+# Generate essential commands section (mode-specific)
+_qr_essential_commands() {
+    local mode="$1"
+    cat << 'EOF'
+
+### Essential Commands
+```
+korero --monitor          # Start with live monitoring
+korero                    # Start without monitoring
+korero --status           # Check current loop status
+korero --cost-estimate    # Estimate API usage from logs
+EOF
+
+    case "$mode" in
+        idea|heavy-idea)
+            cat << 'EOF'
+korero --ideas            # Browse all winning ideas
+korero --show-debate      # View latest debate transcript
+korero --start-idea N     # Implement winning idea N
+EOF
+            ;;
+        coding|heavy-coding)
+            cat << 'EOF'
+korero --start-idea N     # Implement winning idea N
+korero --dry-run          # Preview without executing
+git log --oneline -10     # Review recent commits
+EOF
+            ;;
+    esac
+    echo '```'
+    echo ""
+}
+
+# Generate status & monitoring section
+_qr_status_commands() {
+    cat << 'EOF'
+
+### Status & Monitoring
+```
+korero --circuit-status   # Circuit breaker state
+korero --reset-circuit    # Reset open circuit breaker
+korero --validate-config  # Check .korerorc validity
+korero --health-check     # Environment prerequisites
+korero --cost-history     # Per-loop cost breakdown
+korero --rate-status      # Rate limit status
+```
+
+EOF
+}
+
+# Generate troubleshooting section
+_qr_troubleshooting() {
+    cat << 'EOF'
+
+### Troubleshooting
+| Issue | Fix |
+|-------|-----|
+| Circuit breaker open | `korero --reset-circuit` |
+| Rate limited | Wait or reduce `--calls` |
+| Permission denied | Update `ALLOWED_TOOLS` in `.korerorc` |
+| Session stale | `korero --reset-session` |
+| Config invalid | `korero --fix-config` |
+
+EOF
+}
+
+# Generate keyboard shortcuts section
+_qr_keyboard_shortcuts() {
+    cat << 'EOF'
+
+### Keyboard Shortcuts
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+C` | Graceful stop (finishes current loop) |
+| `Ctrl+C Ctrl+C` | Immediate stop |
+
+EOF
+}
+
+# Generate mode-specific tips section
+_qr_mode_tips() {
+    local mode="$1"
+    local mode_name
+    mode_name=$(_format_mode_name "$mode")
+    echo ""
+    echo "### Tips for ${mode_name}"
+    echo ""
+
+    case "$mode" in
+        idea)
+            cat << 'EOF'
+- Ideas saved to `.korero/IDEAS.md`
+- Use `korero --start-idea N` to implement idea N
+- Review `fix_plan.md` for category balance
+- Debate transcripts in `.korero/debates/`
+- Search past ideas: `korero --search-ideas KEYWORD`
+EOF
+            ;;
+        coding)
+            cat << 'EOF'
+- Each loop auto-commits changes
+- Review `.korero/fix_plan.md` for task status
+- Use `--dry-run` to preview without execution
+- Check `.korero/logs/` for execution history
+- View implementation status: `korero --impl-status`
+EOF
+            ;;
+        heavy-idea)
+            cat << 'EOF'
+- Claude and Codex compete each loop
+- Debate transcripts show critique/defense rounds
+- Use `korero --debate-stats` for quality metrics
+- Codex auth: `codex login` if auth expires
+- Search past ideas: `korero --search-ideas KEYWORD`
+EOF
+            ;;
+        heavy-coding)
+            cat << 'EOF'
+- Winning AI's idea is implemented by Claude
+- Use `korero --debate-stats` for quality metrics
+- Codex timeout: adjust `CODEX_TIMEOUT` in `.korerorc`
+- Fallback: continues with Claude-only if Codex fails
+- View implementation status: `korero --impl-status`
+EOF
+            ;;
+        *)
+            cat << 'EOF'
+- Use `korero --help` for full command reference
+- Check `.korero/fix_plan.md` for task status
+EOF
+            ;;
+    esac
+    echo ""
+}
+
+# Generate mode-specific quick reference card in .korero/QUICK_REFERENCE.md
+# Arguments: mode (coding|idea|heavy-coding|heavy-idea)
+generate_quick_reference() {
+    local mode="${1:-coding}"
+    local korero_dir="${KORERO_DIR:-.korero}"
+    local output_file="${korero_dir}/QUICK_REFERENCE.md"
+    local mode_name
+    mode_name=$(_format_mode_name "$mode")
+
+    mkdir -p "$korero_dir"
+
+    {
+        echo "# Korero Quick Reference Card"
+        echo ""
+        echo "## Mode: ${mode_name}"
+        echo ""
+        echo "> Generated by \`korero-enable\`. Print or bookmark for quick command lookup."
+        _qr_essential_commands "$mode"
+        _qr_status_commands
+        _qr_troubleshooting
+        _qr_keyboard_shortcuts
+        _qr_mode_tips "$mode"
+        echo "---"
+        echo "*Full documentation: \`korero --help\` or CLAUDE.md*"
+    } > "$output_file"
+
+    echo "Quick reference card generated: $output_file"
+}
+
 export -f detect_task_sources
 export -f get_templates_dir
 export -f generate_prompt_md
@@ -2630,3 +3571,14 @@ export -f generate_ideation_ideas_md
 export -f enable_korero_in_directory
 export -f run_quickstart_wizard
 export -f validate_korerorc_verbose
+export -f get_config_fix
+export -f validate_korerorc_with_fixes
+export -f preview_korerorc_changes
+export -f generate_diversity_stats
+export -f _format_mode_name
+export -f _qr_essential_commands
+export -f _qr_status_commands
+export -f _qr_troubleshooting
+export -f _qr_keyboard_shortcuts
+export -f _qr_mode_tips
+export -f generate_quick_reference

@@ -18,6 +18,20 @@ teardown() {
     rm -rf "$TEST_DIR"
 }
 
+# ===== Heavy proposal tool filtering =====
+
+@test "filter_heavy_proposal_tools removes write and bash tools" {
+    run bash -c 'source "'$REPO_ROOT'/korero_loop.sh" >/dev/null 2>&1; filter_heavy_proposal_tools "Write,Read,Edit,Bash(git *),WebSearch,TodoWrite"'
+    [ "$status" -eq 0 ]
+    [ "$output" = "Read,WebSearch" ]
+}
+
+@test "filter_heavy_proposal_tools falls back to Read when nothing safe remains" {
+    run bash -c 'source "'$REPO_ROOT'/korero_loop.sh" >/dev/null 2>&1; filter_heavy_proposal_tools "Write,Edit,Bash(git *),TodoWrite"'
+    [ "$status" -eq 0 ]
+    [ "$output" = "Read" ]
+}
+
 # ===== .korerorc validation with heavy modes =====
 
 @test "validate_korerorc accepts heavy-coding mode" {
@@ -151,6 +165,45 @@ ALLOWED_TOOLS="@standard"
 EOF
     run validate_korerorc_verbose ".korerorc"
     echo "$output" | grep -q "✓ DEBATE_ROUNDS: 3"
+}
+
+@test "validate_korerorc rejects invalid CODEX_FALLBACK" {
+    source "$REPO_ROOT/lib/enable_core.sh"
+    cat > ".korerorc" << 'EOF'
+KORERO_MODE="heavy-coding"
+CODEX_FALLBACK="invalid_value"
+EOF
+    run validate_korerorc ".korerorc"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_korerorc accepts valid CODEX_FALLBACK values" {
+    source "$REPO_ROOT/lib/enable_core.sh"
+    for val in fail claude-only silent; do
+        cat > ".korerorc" << EOF
+KORERO_MODE="heavy-coding"
+CODEX_FALLBACK="$val"
+EOF
+        run validate_korerorc ".korerorc"
+        [ "$status" -eq 0 ]
+    done
+}
+
+@test "validate_korerorc_verbose validates CODEX_FALLBACK" {
+    source "$REPO_ROOT/lib/enable_core.sh"
+    cat > ".korerorc" << 'EOF'
+KORERO_MODE="heavy-coding"
+CODEX_FALLBACK="claude-only"
+ALLOWED_TOOLS="@standard"
+EOF
+    run validate_korerorc_verbose ".korerorc"
+    echo "$output" | grep -q "✓ CODEX_FALLBACK: claude-only"
+}
+
+@test "generate_korerorc includes CODEX_FALLBACK for heavy modes" {
+    source "$REPO_ROOT/lib/enable_core.sh"
+    result=$(generate_korerorc "testproj" "node" "local" "heavy-coding" "my project" 3 10)
+    echo "$result" | grep -q 'CODEX_FALLBACK="claude-only"'
 }
 
 # ===== CLI flag parsing =====

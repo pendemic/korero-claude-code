@@ -528,3 +528,327 @@ EOF
     run bash -c "echo -e 'coding\ntest\nstandard' | run_quickstart_wizard"
     [[ "$output" == *"KORERO QUICK START"* ]] || [[ "$output" == *"already enabled"* ]]
 }
+
+# =============================================================================
+# CONFIGURATION PREVIEW TESTS (4 tests)
+# =============================================================================
+# Tests for preview_korerorc_changes()
+# Shows field-by-field diff when overwriting existing .korerorc
+
+@test "preview_korerorc_changes returns 0 when no existing .korerorc" {
+    cd "$TEST_DIR"
+    # No .korerorc exists
+    run preview_korerorc_changes 'ALLOWED_TOOLS="@standard"' "false"
+    [ "$status" -eq 0 ]
+}
+
+@test "preview_korerorc_changes shows changed fields" {
+    cd "$TEST_DIR"
+    cat > "$TEST_DIR/.korerorc" << 'EOF'
+PROJECT_NAME="old-project"
+ALLOWED_TOOLS="Write,Read,Edit"
+MAX_CALLS_PER_HOUR=100
+EOF
+    local new_content='PROJECT_NAME="new-project"
+ALLOWED_TOOLS="@standard"
+MAX_CALLS_PER_HOUR=100'
+
+    result=$(preview_korerorc_changes "$new_content" "false" 2>&1)
+    [[ "$result" == *"PROJECT_NAME"* ]]
+    [[ "$result" == *"old-project"* ]]
+    [[ "$result" == *"new-project"* ]]
+}
+
+@test "preview_korerorc_changes shows no changes for identical config" {
+    cd "$TEST_DIR"
+    echo 'ALLOWED_TOOLS="@standard"' > "$TEST_DIR/.korerorc"
+    local new_content='ALLOWED_TOOLS="@standard"'
+
+    result=$(preview_korerorc_changes "$new_content" "false" 2>&1)
+    [[ "$result" == *"No changes detected"* ]]
+}
+
+@test "preview_korerorc_changes returns 0 in non-interactive mode" {
+    cd "$TEST_DIR"
+    echo 'ALLOWED_TOOLS="Write,Read,Edit"' > "$TEST_DIR/.korerorc"
+    local new_content='ALLOWED_TOOLS="@standard"'
+
+    run preview_korerorc_changes "$new_content" "false"
+    [ "$status" -eq 0 ]
+}
+
+# =============================================================================
+# DIVERSITY STATS (7 tests)
+# =============================================================================
+
+@test "generate_diversity_stats returns empty for missing directory" {
+    run generate_diversity_stats "$TEST_DIR/nonexistent/ideas"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "generate_diversity_stats returns empty for empty directory" {
+    mkdir -p "$TEST_DIR/ideas"
+    run generate_diversity_stats "$TEST_DIR/ideas"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "generate_diversity_stats counts categories from idea files" {
+    mkdir -p "$TEST_DIR/ideas"
+    cat > "$TEST_DIR/ideas/loop_1_idea.md" << 'EOF'
+**Title:** Shell Compatibility Detection
+**Type:** Usability Improvement
+**Category:** Cross-Platform Support
+EOF
+    cat > "$TEST_DIR/ideas/loop_2_idea.md" << 'EOF'
+**Title:** Permission Fix Suggestions
+**Type:** New Feature
+**Category:** CLI Integration
+EOF
+    run generate_diversity_stats "$TEST_DIR/ideas"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"2 categories"* ]]
+    [[ "$output" == *"2 ideas"* ]]
+}
+
+@test "generate_diversity_stats detects overrepresented category" {
+    mkdir -p "$TEST_DIR/ideas"
+    for i in 1 2 3; do
+        cat > "$TEST_DIR/ideas/loop_${i}_idea.md" << EOF
+**Title:** Idea $i
+**Category:** DevOps
+EOF
+    done
+    cat > "$TEST_DIR/ideas/loop_4_idea.md" << 'EOF'
+**Title:** Idea 4
+**Category:** UX
+EOF
+    run generate_diversity_stats "$TEST_DIR/ideas"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"overrepresented"* ]]
+    [[ "$output" == *"DevOps"* ]]
+}
+
+@test "generate_diversity_stats warns on single category" {
+    mkdir -p "$TEST_DIR/ideas"
+    for i in 1 2 3; do
+        cat > "$TEST_DIR/ideas/loop_${i}_idea.md" << EOF
+**Title:** Idea $i
+**Category:** DevOps
+EOF
+    done
+    run generate_diversity_stats "$TEST_DIR/ideas"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"one category"* ]]
+}
+
+@test "generate_diversity_stats handles uncategorized ideas" {
+    mkdir -p "$TEST_DIR/ideas"
+    cat > "$TEST_DIR/ideas/loop_1_idea.md" << 'EOF'
+**Title:** Some idea without category
+**Type:** New Feature
+EOF
+    run generate_diversity_stats "$TEST_DIR/ideas"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Uncategorized"* ]]
+}
+
+@test "generate_diversity_stats shows per-category counts" {
+    mkdir -p "$TEST_DIR/ideas"
+    cat > "$TEST_DIR/ideas/loop_1_idea.md" << 'EOF'
+**Title:** Idea 1
+**Category:** UX
+EOF
+    cat > "$TEST_DIR/ideas/loop_2_idea.md" << 'EOF'
+**Title:** Idea 2
+**Category:** Performance
+EOF
+    cat > "$TEST_DIR/ideas/loop_3_idea.md" << 'EOF'
+**Title:** Idea 3
+**Category:** UX
+EOF
+    run generate_diversity_stats "$TEST_DIR/ideas"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"UX(2)"* ]]
+    [[ "$output" == *"Performance(1)"* ]]
+}
+
+# =============================================================================
+# CONFIG FIX COMMANDS (8 tests)
+# =============================================================================
+
+@test "get_config_fix returns fix for ALLOWED_TOOLS" {
+    run get_config_fix "ALLOWED_TOOLS"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"@standard"* ]]
+    [[ "$output" == *"ALLOWED_TOOLS"* ]]
+}
+
+@test "get_config_fix returns fix for KORERO_MODE" {
+    run get_config_fix "KORERO_MODE"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"coding"* ]]
+}
+
+@test "get_config_fix returns fix for unknown field" {
+    run get_config_fix "UNKNOWN_FIELD"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"manually"* ]]
+}
+
+@test "validate_korerorc_with_fixes passes valid config" {
+    cat > "$TEST_DIR/.korerorc" << 'EOF'
+ALLOWED_TOOLS="@standard"
+KORERO_MODE="coding"
+EOF
+    run validate_korerorc_with_fixes "$TEST_DIR/.korerorc"
+    [ "$status" -eq 0 ]
+}
+
+@test "validate_korerorc_with_fixes shows fix for missing ALLOWED_TOOLS" {
+    cat > "$TEST_DIR/.korerorc" << 'EOF'
+KORERO_MODE="coding"
+EOF
+    run validate_korerorc_with_fixes "$TEST_DIR/.korerorc"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Missing ALLOWED_TOOLS"* ]]
+    [[ "$output" == *"@standard"* ]]
+}
+
+@test "validate_korerorc_with_fixes shows fix for invalid mode" {
+    cat > "$TEST_DIR/.korerorc" << 'EOF'
+ALLOWED_TOOLS="@standard"
+KORERO_MODE="invalid"
+EOF
+    run validate_korerorc_with_fixes "$TEST_DIR/.korerorc"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Invalid KORERO_MODE"* ]]
+    [[ "$output" == *"sed"* ]]
+}
+
+@test "validate_korerorc_with_fixes returns 1 for missing file" {
+    run validate_korerorc_with_fixes "$TEST_DIR/nonexistent.korerorc"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"not found"* ]]
+}
+
+@test "validate_korerorc_with_fixes shows error count" {
+    cat > "$TEST_DIR/.korerorc" << 'EOF'
+KORERO_MODE="invalid"
+EOF
+    run validate_korerorc_with_fixes "$TEST_DIR/.korerorc"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"error(s) found"* ]]
+}
+
+# =============================================================================
+# QUICK REFERENCE CARD (Loop 43)
+# =============================================================================
+
+@test "generate_quick_reference creates file for idea mode" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    run generate_quick_reference "idea"
+    [ "$status" -eq 0 ]
+    [ -f "$KORERO_DIR/QUICK_REFERENCE.md" ]
+}
+
+@test "generate_quick_reference creates file for coding mode" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    run generate_quick_reference "coding"
+    [ "$status" -eq 0 ]
+    [ -f "$KORERO_DIR/QUICK_REFERENCE.md" ]
+}
+
+@test "generate_quick_reference creates file for heavy-coding mode" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    run generate_quick_reference "heavy-coding"
+    [ "$status" -eq 0 ]
+    [ -f "$KORERO_DIR/QUICK_REFERENCE.md" ]
+}
+
+@test "generate_quick_reference creates file for heavy-idea mode" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    run generate_quick_reference "heavy-idea"
+    [ "$status" -eq 0 ]
+    [ -f "$KORERO_DIR/QUICK_REFERENCE.md" ]
+}
+
+@test "generate_quick_reference idea mode contains Idea Generation header" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    generate_quick_reference "idea"
+    grep -q "Idea Generation" "$KORERO_DIR/QUICK_REFERENCE.md"
+}
+
+@test "generate_quick_reference idea mode contains ideas command" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    generate_quick_reference "idea"
+    grep -q "korero --ideas" "$KORERO_DIR/QUICK_REFERENCE.md"
+}
+
+@test "generate_quick_reference heavy-coding mode contains Codex reference" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    generate_quick_reference "heavy-coding"
+    grep -q "Codex" "$KORERO_DIR/QUICK_REFERENCE.md"
+}
+
+@test "generate_quick_reference includes troubleshooting table" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    generate_quick_reference "coding"
+    grep -q "Circuit breaker open" "$KORERO_DIR/QUICK_REFERENCE.md"
+    grep -q "Permission denied" "$KORERO_DIR/QUICK_REFERENCE.md"
+}
+
+@test "generate_quick_reference includes keyboard shortcuts section" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    generate_quick_reference "coding"
+    grep -q "Keyboard Shortcuts" "$KORERO_DIR/QUICK_REFERENCE.md"
+    grep -q "Ctrl+C" "$KORERO_DIR/QUICK_REFERENCE.md"
+}
+
+@test "generate_quick_reference includes status commands" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    generate_quick_reference "coding"
+    grep -q "korero --circuit-status" "$KORERO_DIR/QUICK_REFERENCE.md"
+}
+
+@test "generate_quick_reference output message mentions file path" {
+    KORERO_DIR="$TEST_DIR/.korero"
+    mkdir -p "$KORERO_DIR"
+    run generate_quick_reference "idea"
+    [[ "$output" == *"QUICK_REFERENCE.md"* ]]
+}
+
+@test "_format_mode_name returns correct name for idea" {
+    run _format_mode_name "idea"
+    [ "$status" -eq 0 ]
+    [[ "$output" == "Idea Generation" ]]
+}
+
+@test "_format_mode_name returns correct name for heavy-coding" {
+    run _format_mode_name "heavy-coding"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Heavy Coding"* ]]
+}
+
+@test "_format_mode_name returns correct name for heavy-idea" {
+    run _format_mode_name "heavy-idea"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Heavy Idea"* ]]
+}
+
+@test "_format_mode_name handles unknown mode gracefully" {
+    run _format_mode_name "unknown-mode"
+    [ "$status" -eq 0 ]
+    [[ "$output" == "unknown-mode" ]]
+}

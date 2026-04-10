@@ -37,7 +37,13 @@ Mode: {MODE}
 ## Your Task
 Evaluate both proposals using the scoring criteria above. Consider the full debate record — proposals, critiques, and defenses.
 
-Select the winner. Output EXACTLY this format:
+Select the winner. Rate your confidence on a 0-100 scale:
+- **90-100:** Decisive victory — clear winner with significant advantages
+- **70-89:** Solid win — winner has meaningful advantages
+- **50-69:** Close call — winner has slight edge, reasonable to disagree
+- **0-49:** Very close — essentially a tie, human review recommended
+
+Output EXACTLY this format:
 
 ---DEBATE_VERDICT---
 WINNER: [claude|codex]

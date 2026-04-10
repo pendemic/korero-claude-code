@@ -322,3 +322,147 @@ check_rate_limit_warnings() {
     grep -q "rate_limit_imminent" "$REPO_ROOT/korero_monitor.sh"
     grep -q "rate_limit_approaching" "$REPO_ROOT/korero_monitor.sh"
 }
+
+# =============================================================================
+# PREDICTIVE RATE LIMIT WARNING TESTS
+# =============================================================================
+
+# Helper: predict_remaining_loops (extracted from korero_loop.sh)
+predict_remaining_loops() {
+    local max_calls="${MAX_CALLS_PER_HOUR:-100}"
+    local current_calls
+    current_calls=$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")
+    local loops_this_hour="${LOOPS_THIS_HOUR:-1}"
+
+    if [[ $loops_this_hour -eq 0 ]]; then
+        loops_this_hour=1
+    fi
+
+    local avg_calls_per_loop=$((current_calls / loops_this_hour))
+
+    if [[ $avg_calls_per_loop -eq 0 ]]; then
+        avg_calls_per_loop=1
+    fi
+
+    local remaining_calls=$((max_calls - current_calls))
+    if [[ $remaining_calls -le 0 ]]; then
+        echo "0"
+        return
+    fi
+
+    local projected_loops=$((remaining_calls / avg_calls_per_loop))
+    echo "$projected_loops"
+}
+
+# Helper: show_rate_limit_prediction (extracted from korero_loop.sh)
+show_rate_limit_prediction() {
+    local threshold="${RATE_LIMIT_WARNING_THRESHOLD:-5}"
+    local max_calls="${MAX_CALLS_PER_HOUR:-100}"
+    local current_calls
+    current_calls=$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")
+    local loops_this_hour="${LOOPS_THIS_HOUR:-1}"
+
+    if [[ "$threshold" -eq 0 ]]; then
+        return
+    fi
+
+    local projected
+    projected=$(predict_remaining_loops)
+    local usage_percent=$((current_calls * 100 / max_calls))
+    local effective_loops=$((loops_this_hour > 0 ? loops_this_hour : 1))
+    local avg_calls=$((current_calls / effective_loops))
+
+    if [[ $projected -lt $threshold && $projected -ge 0 ]]; then
+        echo ""
+        echo "═══════════════════════════════════════════════════════════"
+        echo "RATE LIMIT PROJECTION"
+        echo "═══════════════════════════════════════════════════════════"
+        echo "Current usage: ${current_calls}/${max_calls} calls (${usage_percent}%)"
+        echo "Average consumption: ${avg_calls} calls/loop"
+        echo "Projected remaining: ~${projected} loops before limit"
+        echo ""
+        echo "Suggestions:"
+        echo "  - Pause after this loop to let the hourly limit reset"
+        echo "  - Increase limit: korero --calls $((max_calls + 50))"
+        echo "  - Check status anytime: korero --status"
+        echo "═══════════════════════════════════════════════════════════"
+        echo ""
+    fi
+}
+
+@test "predict_remaining_loops calculates correctly" {
+    echo "50" > "$CALL_COUNT_FILE"
+    export MAX_CALLS_PER_HOUR=100
+    export LOOPS_THIS_HOUR=5
+
+    result=$(predict_remaining_loops)
+    # 50 remaining / 10 avg per loop = 5 loops
+    [[ "$result" -eq 5 ]]
+}
+
+@test "predict_remaining_loops returns 0 when at limit" {
+    echo "100" > "$CALL_COUNT_FILE"
+    export MAX_CALLS_PER_HOUR=100
+    export LOOPS_THIS_HOUR=10
+
+    result=$(predict_remaining_loops)
+    [[ "$result" -eq 0 ]]
+}
+
+@test "predict_remaining_loops handles zero loops gracefully" {
+    echo "10" > "$CALL_COUNT_FILE"
+    export MAX_CALLS_PER_HOUR=100
+    export LOOPS_THIS_HOUR=0
+
+    result=$(predict_remaining_loops)
+    [[ "$result" -gt 0 ]]
+}
+
+@test "predict_remaining_loops handles zero avg calls" {
+    echo "0" > "$CALL_COUNT_FILE"
+    export MAX_CALLS_PER_HOUR=100
+    export LOOPS_THIS_HOUR=5
+
+    result=$(predict_remaining_loops)
+    # 0 avg → defaults to 1 → 100 remaining / 1 = 100
+    [[ "$result" -eq 100 ]]
+}
+
+@test "show_rate_limit_prediction warns when below threshold" {
+    echo "90" > "$CALL_COUNT_FILE"
+    export MAX_CALLS_PER_HOUR=100
+    export LOOPS_THIS_HOUR=9
+    export RATE_LIMIT_WARNING_THRESHOLD=5
+
+    run show_rate_limit_prediction
+    [[ "$output" == *"RATE LIMIT PROJECTION"* ]]
+    [[ "$output" == *"90/100"* ]]
+}
+
+@test "show_rate_limit_prediction silent when above threshold" {
+    echo "20" > "$CALL_COUNT_FILE"
+    export MAX_CALLS_PER_HOUR=100
+    export LOOPS_THIS_HOUR=2
+    export RATE_LIMIT_WARNING_THRESHOLD=5
+
+    run show_rate_limit_prediction
+    [[ "$output" != *"RATE LIMIT PROJECTION"* ]]
+}
+
+@test "show_rate_limit_prediction disabled when threshold is 0" {
+    echo "99" > "$CALL_COUNT_FILE"
+    export MAX_CALLS_PER_HOUR=100
+    export LOOPS_THIS_HOUR=9
+    export RATE_LIMIT_WARNING_THRESHOLD=0
+
+    run show_rate_limit_prediction
+    [ -z "$output" ]
+}
+
+@test "korero_loop.sh has predict_remaining_loops function" {
+    grep -q "predict_remaining_loops()" "$REPO_ROOT/korero_loop.sh"
+}
+
+@test "korero_loop.sh has LOOPS_THIS_HOUR tracking" {
+    grep -q "LOOPS_THIS_HOUR" "$REPO_ROOT/korero_loop.sh"
+}

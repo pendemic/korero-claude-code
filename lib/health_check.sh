@@ -6,6 +6,46 @@
 
 KORERO_DIR="${KORERO_DIR:-.korero}"
 
+# Minimum required bash version
+BASH_MIN_VERSION=4
+
+# Check if the current bash version meets minimum requirements
+# Returns 0 if bash >= 4.0, 3 (dependency missing) otherwise
+check_bash_version() {
+    local current_major="${BASH_VERSINFO[0]:-0}"
+    local current_version="${BASH_VERSION:-unknown}"
+
+    if [[ "$current_major" -lt "$BASH_MIN_VERSION" ]]; then
+        cat << 'BASH_VERSION_EOF'
+═══════════════════════════════════════════════════════════
+Korero requires Bash 4.0 or newer.
+BASH_VERSION_EOF
+        echo "Your current version: $current_version"
+        echo ""
+        cat << 'INSTRUCTIONS_EOF'
+UPGRADE INSTRUCTIONS:
+
+macOS (Homebrew):
+  brew install bash
+  sudo bash -c 'echo /opt/homebrew/bin/bash >> /etc/shells'
+  chsh -s /opt/homebrew/bin/bash
+
+macOS (MacPorts):
+  sudo port install bash
+
+Linux (usually already 4.0+, but if not):
+  sudo apt install bash    # Debian/Ubuntu
+  sudo dnf install bash    # Fedora
+  sudo pacman -S bash      # Arch
+
+After upgrading, restart your terminal and run korero again.
+═══════════════════════════════════════════════════════════
+INSTRUCTIONS_EOF
+        return 3
+    fi
+    return 0
+}
+
 # Run all health checks and print a formatted report
 # Returns 0 if all checks pass, number of issues otherwise
 run_health_check() {
@@ -25,6 +65,15 @@ run_health_check() {
     shell_ver=$("${SHELL:-bash}" --version 2>/dev/null | head -1 || echo "unknown")
     echo "  ✓ Platform: $platform"
     echo "  ✓ Shell: $shell_ver"
+
+    # Bash version check
+    if check_bash_version >/dev/null 2>&1; then
+        echo "  ✓ Bash: ${BASH_VERSION}"
+    else
+        echo "  ✗ Bash: ${BASH_VERSION:-unknown} (requires 4.0+)"
+        echo "    → Run: brew install bash (macOS)"
+        issues=$((issues + 1))
+    fi
     echo ""
 
     # Required tools
@@ -257,6 +306,7 @@ check_codex_network() {
     fi
 }
 
+export -f check_bash_version
 export -f run_health_check
 export -f check_tool
 export -f check_timeout_tool

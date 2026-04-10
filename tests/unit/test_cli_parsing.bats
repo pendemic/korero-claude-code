@@ -721,3 +721,245 @@ EOF
     [ "$status" -eq 1 ]
     [[ "$output" == *"No debate transcript found for loop 99"* ]]
 }
+
+# ===== --troubleshoot =====
+
+@test "--troubleshoot displays quick reference" {
+    run bash "$KORERO_SCRIPT" --troubleshoot
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"TROUBLESHOOTING QUICK REFERENCE"* ]]
+    [[ "$output" == *"PERMISSION ISSUES"* ]]
+    [[ "$output" == *"RATE LIMITING"* ]]
+    [[ "$output" == *"SESSION ISSUES"* ]]
+    [[ "$output" == *"CIRCUIT BREAKER"* ]]
+}
+
+@test "--troubleshooting alias works" {
+    run bash "$KORERO_SCRIPT" --troubleshooting
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"TROUBLESHOOTING QUICK REFERENCE"* ]]
+}
+
+@test "--troubleshoot includes help topic references" {
+    run bash "$KORERO_SCRIPT" --troubleshoot
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"korero --help presets"* ]]
+    [[ "$output" == *"korero --help tools"* ]]
+    [[ "$output" == *"korero --help rate-limiting"* ]]
+    [[ "$output" == *"korero --help session"* ]]
+    [[ "$output" == *"korero --help circuit-breaker"* ]]
+    [[ "$output" == *"korero --help config"* ]]
+}
+
+@test "--troubleshoot includes heavy mode section" {
+    run bash "$KORERO_SCRIPT" --troubleshoot
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"HEAVY MODE"* ]]
+    [[ "$output" == *"Codex"* ]]
+}
+
+@test "--troubleshoot includes configuration section" {
+    run bash "$KORERO_SCRIPT" --troubleshoot
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CONFIGURATION"* ]]
+    [[ "$output" == *"@standard"* ]]
+}
+
+@test "--help shows --troubleshoot option" {
+    run bash "$KORERO_SCRIPT" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--troubleshoot"* ]]
+}
+
+# ===== --diagnose (interactive troubleshooter) =====
+
+@test "--diagnose is listed in help text" {
+    run bash "$KORERO_SCRIPT" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--diagnose"* ]]
+}
+
+@test "--diagnose launches interactive troubleshooter" {
+    run bash -c "echo 'n' | bash '$KORERO_SCRIPT' --diagnose"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"INTERACTIVE TROUBLESHOOTER"* ]]
+}
+
+@test "--diagnose shows permission diagnosis for Y/Y input" {
+    run bash -c "printf 'y\ny\n' | bash '$KORERO_SCRIPT' --diagnose"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Missing Bash tool permission"* ]]
+    [[ "$output" == *"ALLOWED_TOOLS"* ]]
+}
+
+@test "--diagnose shows rate limit diagnosis" {
+    run bash -c "printf 'n\ny\ny\n' | bash '$KORERO_SCRIPT' --diagnose"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Rate limit exceeded"* ]]
+}
+
+@test "--diagnose shows fallback when all questions answered no" {
+    run bash -c "printf 'n\nn\nn\nn\nn\nn\n' | bash '$KORERO_SCRIPT' --diagnose"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No specific diagnosis"* ]]
+}
+
+# ===== --fix-config flag =====
+
+@test "--fix-config is listed in help text" {
+    run bash "$KORERO_SCRIPT" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--fix-config"* ]]
+}
+
+# ===== --search-ideas flag =====
+
+@test "--search-ideas is listed in help text" {
+    run bash "$KORERO_SCRIPT" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--search-ideas"* ]]
+}
+
+@test "--search-ideas requires a keyword argument" {
+    run bash "$KORERO_SCRIPT" --search-ideas
+    [ "$status" -ne 0 ]
+}
+
+@test "--search-ideas returns 1 when no IDEAS.md exists" {
+    run bash "$KORERO_SCRIPT" --search-ideas "test"
+    [ "$status" -ne 0 ]
+}
+
+@test "--search-ideas shows header with keyword" {
+    # Create minimal ideas structure
+    mkdir -p .korero/ideas
+    echo "# IDEAS" > .korero/ideas/IDEAS.md
+    cat > .korero/ideas/loop_1_idea.md << 'IDEA_EOF'
+**Title:** Add caching layer
+**Type:** Feature
+**Category:** Performance
+**Proposed by:** System Architect
+
+Add a Redis caching layer to improve response times.
+IDEA_EOF
+
+    run bash "$KORERO_SCRIPT" --search-ideas "caching"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"IDEA SEARCH"* ]]
+    [[ "$output" == *"caching"* ]]
+}
+
+@test "--search-ideas finds matching ideas with metadata" {
+    mkdir -p .korero/ideas
+    echo "# IDEAS" > .korero/ideas/IDEAS.md
+    cat > .korero/ideas/loop_3_idea.md << 'IDEA_EOF'
+**Title:** Implement dark mode
+**Type:** Feature
+**Category:** UX
+**Proposed by:** UX Designer
+
+Add dark mode toggle for better user experience.
+IDEA_EOF
+
+    run bash "$KORERO_SCRIPT" --search-ideas "dark"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"LOOP 3"* ]]
+    [[ "$output" == *"Implement dark mode"* ]]
+}
+
+@test "--search-ideas reports no matches for non-existent keyword" {
+    mkdir -p .korero/ideas
+    echo "# IDEAS" > .korero/ideas/IDEAS.md
+    echo "Some content" > .korero/ideas/loop_1_idea.md
+
+    run bash "$KORERO_SCRIPT" --search-ideas "zzzznonexistent"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No matches found"* ]]
+}
+
+@test "--find-ideas is an alias for --search-ideas" {
+    run bash "$KORERO_SCRIPT" --find-ideas
+    [ "$status" -ne 0 ]
+}
+
+# ===== --cost-history flag =====
+
+@test "--cost-history is listed in help text" {
+    run bash "$KORERO_SCRIPT" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--cost-history"* ]]
+}
+
+@test "--cost-history returns 1 when no cost_history.json exists" {
+    run bash "$KORERO_SCRIPT" --cost-history
+    [ "$status" -ne 0 ]
+}
+
+@test "--costs is an alias for --cost-history" {
+    run bash "$KORERO_SCRIPT" --costs
+    [ "$status" -ne 0 ]
+}
+
+# ===== --shutdown-history flag (Loop 31) =====
+
+@test "--shutdown-history is listed in help text" {
+    run bash "$KORERO_SCRIPT" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--shutdown-history"* ]]
+}
+
+@test "--shutdown-history returns 0 with no history file" {
+    run bash "$KORERO_SCRIPT" --shutdown-history
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No shutdown history"* ]]
+}
+
+# ===== --rate-status flag (Loop 33) =====
+
+@test "--rate-status is listed in help text" {
+    run bash "$KORERO_SCRIPT" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--rate-status"* ]]
+}
+
+@test "--rate-status shows RATE LIMIT STATUS header" {
+    echo "5" > "$CALL_COUNT_FILE"
+    run bash "$KORERO_SCRIPT" --rate-status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"RATE LIMIT STATUS"* ]]
+}
+
+@test "--rate-status shows calls used" {
+    echo "25" > "$CALL_COUNT_FILE"
+    run bash "$KORERO_SCRIPT" --rate-status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"25"* ]]
+}
+
+@test "--rate-status shows remaining calls" {
+    echo "10" > "$CALL_COUNT_FILE"
+    run bash "$KORERO_SCRIPT" --rate-status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Remaining"* ]]
+}
+
+@test "--rate-status shows reset time" {
+    echo "0" > "$CALL_COUNT_FILE"
+    run bash "$KORERO_SCRIPT" --rate-status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Resets in"* ]]
+}
+
+@test "--rate is an alias for --rate-status" {
+    echo "0" > "$CALL_COUNT_FILE"
+    run bash "$KORERO_SCRIPT" --rate
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"RATE LIMIT STATUS"* ]]
+}
+
+@test "-r is an alias for --rate-status" {
+    echo "0" > "$CALL_COUNT_FILE"
+    run bash "$KORERO_SCRIPT" -r
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"RATE LIMIT STATUS"* ]]
+}
